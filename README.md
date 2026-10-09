@@ -1,313 +1,141 @@
 # HavenDOS
-official HavenDOS Repo
-# HavenDOS
 
-<p align="center">
-  <strong>A small 32-bit operating system built from scratch.</strong>
-</p>
+**An independent operating system built from scratch by Tech Haven Studios.**
 
-<p align="center">
-  Written in C and x86 Assembly · Monolithic kernel · Experimental
-</p>
+C and x86 Assembly · 32-bit monolithic kernel · BIOS and UEFI boot
 
-<p align="center">
-  <a href="#features">Features</a> •
-  <a href="#building">Building</a> •
-  <a href="#running">Running</a> •
-  <a href="#roadmap">Roadmap</a> •
-  <a href="#contributing">Contributing</a>
-</p>
-
----
+[Downloads](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues) · [Features](#features) · [Running](#running) · [Roadmap](#roadmap)
 
 ## About
 
-**HavenDOS** is an experimental 32-bit operating system developed by **Tech Haven Studios**.
+HavenDOS is a small operating system with its own kernel, hardware drivers, filesystem code, networking stack and desktop utilities. It began as a low-level learning project and has grown into a bootable environment for compatible x86 computers and virtual machines.
 
-The project started as an attempt to understand how operating systems work at a low level, from booting a machine and interacting with hardware to building a kernel and implementing system functionality.
+**0.8.1 is designated the project's first official stable release.** Its major milestone is booting on real UEFI hardware with framebuffer rendering, extending HavenDOS beyond machines that provide legacy BIOS or CSM support.
 
-HavenDOS is written primarily in **C and x86 Assembly** and is designed to run on x86-compatible systems and virtual machines.
+On **9 October 2026**, the developer demonstrated HavenDOS booting and displaying its setup interface on an HP laptop with UEFI firmware and no CSM. Installation on that laptop's NVMe SSD remains unsupported.
 
-The project is still under active development and should be considered **experimental software**.
+“Stable” identifies the project's release channel. HavenDOS remains a hobby operating system with limited hardware support and experimental components; it is not a general-purpose replacement for Windows or Linux. Some interface text in the supplied 0.8.1 image still says “Beta”.
 
-> **Warning:** HavenDOS is not intended to replace your main operating system. Some versions may contain bugs that can cause data loss or prevent a system from booting. Testing in a virtual machine is strongly recommended.
+## Getting started
 
----
+Download `HavenDOS-0.8.1.iso` and the accompanying checksum from the [Releases page](https://github.com/MGKFN/HavenDOS/releases). Start with a virtual machine and choose **Desktop** from the boot menu.
+
+For installation tests, use an empty virtual disk. The installer formats its selected target; keep important disks out of the test environment.
 
 ## Features
 
-HavenDOS currently includes or has included the following components:
+### Boot and display
 
-- 32-bit x86 kernel
-- Monolithic kernel architecture
-- C and x86 Assembly
-- BIOS boot support
-- Text-mode interface
-- 80×25 text display
-- Keyboard input
-- User management
-- Basic text editor
-- CMOS real-time clock support
-- Live system time
-- In-memory system snapshots
-- Basic storage/filesystem experimentation
-- Network stack experimentation
-- Hardware driver development
-- Virtual machine support
+- BIOS and x86-64 UEFI boot paths packaged in one ISO, using GRUB to load the 32-bit kernel.
+- Framebuffer rendering for the character-based interface on UEFI hardware.
+- A logical 80×25 interface with desktop, shell and safe-mode boot options.
+- Preferred boot-menu display mode of 1280×800, with fallback modes. The visible desktop may occupy only part of a larger display.
+- Boot-menu diagnostics for firmware information, kernel handoff and framebuffer setup.
 
-Features can change between versions as the operating system is actively developed.
+### Desktop and utilities
 
----
+- User management, keyboard input and desktop utilities.
+- Text editor, calculator, calendar and to-do list.
+- CMOS real-time clock and live system time.
+- Settings, hardware information and shell commands.
+
+### Storage and updates
+
+- FAT16 disk storage, with FAT12 and RAM filesystem components.
+- ATA/IDE and VirtIO block support on compatible configurations.
+- Disk installer for supported storage devices.
+- ISO-based update and rollback facilities on supported disk installations.
+
+### Networking and hardware
+
+- Networking components including ARP, ICMP, UDP, TCP, DHCP and DNS.
+- RTL8139 and e1000 network support on compatible configurations.
+- PCI device enumeration and hardware reporting.
+
+Availability depends on the selected boot mode, hardware and configuration. Networking and device support continue to receive development and testing.
 
 ## Architecture
 
-HavenDOS currently follows a **monolithic kernel** design.
-
-The project is primarily written in:
-
-| Component | Technology |
+| Component | Implementation |
 |---|---|
-| Kernel | C |
-| Low-level hardware code | x86 Assembly |
-| Architecture | x86 / 32-bit |
-| Boot process | BIOS |
-| Kernel type | Monolithic |
-| Interface | Text-based |
+| Kernel | 32-bit x86, monolithic |
+| Languages | C and x86 Assembly |
+| ISO bootloader | GRUB / Multiboot |
+| Firmware boot paths | BIOS and x86-64 UEFI |
+| Interface | Character-based desktop and shell; framebuffer rendering on UEFI |
+| Persistent filesystem | FAT16 on supported disks |
+| Storage interfaces | ATA/IDE and VirtIO block |
 
-The goal is to keep the system relatively small while allowing direct experimentation with hardware and low-level operating-system concepts.
-
----
-
-## Project Structure
-
-The repository structure may change as HavenDOS develops, but the project generally contains components such as:
-
-```text
-HavenDOS/
-├── boot/          # Bootloader and boot-related code
-├── kernel/        # Kernel source
-├── drivers/       # Hardware drivers
-├── fs/            # Filesystem/storage code
-├── net/           # Networking components
-├── include/       # Header files
-├── tools/         # Build and development tools
-├── scripts/       # Build scripts
-├── docs/          # Documentation
-└── README.md
-```
-
-Check the repository itself for the current structure.
-
----
-
-## Building
-
-### Requirements
-
-A typical development environment requires:
-
-- GCC cross-compiler or suitable C compiler
-- NASM
-- GNU Binutils
-- Make
-- GRUB or another supported bootloader
-- QEMU or another x86 virtual machine
-
-A Linux environment is recommended for building HavenDOS.
-
-### Clone the repository
-
-```bash
-git clone https://github.com/YOUR_USERNAME/HavenDOS.git
-cd HavenDOS
-```
-
-### Build
-
-```bash
-make
-```
-
-The exact build commands may change between releases. Check the repository's build scripts and documentation for the current instructions.
-
----
+UEFI boot support does not make the kernel 64-bit or provide drivers for every device supported by the firmware.
 
 ## Running
 
-The safest way to test HavenDOS is inside a virtual machine.
+### Quick BIOS boot with QEMU
 
-For example, with QEMU:
+With QEMU installed, run this from the directory containing the ISO:
 
 ```bash
-qemu-system-i386 -cdrom havenDOS.iso
+qemu-system-i386 -m 128 -cdrom HavenDOS-0.8.1.iso -boot d
 ```
 
-The exact image name and launch parameters depend on the current build system.
+This example boots the ISO without attaching an installation disk. It is a suggested launch configuration, not an independently verified test of this release.
 
-### Recommended
+The boot menu includes **Desktop**, **Shell Mode**, **Safe Mode (no mouse)** and **Install to Disk**, followed by diagnostic entries.
 
-Use a virtual machine when experimenting with HavenDOS.
+### UEFI and real hardware
 
-**Do not boot experimental builds directly on a machine containing important data.**
+Use an x86-64 UEFI virtual machine or compatible computer. UEFI virtual machines require suitable firmware, such as OVMF; ordinary QEMU BIOS boot does not test the UEFI path.
 
----
+UEFI boot and display have been demonstrated on the developer's HP laptop. This confirms that boot path on that machine, rather than general laptop compatibility. Secure Boot compatibility has not been established.
 
-## Current Status
+## Known limitations
 
-HavenDOS is an **experimental operating system**.
+- **NVMe storage is unsupported.** The tested HP laptop boots HavenDOS but cannot install to its internal NVMe SSD. Recognizing a controller in a hardware list does not mean it has a working storage driver.
+- **The display may remain at the top-left.** The interface does not yet scale to fill every panel or selected framebuffer mode.
+- **UEFI boot does not guarantee a bootable UEFI disk installation.** The demonstrated UEFI result is booting the supplied image; installation depends on the disk driver and installer boot layout.
+- **Storage support is configuration-dependent.** Do not assume modern SATA/AHCI, Intel VMD/RST or USB storage works merely because firmware can boot the ISO.
+- **USB support is incomplete.** Bootloader USB access and HavenDOS runtime USB drivers are separate capabilities.
+- **Networking remains under development.** TCP reliability and compatibility vary. BootChat availability also depends on a compatible running server; a bundled client does not guarantee a public service is online.
+- **Some 0.8.1 interface labels still say “Beta”.** The supplied release image retains those labels.
 
-The project has gone through multiple development stages, including work on:
+Back up data before any installation or update. A successful boot is not evidence that disk writes are safe on another machine.
 
-- Bootloader development
-- Kernel development
-- Memory management
-- Hardware access
-- Keyboard input
-- Display handling
-- Storage
-- Filesystems
-- User management
-- Networking
-- Drivers
-- System utilities
+## Source and building
 
-Some components are incomplete, unstable, or temporarily disabled.
+```bash
+git clone https://github.com/MGKFN/HavenDOS.git
+cd HavenDOS
+```
 
-A feature appearing in the repository does not necessarily mean that it is production-ready.
+The repository currently contains `LICENSE`, this README and the archived source package `havendos-v0_7_18-source.zip`. That archive is an earlier version, not the matching source tree for the 0.8.1 ISO.
 
----
+Extract a source archive and follow its included build instructions. There is currently no top-level build tree in this repository, so running `make` immediately after cloning is not a documented way to reproduce 0.8.1.
+
+Typical source-build tools include a suitable x86 C toolchain, NASM, GNU Binutils, Make and GRUB image-building tools. Exact dependencies and commands belong to the relevant source version.
 
 ## Roadmap
 
-The roadmap is intentionally flexible because HavenDOS is a learning and experimentation project.
+- [x] Boot on real UEFI hardware and render the setup interface through a framebuffer.
+- [ ] Improve display scaling, centering and mode handling.
+- [ ] Add native NVMe storage support.
+- [ ] Expand storage and USB compatibility.
+- [ ] Validate UEFI disk installation and boot layouts.
+- [ ] Improve networking reliability and driver coverage.
+- [ ] Publish matching source and reproducible build instructions for current releases.
+- [ ] Expand hardware testing and improve installer/update reliability.
 
-### Kernel
+These are development goals, not promised delivery dates.
 
-- [ ] Improve memory management
-- [ ] Improve kernel stability
-- [ ] Hardware abstraction
-- [ ] Better error handling
-- [ ] Kernel debugging facilities
+## Contributing and bug reports
 
-### Hardware
+Bug reports, hardware test results and focused contributions are welcome through [GitHub Issues](https://github.com/MGKFN/HavenDOS/issues).
 
-- [ ] Improve storage drivers
-- [ ] Improve network drivers
-- [ ] Additional hardware support
-- [ ] Better device management
+Include the version, computer or VM configuration, BIOS/UEFI boot mode, steps to reproduce, expected result and actual result. Attach relevant logs or screenshots and describe the disk/controller configuration for storage problems.
 
-### Filesystems
-
-- [ ] Improve filesystem support
-- [ ] Reliable disk installation
-- [ ] File permissions
-- [ ] Better filesystem utilities
-
-### Networking
-
-- [ ] Improve TCP/IP implementation
-- [ ] Improve network drivers
-- [ ] DNS improvements
-- [ ] More reliable network applications
-
-### Userland
-
-- [ ] More system utilities
-- [ ] Improved text editor
-- [ ] Shell improvements
-- [ ] More user management functionality
-
-### Boot
-
-- [ ] Improve bootloader
-- [ ] Better BIOS compatibility
-- [ ] Investigate UEFI support
-- [ ] Faster boot process
-
----
-
-## Versioning
-
-HavenDOS versions follow the project's development versioning scheme.
-
-Development releases may contain experimental or unfinished features.
-
-For stable or recommended builds, see the repository's **Releases** section.
-
----
-
-## Contributing
-
-Contributions, bug reports and ideas are welcome.
-
-Before submitting a pull request:
-
-1. Make sure the code builds successfully.
-2. Test your changes in a virtual machine where possible.
-3. Clearly describe what you changed.
-4. Include reproduction steps when fixing a bug.
-5. Avoid introducing unnecessary dependencies.
-
-For larger changes, opening an issue first is recommended so the approach can be discussed before implementation.
-
----
-
-## Bug Reports
-
-If you find a bug, open a GitHub Issue and include:
-
-- HavenDOS version
-- Hardware or virtual machine used
-- Steps to reproduce the problem
-- Expected behaviour
-- Actual behaviour
-- Relevant logs or screenshots
-- Build configuration, if applicable
-
-Do not include sensitive information in bug reports.
-
----
-
-## Development Philosophy
-
-HavenDOS is primarily a project for learning, experimentation and understanding how computers work at a low level.
-
-The project focuses on learning by building rather than relying entirely on existing operating-system abstractions.
-
-That means HavenDOS may sometimes contain experimental implementations, incomplete features and intentionally low-level code.
-
----
-
-## Related Projects
-
-HavenDOS is part of the projects developed under **Tech Haven Studios**.
-
-Other projects may share ideas, components or development history with HavenDOS.
-
----
+For code contributions, identify the source version, describe the change and test it in a virtual machine where practical. Discuss substantial architecture changes before implementation.
 
 ## License
 
-HavenDOS is released under the **MIT License**.
-
-See [`LICENSE`](LICENSE) for the complete license text.
-
-Copyright © 2026 Tech Haven Studios
-
----
-
-## Disclaimer
-
-HavenDOS is provided for educational and experimental purposes.
-
-It is not guaranteed to be stable, secure, compatible with specific hardware, or suitable for production use.
-
-Use experimental builds at your own risk.
-
----
-
-## Credits
+The repository is licensed under the [MIT License](LICENSE). See that file for the authoritative copyright notice and terms.
 
 Developed by **Tech Haven Studios**.
-
-Built with C, x86 Assembly and a lot of experimentation.

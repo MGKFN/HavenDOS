@@ -10,9 +10,11 @@ C and x86 Assembly · 32-bit monolithic kernel · BIOS and UEFI boot
 
 HavenDOS is a small operating system with its own kernel, hardware drivers, filesystem code, networking stack and desktop utilities. It began as a low-level learning project and has grown into a bootable environment for compatible x86 computers and virtual machines.
 
-**0.8.1 is designated the project's first official stable release.** Its major milestone is booting on real UEFI hardware with framebuffer rendering, extending HavenDOS beyond machines that provide legacy BIOS or CSM support.
+The current release is **0.8.3.1** (Beta). **0.8.1 was designated the project's first official stable release.** Its major milestone is booting on real UEFI hardware with framebuffer rendering, extending HavenDOS beyond machines that provide legacy BIOS or CSM support.
 
-On **9 October 2026**, the developer demonstrated HavenDOS booting and displaying its setup interface on an HP laptop with UEFI firmware and no CSM. Installation on that laptop's NVMe SSD remains unsupported.
+On **9 October 2026**, the developer demonstrated HavenDOS booting and displaying its setup interface on an HP laptop with UEFI firmware and no CSM. Installation on that laptop's NVMe SSD was unsupported at the time.
+
+On **18 October 2026**, with 0.8.3.1, HavenDOS was installed to that laptop's NVMe SSD alongside its existing Windows 11 installation and booted from its own partition. The Windows installation was unaffected and continues to boot. Outside the new partition the installer wrote four sectors — the two GPT headers and one sector of each partition-entry array — which are listed on screen before anything is written.
 
 “Stable” identifies the project's release channel. HavenDOS remains a hobby operating system with limited hardware support and experimental components; it is not a general-purpose replacement for Windows or Linux. Some interface text in the supplied 0.8.1 image still says “Beta”.
 
@@ -42,7 +44,8 @@ For installation tests, use an empty virtual disk. The installer formats its sel
 ### Storage and updates
 
 - FAT16 disk storage, with FAT12 and RAM filesystem components.
-- ATA/IDE and VirtIO block support on compatible configurations.
+- NVMe, AHCI/SATA, ATA/IDE and VirtIO block support on compatible configurations.
+- An additive installer that keeps an existing partition table and installs into free space beside another operating system, with a preview of every sector it will write outside its own partition.
 - Disk installer for supported storage devices.
 - ISO-based update and rollback facilities on supported disk installations.
 
@@ -64,7 +67,7 @@ Availability depends on the selected boot mode, hardware and configuration. Netw
 | Firmware boot paths | BIOS and x86-64 UEFI |
 | Interface | Character-based desktop and shell; framebuffer rendering on UEFI |
 | Persistent filesystem | FAT16 on supported disks |
-| Storage interfaces | ATA/IDE and VirtIO block |
+| Storage interfaces | NVMe, AHCI/SATA, ATA/IDE and VirtIO block |
 
 UEFI boot support does not make the kernel 64-bit or provide drivers for every device supported by the firmware.
 

@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""make_release_bundle.py -- one zip with everything a release is.
+
+    python3 tools/make_release_bundle.py            # into ./dist
+    python3 tools/make_release_bundle.py -o /tmp/x  # somewhere else
+
+What goes in, and why each piece:
+
+    HANDOFF.md              the state of the tree -- READ FIRST, and the
+                            file to paste into a new chat
+    README-FIRST.md         what is in here and what to do with it
+    CHANGELOG-v<ver>.md     what this release changed
+    HavenDOS-<ver>.iso      bootable, BIOS and UEFI
+    HavenDOS-<ver>-source.zip
+                            the tree, minus build products
+    update/havendos.elf     the kernel, for `update`
+    update/update.inf       the manifest that describes exactly those bytes
+    update/Update-HavenDOS.cmd        Windows, double-click
+    update/Stage-HavenDOS-Update.ps1  Windows, by hand
+    update/stage-havendos-update.sh   Linux
+    update/README-UPDATE.md
+    docs/*-HARDWARE-TEST.md the parts only the laptop can answer
+
+This replaces harness/package.sh, which was hardcoded to a v0.7.20 tree
+on a machine that no longer exists -- `SRC=/home/claude/havendos/...`,
+a 0.8.0 ISO name, screenshot and manual directories that are not in the
+source archive. It could not have run.
+
+The version is READ from include/version.h. Nothing here spells one out,
+which is the same rule tools/make_version.py --check enforces on the
+kernel: a release where the bundle name and the kernel disagree is the
+v0.7.20 bug in a new place.
+
+IT REFUSES TO BUILD A BROKEN BUNDLE. Before writing anything it checks:
+
+  - the ISO exists, and carries both a BIOS and a UEFI boot image
+  - the ISO's kernel and version.txt agree with version.h
+  - update.inf's size and crc32 describe the havendos.elf beside it,
+    with the CRC recomputed here by zlib rather than trusted
+  - the kernel starts with ELF magic
+  - the changelog for this version exists
+  - every file listed above is present
+
+Any of those failing is an error, not a warning. A bundle is the thing
+somebody updates two laptops from.
+"""
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import zlib
+import zipfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+SOURCE_EXCLUDE = (
+    "*.o", "*.d", "*.elf", "*.iso",
+    "tests/*.img", "tests/*.scratch*", "tests/*.part", "tests/*.fsck",
+    "isodir/boot/havendos.elf", "*__pycache__*", "dist/*",
+)
+
+
+def fail(msg):
+    sys.stderr.write("make_release_bundle: %s\n" % msg)
+    sys.exit(1)
+
+
+def version():
+    src = open(os.path.join(ROOT, "include", "version.h"),
+               encoding="utf-8").read()
+    m = re.search(r'^#define\s+HAVENDOS_VER_NUM\s+"([^"]+)"', src, re.M)
+    if not m:
+        fail("no HAVENDOS_VER_NUM in include/version.h")
+    return m.group(1)
+
+
+def crc32_of(path):
+    with open(path, "rb") as f:
+        return zlib.crc32(f.read()) & 0xFFFFFFFF
+
+
+def check_payload(elf, inf):
+    """update.inf must describe the kernel beside it."""
+    data = open(elf, "rb").read()
+    if data[:4] != b"\x7fELF":
+        fail("%s does not start with ELF magic" % elf)
+    text = open(inf, encoding="utf-8").read()
+
+    def field(name, pat):
+        m = re.search(pat, text, re.M)
+        if not m:
+            fail("%s has no %s line" % (inf, name))
+        return m.group(1)
+
+    size = int(field("size=", r"^\s*size\s*=\s*(\d+)\s*$"))
+    crc = field("crc32=", r"^\s*crc32\s*=\s*(?:0[xX])?([0-9a-fA-F]+)\s*$")
+    ver = field("version=", r"^\s*version\s*=\s*(\S+)\s*$")
+
+    if size != len(data):
+        fail("update.inf says %d bytes, havendos.elf is %d"
+             % (size, len(data)))
+    mine = "%08x" % crc32_of(elf)
+    if crc.lower() != mine:
+        fail("update.inf crc32 is %s, the kernel's is %s" % (crc.lower(), mine))
+    return ver, size, mine
+
+
+def run_check(script, *args):
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", script)]
+                       + list(args),
+                       capture_output=True, text=True, cwd=ROOT,
+                       stdin=subprocess.DEVNULL)
+    out = (r.stdout + r.stderr).strip()
+    if r.returncode != 0:
+        fail("%s refused this build:\n%s" % (script, out))
+    return out
+
+
+README = """# HavenDOS {ver} -- release bundle
+
+Built {stamp}. Everything here describes the same kernel:
+
+    havendos.elf   {size} bytes   crc32={crc}
+
+## Starting a new chat about HavenDOS
+
+1. Attach **HANDOFF.md** and **HavenDOS-{ver}-source.zip**.
+2. Say what you want to work on.
+
+`HANDOFF.md` is the state of the tree: what works, what does not, what
+is proved and where, and what is next. It is written to be pasted into
+a fresh conversation.
+
+## What is in here
+
+| file | what it is |
+|---|---|
+| `HANDOFF.md` | **read first** -- the state of the tree |
+| `CHANGELOG-v{ver}.md` | what this release changed |
+| `HavenDOS-{ver}.iso` | bootable disc, BIOS and UEFI |
+| `HavenDOS-{ver}-source.zip` | the tree, minus build products |
+| `update/` | updating an installed machine in place |
+| `docs/` | the hardware test plans -- the parts only the laptop can answer |
+
+## Updating a machine that already runs HavenDOS
+
+Everything needed is in `update/`. The kernel and the manifest are a
+matched pair and both stagers refuse a mismatch.
+
+**Windows:** put the contents of `update/` in one folder and
+double-click `Update-HavenDOS.cmd`, then approve the prompt.
+
+**Linux:** `sudo ./stage-havendos-update.sh`
+
+Then boot HavenDOS and type `update`, on a boot entry **without**
+`live` -- on the ISO that is entry 4. A live shell cannot see the
+HavenDOS partition and `update` will refuse with "No FAT16 partition
+found".
+
+`update/README-UPDATE.md` has the detail, the flags, and the caveats.
+
+## Installing fresh
+
+Boot `HavenDOS-{ver}.iso`. The installer adds a partition beside what
+is already on the disk; outside the new partition it writes **four
+sectors** -- the two GPT headers and one sector of each entry array --
+and prints their LBAs on screen before writing anything. On the EFI
+System Partition files are added; nothing is deleted and nothing is
+overwritten without a verified copy.
+
+What it does **not** do yet is create a firmware boot entry, so after
+installing you still add one by hand. That is 0.9.2 "Prometheus".
+
+## Reading a USB stick
+
+Plug a **FAT32 or FAT16** stick in before booting, then:
+
+    usb -vv        is it on the bus, and is it behind a hub
+    disk           is it a disk, and what size
+    fat32          every partition, and what each one IS
+    fat32 ls 0     read a FAT32 volume
+    fat16 ls 0     read a FAT16 one
+
+A stick plugged into a ROOT PORT after boot is noticed on its own
+within a second, as of v0.8.8. One plugged in **behind a hub** still
+needs `usb rescan`: a hub reports port changes on an interrupt endpoint
+that is not polled, and the laptop this tree is tested on appears to
+have no hub to test one with.
+
+**A stick over 32 GB is almost certainly exFAT**, which has no driver
+here. `fat32` says so by name rather than reporting nothing; reformat it
+as FAT32 or FAT16 to read it.
+
+`docs/USB-STORAGE-HARDWARE-TEST.md` is the five-minute test for the
+storage path: it works under QEMU on both controllers and with the
+stick both on a root port and behind a hub, and QEMU's xHCI is not this
+laptop's.
+
+## What this release wants from the laptop
+
+**`docs/PAIRING-STAGE3-HARDWARE-TEST.md`.** Fifteen minutes with an
+iPhone and a camera, and it covers BOTH HALVES of pairing stage 3 --
+the first half's instructions were in the 0.8.8.11 doc and are carried
+forward, so if that test was never run this one replaces it.
+
+`pair` now goes all the way: the Trust dialog, the record saved, a
+session opened, a TLS handshake presenting our host certificate as a
+client certificate, and one request sent inside the encrypted session
+as proof. It prints `STAGE 3 IS COMPLETE.` or the step it stopped at.
+
+The one line in it that can change the road is in Part 4: **which
+cipher suite lockdownd chose.** This stack offers exactly one, static
+RSA, and whether iOS will negotiate it is the single thing the tests
+cannot answer -- `openssl s_server` is happy to and iOS may not be.
+`tlsinfo` prints the chosen suite and the alert number side by side for
+exactly that reason.
+
+The older plans are still in `docs/` and still unanswered:
+`TRACKPAD-AND-PAIR-HARDWARE-TEST.md` for `i2chid` and the Notepad
+right-click freeze, and `HELIOS-HARDWARE-TEST.md` for the tick count in
+`kpoll`.
+
+## Rebuilding this bundle
+
+    make && make test
+    python3 tools/make_release_bundle.py
+
+It reads the version from `include/version.h` and refuses to build if
+the ISO is not bootable, the manifest does not describe the kernel, or
+the changelog for this version is missing.
+"""
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-o", "--out", default=os.path.join(ROOT, "dist"))
+    a = ap.parse_args()
+
+    ver = version()
+    iso = os.path.join(ROOT, "HavenDOS-%s.iso" % ver)
+    elf = os.path.join(ROOT, "havendos.elf")
+    inf = os.path.join(ROOT, "isodir", "update.inf")
+    chg = os.path.join(ROOT, "CHANGELOG-v%s.md" % ver)
+    hnd = os.path.join(ROOT, "HANDOFF.md")
+
+    print("make_release_bundle: v%s" % ver)
+
+    for p in (iso, elf, inf, chg, hnd):
+        if not os.path.exists(p):
+            fail("missing %s -- run `make` first"
+                 % os.path.relpath(p, ROOT))
+
+    # The ISO has to be able to boot, and has to be THIS version.
+    print("  " + run_check("check_iso_bootable.py", iso))
+    print("  " + run_check("check_iso_version.py", iso))
+
+    inf_ver, size, crc = check_payload(elf, inf)
+    if inf_ver != ver:
+        fail("update.inf says version %s, version.h says %s" % (inf_ver, ver))
+    print("  payload: %s bytes, crc32=%s, recomputed here and matching"
+          % (size, crc))
+
+    stage = os.path.join(a.out, "HavenDOS-%s" % ver)
+    if os.path.isdir(stage):
+        shutil.rmtree(stage)
+    os.makedirs(os.path.join(stage, "update"))
+    os.makedirs(os.path.join(stage, "docs"))
+
+    # The source archive, built the same way every time.
+    src_zip = os.path.join(stage, "HavenDOS-%s-source.zip" % ver)
+    cmd = ["zip", "-qr", src_zip, "."]
+    for pat in SOURCE_EXCLUDE:
+        cmd += ["-x", pat]
+    # stdin=DEVNULL, and it is not belt and braces.
+    #
+    # v0.8.8.9: this call inherited the parent's stdin, and on a
+    # session whose stdin is a socket that never delivers a byte and
+    # never reaches EOF, `zip` blocked reading it -- for THIRTY-ONE
+    # MINUTES, silently, with the partial archive sitting at a fixed
+    # size and nothing on stdout because the output was down a pipe.
+    # Diagnosed from /proc: the child was in unix_stream_read_generic
+    # with 0.2 seconds of CPU used.
+    #
+    # The prompt that made zip read stdin could not be reproduced
+    # afterwards -- the same command with the same arguments finishes
+    # in under a minute -- so this does not claim to know which
+    # question it was asking. It does not need to. A build step that
+    # can wait forever for a person who is not there is wrong whether
+    # or not we can say what it wanted, and every other subprocess in
+    # this file gets the same treatment for the same reason.
+    if subprocess.run(cmd, cwd=ROOT,
+                      stdin=subprocess.DEVNULL).returncode != 0:
+        fail("could not build the source archive")
+
+    shutil.copy2(hnd, stage)
+    shutil.copy2(chg, stage)
+    shutil.copy2(iso, stage)
+    shutil.copy2(elf, os.path.join(stage, "update", "havendos.elf"))
+    shutil.copy2(inf, os.path.join(stage, "update", "update.inf"))
+    for f in ("Update-HavenDOS.cmd", "Stage-HavenDOS-Update.ps1",
+              "stage-havendos-update.sh"):
+        p = os.path.join(ROOT, "rescue", f)
+        if not os.path.exists(p):
+            fail("missing rescue/%s" % f)
+        shutil.copy2(p, os.path.join(stage, "update", f))
+    os.chmod(os.path.join(stage, "update", "stage-havendos-update.sh"), 0o755)
+
+    # Every hardware test plan in docs/, rather than one named file.
+    # v0.8.6 added a second one and the single hardcoded name would have
+    # silently left it out -- a bundle quietly missing the document that
+    # says how to prove the release is the shape of bug this tree keeps
+    # paying for.
+    for f in sorted(os.listdir(os.path.join(ROOT, "docs"))):
+        if f.endswith("-HARDWARE-TEST.md"):
+            shutil.copy2(os.path.join(ROOT, "docs", f),
+                         os.path.join(stage, "docs"))
+
+    upd_readme = os.path.join(ROOT, "rescue", "README-UPDATE.md")
+    if os.path.exists(upd_readme):
+        shutil.copy2(upd_readme, os.path.join(stage, "update"))
+
+    stamp = subprocess.run(["date", "-u", "+%Y-%m-%d %H:%M UTC"],
+                           stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True).stdout.strip()
+    with open(os.path.join(stage, "README-FIRST.md"), "w",
+              encoding="utf-8") as f:
+        f.write(README.format(ver=ver, size=size, crc=crc, stamp=stamp))
+
+    # One zip of the lot.
+    out_zip = os.path.join(a.out, "HavenDOS-%s-bundle.zip" % ver)
+    if os.path.exists(out_zip):
+        os.unlink(out_zip)
+    with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
+        for dirpath, _dirs, files in os.walk(stage):
+            for fn in sorted(files):
+                p = os.path.join(dirpath, fn)
+                z.write(p, os.path.relpath(p, a.out))
+
+    total = os.path.getsize(out_zip)
+    print("\nmake_release_bundle: %s  (%.1f MB)"
+          % (os.path.relpath(out_zip, ROOT), total / (1024.0 * 1024.0)))
+    for dirpath, _dirs, files in os.walk(stage):
+        for fn in sorted(files):
+            p = os.path.join(dirpath, fn)
+            print("    %-44s %8.0f KB"
+                  % (os.path.relpath(p, stage), os.path.getsize(p) / 1024.0))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,122 @@
+/* ──────────────────────────────────────────────────────────────────
+   THS-RM-1002 — overrides on the house style.
+
+   manual/style.css is the single source for the look: A5, cream stock,
+   Courier Prime body, IBM Plex Mono headings, VT323 screens, Press Start
+   2P badges, one oxide-red spot colour.  This file is loaded AFTER it and
+   changes only what a report needs and a manual does not — the running
+   head, the cover, and three block types the manual has no use for.
+
+   Nothing here redefines a colour or a typeface.  If the house style
+   moves, this document moves with it.
+   ────────────────────────────────────────────────────────────────── */
+
+/* ── running head: this document, not the manual ────────────────── */
+@page {
+    @top-left  { content: "HavenDOS — road to 1.0"; }
+    @top-right { content: "THS-RM-1002 REV B"; }
+}
+
+/* ── cover: cream and bordered, the proposal look, not the
+      manual's black slab ──────────────────────────────────────── */
+.cover {
+    background: #f2ead6; color: #1a1714;
+    height: 210mm; position: relative;
+    padding: 0; box-sizing: border-box;
+}
+.cover .rule-top { display: none; }
+.cover .frame {
+    position: absolute; top: 10mm; left: 10mm; right: 10mm; bottom: 10mm;
+    border: 1.1mm solid #1a1714;
+    padding: 13mm 12mm 11mm 12mm;
+    box-sizing: border-box;
+}
+.cover .vendor {
+    font-family: "IBM Plex Mono"; font-weight: 700; font-size: 6.6pt;
+    color: #a8321c; letter-spacing: .42em; line-height: 1.4;
+}
+.cover .spot { height: 1.1mm; background: #a8321c; margin: 4mm 0 9mm 0;
+               width: 46mm; }
+.cover h1 {
+    font-family: "Press Start 2P"; font-size: 15pt; line-height: 1.62;
+    margin: 0; color: #1a1714;
+}
+.cover .sub {
+    font-family: "Courier Prime", monospace; font-size: 8.4pt;
+    line-height: 1.6; margin-top: 8mm; color: #1a1714;
+}
+/* Explicit spacing, not flex auto-margins: WeasyPrint's flex support does
+   not push a block to the bottom of a fixed-height box the way a browser
+   does, and a cover that depends on it lays out differently in the two. */
+.cover .bars {
+    margin-top: 30mm; font-family: "IBM Plex Mono"; font-size: 6.9pt;
+    line-height: 1.95;
+}
+.cover .bars .row { display: flex; gap: 3mm; }
+.cover .bars .lab  { width: 26mm; color: #a8321c; letter-spacing: .07em; }
+.cover .bars .bar  { width: 36mm; letter-spacing: .055em; color: #1a1714; }
+.cover .bars .bar .off { color: #bcae92; }
+/* NOT .note -- the house style gives that class a bordered box and
+   a background, and it would turn every bar caption into a callout. */
+.cover .bars .cap  { color: #6b6256; }
+.cover .meta {
+    margin-top: 16mm; border-top: .45mm solid #1a1714; padding-top: 3.5mm;
+    font-family: "IBM Plex Mono"; font-size: 6.6pt; line-height: 1.85;
+    color: #4a443b;
+}
+.cover .meta .k { display: inline-block; width: 24mm; color: #a8321c;
+                  letter-spacing: .07em; }
+
+/* ── spec block: the SIZE / DEPENDS / UNLOCKS strip under a
+      release heading ────────────────────────────────────────────── */
+.spec {
+    border-left: 1.1mm solid #a8321c;
+    padding: 2.4mm 0 2.4mm 3.5mm; margin: 0 0 4mm 0;
+    font-size: 7.9pt; line-height: 1.6;
+    page-break-inside: avoid;
+}
+.spec .k {
+    font-family: "IBM Plex Mono"; font-weight: 700; font-size: 6.9pt;
+    color: #a8321c; letter-spacing: .1em;
+    display: inline-block; width: 19mm;
+}
+
+/* ── a boxed callout with a label of its own (CORRECTION, GATE,
+      PREREQUISITE, SEQUENCING RULE …) ─────────────────────────── */
+.box {
+    border: .45mm solid #a8321c; padding: 3mm 3.5mm 2.6mm 3.5mm;
+    margin: 3.5mm 0 4mm 0; background: #f6f0e0;
+    page-break-inside: avoid;
+}
+.box .lab {
+    display: block; font-family: "IBM Plex Mono"; font-weight: 700;
+    font-size: 6.6pt; letter-spacing: .13em; color: #a8321c;
+    margin-bottom: 1.6mm;
+}
+.box p:last-child { margin-bottom: 0; }
+
+/* Emphasis inside prose and boxes — the spot colour, used sparingly,
+   for the clause a reader must not skim past. */
+.hl { color: #a8321c; }
+
+/* ── a standalone figure caption, for the CRT diagrams that have no
+      image to sit under ───────────────────────────────────────── */
+.figcap {
+    font-family: "DejaVu Sans Mono", monospace; font-size: 6.6pt;
+    color: #4a443b; margin: -2mm 0 4.5mm 0; line-height: 1.4;
+}
+.figcap .lab { color: #a8321c; font-weight: 700; letter-spacing: .05em; }
+
+/* ── tables: three columns of prose need a little more room than the
+      manual's command tables ──────────────────────────────────── */
+table { font-size: 7.5pt; }
+td, th { vertical-align: top; }
+
+/* The first column of a table in this document is a label, not a
+   command, so it should not get the manual's code treatment. */
+td.cmd { font-family: "IBM Plex Mono"; font-size: 7.2pt;
+         background: none; color: #1a1714; }
+
+/* ── the CRT blocks here are diagrams, not screen captures: same
+      typeface, but no glow colour pretending to be a terminal ──── */
+pre.crt { font-size: 9.6pt; line-height: 1.26; }

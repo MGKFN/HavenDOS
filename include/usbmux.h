@@ -253,6 +253,19 @@ int usbmux_max_payload(void);
    release. */
 const char *usbmux_why(void);
 
+/* ── v0.8.9.7 ────────────────────────────────────────────────────────
+   The last message the device sent in a CONTROL packet (protocol 1),
+   as printable text, or 0 if it has sent none. *type_out: 3 is an
+   error, 7 information (usbmuxd's meanings). These used to be taken as
+   a fault that dropped the connection; they are the phone explaining
+   itself, and are kept across reconnects so a message sent as one
+   connection died can be read after it. */
+const char *usbmux_device_said(int *type_out, uint32_t *count_out);
+
+/* v0.8.9.7: zero-length packets sent after transfers that were an exact
+   multiple of the endpoint's maximum packet size. */
+uint32_t usbmux_zlps(void);
+
 /* Send `len` bytes on the open connection. Returns USB_OK or a
    negative USB_E*. The payload rides on an ACK packet, which is what
    usbmuxd does; there is no PSH. */

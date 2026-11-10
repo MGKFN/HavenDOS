@@ -30,6 +30,7 @@
    signature finds out the hard way. include/fat16.h's note records the
    same mistake costing a release. Include the header instead. */
 #include "../include/lockdown.h"
+#include "../include/usbmux.h"
 
 extern void utoa(uint32_t v, char *buf, int base);
 
@@ -730,11 +731,34 @@ static void put_portsc_words(uint32_t v, int is_xhci)
 
    Non-printable bytes become '.', so a binary reply is still
    photographable rather than scrolling the console sideways. */
+/* v0.8.9.7: what the phone SAID, in its own words, if it said
+   anything. A CONTROL packet from an iPhone is a sentence about what it
+   objected to; before this release it dropped the connection unread. */
+static void show_device_said(void)
+{
+    int type = 0;
+    uint32_t count = 0;
+    const char *msg = usbmux_device_said(&type, &count);
+    if (!msg) return;
+    vga_set_color(VGA_DARK_GREY, VGA_BLACK);
+    up("  the phone said");
+    if (count > 1) { up(" (last of "); put_dec(count); up(")"); }
+    up(": ");
+    vga_set_color(type == 3 ? VGA_YELLOW : VGA_LIGHT_CYAN, VGA_BLACK);
+    up(type == 3 ? "ERROR " : type == 7 ? "info " : "type ");
+    if (type != 3 && type != 7) { put_dec((uint32_t)type); up(" "); }
+    vga_set_color(VGA_WHITE, VGA_BLACK);
+    up(msg[0] ? msg : "(no text)");
+    up("\n");
+}
+
 void lockdown_show_reply(void)
 {
     const char *p = lockdown_reply();
     int n = lockdown_reply_len();
     int i, show;
+
+    show_device_said();
 
     vga_set_color(VGA_DARK_GREY, VGA_BLACK);
     up("  what arrived: ");

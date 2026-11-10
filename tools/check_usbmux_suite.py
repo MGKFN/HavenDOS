@@ -872,6 +872,53 @@ BUGS = [
      """    return g_m.why ? g_m.why : "the mux layer has not reported a reason";""",
      """    return g_m.why;"""),
 
+    # ── v0.8.9.7: the phone's CONTROL messages ──────────────────────
+    ("a CONTROL packet drops the connection again",
+     "the defect that shipped: the phone explains in a sentence what it "
+     "objected to, and the driver hangs up without reading it. On the HP "
+     "this was 'a packet that was not TCP on an open connection' right "
+     "after the pair request",
+     """    if (proto == MUX_PROTO_CONTROL) {""",
+     """    if (0) {"""),
+
+    ("a phone's message reaches the console raw",
+     "an escape sequence or a newline in the text goes straight onto the "
+     "screen it is meant to explain",
+     """        g_m.dev_msg[k++] = (c >= 32 && c < 127) ? (char)c : '.';""",
+     """        g_m.dev_msg[k++] = (char)c;"""),
+
+    ("a reconnect erases what the phone said",
+     "the message sent as a connection died is the one worth reading "
+     "after it, and `pair` reconnects before it reports",
+     """    g_m.why     = 0;        /* a new connection owes nothing to the last */""",
+     """    g_m.why     = 0;        /* a new connection owes nothing to the last */
+    g_m.dev_msgs = 0;"""),
+
+    ("no zero-length packet after a full-size transfer",
+     "THE defect of 0.8.9.7: the pair request's first mux packet is 2048 "
+     "bytes, 4 x 512, the phone keeps reading, glues the second packet "
+     "onto it and refuses the result",
+     """    if (g_m.mps_out && (total % (int)g_m.mps_out) == 0) {""",
+     """    if (0) {"""),
+
+    ("a zero-length packet after every transfer",
+     "harmless-looking and wrong: a ZLP after a SHORT packet is an empty "
+     "transfer of its own, which a device can take as a zero-length "
+     "message",
+     """    if (g_m.mps_out && (total % (int)g_m.mps_out) == 0) {""",
+     """    if (g_m.mps_out) {"""),
+
+    ("a failed ZLP is ignored",
+     "the transfer it was meant to end is still open on the device, so "
+     "the next packet is glued to it -- reporting success here is "
+     "reporting the bug as a send",
+     """            if (r == USB_ESTALL) usb_clear_halt(d, g_m.ep_out, 0);
+            return r;
+        }
+        g_m.zlps++;""",
+     """        }
+        g_m.zlps++;"""),
+
     # ── AND ONE THAT CANNOT BE REACHED FROM A SUITE AT ALL ───────────
     #
     # "a non-TCP packet on an open connection is read as data" --

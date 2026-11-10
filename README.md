@@ -6,9 +6,15 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.8.9.6 Beta "Helios"
+## Current version: 0.8.9.7 Beta "Helios"
 
-**0.8.9.6 is a performance release.** The framebuffer is now
+**0.8.9.7** fixes the iPhone pairing transport. Messages that were
+exactly a multiple of 512 bytes were never terminated, so the phone
+glued the pair request's two packets together. And the phone's own
+explanation, a usbmux CONTROL message, was thrown away unread.
+[Changelog](changelogs/CHANGELOG-v0.8.9.7.md).
+
+**0.8.9.6 was a performance release.** The framebuffer is now
 write-combining. It was uncached on real hardware, which made every
 redraw crawl. The mouse moves at the same speed on every resolution,
 the cursor reaches the whole screen on high-resolution grids, and the
@@ -21,7 +27,7 @@ a port flaps, and the kernel log keeps recording after the boot.
 
 Helios is the iPhone release. The HP laptop HavenDOS is tested on has no Ethernet port and its Wi-Fi chip has no driver, so its route to a network is an iPhone over USB — and iOS only turns tethering on for a computer it has *paired* with. Pairing means a usbmux channel, Apple property lists, two 2048-bit RSA keys generated on the machine, three X.509 certificates, and TLS 1.2 with a client certificate, all written for this kernel.
 
-Stages 1 and 2 of pairing are confirmed on the HP: lockdownd answers, and the phone hands over its public key. Stage 3 — the pair request itself — reached the phone for the first time in 0.8.9.4. 0.8.9.5 fixes why it went unanswered: the connection sat idle for 71 seconds while the keys were generated, and the phone, reasonably, hung up.
+Stages 1 and 2 of pairing are confirmed on the HP: lockdownd answers, and the phone hands over its public key. Stage 3 — the pair request itself — reached the phone for the first time in 0.8.9.4. 0.8.9.5 stopped the connection sitting idle through the 71-second keygen, and 0.8.9.7 ends full-size USB transfers the way the phone expects.
 
 Every release has its full changelog in [`changelogs/`](changelogs/).
 
@@ -63,11 +69,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.6.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.7.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.6.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.7.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

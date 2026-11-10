@@ -1570,8 +1570,11 @@ int main(void)
             int r;
             /* The connection took four bulk OUTs (version, setup,
                SYN, the completing ACK), so the request's first
-               segment is the fifth and its second is the sixth. */
-            ph.stall_out_on = 6;
+               segment is the fifth. It is a full MUX_BUF -- 2048, a
+               multiple of 512 -- so the sixth is its zero-length
+               packet (v0.8.9.7) and the second segment is the
+               seventh. */
+            ph.stall_out_on = 7;
             sent = -1;
             r = usbmux_send_stream(big, 5000, &sent);
             ck("it fails rather than claiming success", r < 0, r);
@@ -1827,6 +1830,170 @@ int main(void)
         ck("it reconnects", usbmux_connect(MUX_PORT_LOCKDOWN) == USB_OK, 0);
         ck("and the reason no longer names the old conversation",
            strstr(usbmux_why(), "closed") == 0, 0);
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       v0.8.9.7 -- A CONTROL PACKET IS THE PHONE TALKING
+
+       Kyan's HP, 10 November, straight after the pair request:
+       "the request failed (-3): a packet that was not TCP on an open
+       connection". Protocol 1 is CONTROL; usbmuxd logs its text and
+       keeps the connection. This driver dropped both.
+       ══════════════════════════════════════════════════════════════════ */
+    head("a CONTROL message does not end the connection");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        uint8_t buf[64];
+        int r, type = -1;
+        uint32_t count = 0;
+        const char *said;
+        queue_control(3, "something the phone objected to");
+        r = usbmux_recv(buf, (int)sizeof buf);
+        ck("it is 'nothing yet', not a failure", r == 0, r);
+        ck("the connection is still up", usbmux_connected() == 1,
+           usbmux_connected());
+        said = usbmux_device_said(&type, &count);
+        ck("what the phone said is kept",
+           said && !strcmp(said, "something the phone objected to"), 0);
+        ck("  ... with its type", type == 3, type);
+        ck("  ... and counted", count == 1, (int)count);
+
+        /* And the conversation carries on: data after the message is
+           still delivered. */
+        queue_tcp(F_ACK, ph.dev_seq, ph.exp_host_seq, "hello", 5);
+        r = usbmux_recv(buf, (int)sizeof buf);
+        ck("the next TCP packet is still delivered",
+           r == 5 && !memcmp(buf, "hello", 5), r);
+    }
+
+    head("a CONTROL message cannot put control characters on the screen");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        uint8_t buf[16];
+        int type = 0;
+        const char *said;
+        queue_control(7, "line one\nline\x1b[2Jtwo\r\n");
+        usbmux_recv(buf, (int)sizeof buf);
+        said = usbmux_device_said(&type, 0);
+        ck("newlines become spaces and the escape a dot",
+           said && !strcmp(said, "line one line.[2Jtwo"), 0);
+        ck("type 7 is kept as 7", type == 7, type);
+    }
+
+    head("an empty CONTROL message is still a message");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        uint8_t buf[16];
+        uint32_t before = 0;
+        usbmux_device_said(0, &before);
+        queue_control(3, "");
+        ck("nothing yet", usbmux_recv(buf, (int)sizeof buf) == 0, 0);
+        {
+            uint32_t after = 0;
+            const char *said = usbmux_device_said(0, &after);
+            ck("counted, with empty text",
+               after == before + 1 && said && said[0] == 0, (int)after);
+        }
+    }
+
+    head("what the phone said survives the connection it was said on");
+    {
+        uint8_t buf[16];
+        machine();
+        usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+        queue_control(3, "the reason");
+        usbmux_recv(buf, (int)sizeof buf);
+        ph.tcp_state = 0;
+        usbmux_connect(MUX_PORT_LOCKDOWN);
+        ck("a reconnect does not erase it",
+           usbmux_device_said(0, 0) &&
+           !strcmp(usbmux_device_said(0, 0), "the reason"), 0);
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       v0.8.9.7 -- THE ZERO-LENGTH PACKET
+       muxdev.inc now delivers a bulk transfer only when it ends: on a
+       USB packet shorter than 512, or on a zero-length one. The pair
+       request's first mux packet is 2048 bytes, and without a ZLP the
+       phone glued the second packet onto it.
+       ══════════════════════════════════════════════════════════════════ */
+    head("a full-size mux packet is followed by a zero-length packet");
+    machine();
+    ph.auto_ack = 1;
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        static uint8_t req[3728];
+        int sent = -1, z0 = ph.zlps;
+        for (int i = 0; i < (int)sizeof req; i++) req[i] = (uint8_t)(i * 7 + 3);
+        ck("the pair-sized request goes out",
+           usbmux_send_stream(req, (int)sizeof req, &sent) == USB_OK
+           && sent == (int)sizeof req, sent);
+        ck("exactly one ZLP: after the 2048-byte packet, not the short one",
+           ph.zlps - z0 == 1, ph.zlps - z0);
+        ck("the driver counted it", usbmux_zlps() >= 1u, (long)usbmux_zlps());
+        ck("no transfer held two mux packets", ph.glued == 0, ph.glued);
+        ck("and the device has every byte, in order",
+           ph.host_stream_len == sizeof req &&
+           memcmp(ph.host_stream, req, sizeof req) == 0,
+           (long)ph.host_stream_len);
+    }
+
+    head("a ZLP that fails is a send that fails");
+    machine();
+    ph.auto_ack = 1;
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        static uint8_t req[3728];
+        int sent = -1, r;
+        memset(req, 'z', sizeof req);
+        /* +1 is the full 2048-byte packet, +2 its ZLP. */
+        ph.stall_out_on = ph.out_calls + 2;
+        r = usbmux_send_stream(req, (int)sizeof req, &sent);
+        ph.stall_out_on = 0;
+        ck("it is reported as a failure, not a send",
+           r < 0, r);
+        ck("  ... and the device was never handed half a message",
+           ph.host_stream_len == 0, (long)ph.host_stream_len);
+    }
+
+    head("a packet that is not a multiple of 512 gets no ZLP");
+    machine();
+    ph.auto_ack = 1;
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        static uint8_t small[300];
+        int sent = -1, z0 = ph.zlps;
+        memset(small, 'x', sizeof small);
+        usbmux_send_stream(small, (int)sizeof small, &sent);
+        ck("336 bytes on the wire, no ZLP", ph.zlps == z0, ph.zlps - z0);
+    }
+
+    head("a packet of exactly 512 bytes gets one too");
+    machine();
+    ph.auto_ack = 1;
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        static uint8_t five12[512 - MUX_HDR_FULL - MUX_TCP_HDR];
+        int sent = -1, z0 = ph.zlps;
+        memset(five12, 'y', sizeof five12);
+        usbmux_send_stream(five12, (int)sizeof five12, &sent);
+        ck("a 512-byte packet is terminated", ph.zlps - z0 == 1,
+           ph.zlps - z0);
+        ck("  ... and delivered", ph.host_stream_len == sizeof five12,
+           (long)ph.host_stream_len);
+    }
+
+    head("other protocols on an open connection are still refused");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        uint8_t buf[16];
+        queue_post(2);                    /* SETUP, mid-connection */
+        ck("SETUP mid-connection is still a transfer error",
+           usbmux_recv(buf, (int)sizeof buf) == USB_EXFER, 0);
     }
 
     printf("\n%d/%d passed\n", total - fails, total);

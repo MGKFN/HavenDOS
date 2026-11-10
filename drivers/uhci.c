@@ -458,6 +458,24 @@ int uhci_bulk(const uhci_dev_t *d, uint8_t ep, int in, void *data, int len,
     uint8_t *p = (uint8_t *)data;
     int left = len, moved = 0;
 
+    /* v0.8.9.7: a zero-length OUT is a real transfer -- the ZLP that
+       ends a bulk message whose length was an exact multiple of the
+       packet size -- not an empty request to skip. The loop below never
+       runs for len 0, so it is built here: one TD, length field 0x7FF,
+       which is how UHCI spells "no data". */
+    if (len == 0 && !in) {
+        td_build(&td_pool[0], d->lowspeed, tog_get(d->addr, ep, 0),
+                 PID_OUT, d->addr, ep, 0, 0, 0);
+        tog_set(d->addr, ep, 0, !tog_get(d->addr, ep, 0));
+        td_chain(1);
+        if (run_chain(&qh_bulk[ci], 1, 2000) < 0) return UHCI_ETIMEOUT;
+        {
+            int st = chain_status(0, 1);
+            if (st != UHCI_OK) return st;
+        }
+        return 0;
+    }
+
     /* The pool bounds one submission, not one request: a longer transfer is
        split here rather than refused, so callers above never have to know
        how big the pool is. */

@@ -1762,9 +1762,11 @@ int main(void)
         for (i = 0; i < (int)sizeof doc - 1; i++) doc[i] = 'y';
         doc[sizeof doc - 1] = 0;
 
-        /* The connection took four bulk OUTs; the request's second
-           segment is the sixth. */
-        ph.stall_out_on = 6;
+        /* The connection took four bulk OUTs; the request's first
+           segment is the fifth, a full 2048-byte packet, so the sixth
+           is its zero-length packet (v0.8.9.7) and the second segment
+           is the seventh. */
+        ph.stall_out_on = 7;
         logs = g_logs;
         r = ld_send_plist(doc);
         ck("it fails", r < 0, r);
@@ -2466,7 +2468,12 @@ int main(void)
            genuinely go out before it breaks. */
         {
             uint32_t bytes_before = ph.host_bytes;
-            ph.stall_out_on = ph.out_calls + 2;
+            /* +3 since v0.8.9.7: the first segment is a full packet,
+               so +2 is its zero-length packet. Stalling THAT leaves the
+               first transfer unterminated, so the device never takes
+               its bytes -- which is what a real phone would do, and is
+               not the case this check is about. */
+            ph.stall_out_on = ph.out_calls + 3;
             ck("the send fails",
                tr->send(0, big, (uint16_t)sizeof big) < 0, 0);
             ck("but some bytes HAD gone out first",

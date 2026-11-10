@@ -175,6 +175,14 @@ typedef struct {
     const char *why;
 
     uint32_t fins;          /* times the device closed on us          */
+    uint32_t zlps;          /* v0.8.9.7: zero-length packets sent     */
+
+    /* ── v0.8.9.7: WHAT THE DEVICE SAID ──────────────────────────────
+       The last CONTROL message the device sent, as printable text, its
+       type, and how many there have been. See mux_tcp_recv(). */
+    char     dev_msg[160];
+    uint8_t  dev_msg_type;
+    uint32_t dev_msgs;
 } mux_t;
 
 static mux_t g_m;
@@ -377,6 +385,43 @@ static int mux_send(uint32_t proto, const void *hdr2, int h2len,
         g_m.errs++;
         if (r == USB_ESTALL) usb_clear_halt(d, g_m.ep_out, 0);
         return r;
+    }
+
+    /* ── v0.8.9.7: A PACKET THAT FILLS ITS LAST USB PACKET NEEDS A ZLP ──
+     *
+     * A bulk transfer ends at the first USB packet SHORTER than the
+     * endpoint's maximum. A mux packet whose length is an exact
+     * multiple of it -- 512 on a high-speed iPhone -- ends on a full
+     * one, and the device cannot tell it is over: it goes on reading,
+     * and the NEXT mux packet lands in the same transfer, glued to the
+     * end of this one. Its header then describes a packet of one
+     * length inside a transfer of another, and the phone's usbmux
+     * refuses it -- in a CONTROL message, which until this release was
+     * itself dropped unread.
+     *
+     * usbmuxd sends a zero-length packet after exactly these
+     * (usb.c, usb_send: "Send ZLP"). This did not, and nothing ever
+     * noticed, because nothing this side sent was ever that size: the
+     * QueryType and GetValue requests are a few hundred bytes. The
+     * pair request is 3728, sent as two packets, and the first is the
+     * full MUX_BUF -- 16 + 20 + 2012 = 2048 = 4 x 512. The very first
+     * full-size packet this driver has ever sent was a multiple of 512.
+     *
+     * On Kyan's HP, 10 November: QueryType worked, GetValue worked,
+     * the pair request went out, and the phone answered with a packet
+     * that was not TCP. */
+    if (g_m.mps_out && (total % (int)g_m.mps_out) == 0) {
+        r = usb_bulk(d, g_m.ep_out, 0, g_buf, 0, (int)g_m.mps_out);
+        if (r < 0) {
+            g_m.errs++;
+            g_m.why = "the zero-length packet that ends a full-size "
+                      "transfer would not go out";
+            klog(KLOG_WARN, "usbmux: ZLP after %d bytes failed (%d)",
+                 (uint32_t)total, (uint32_t)r);
+            if (r == USB_ESTALL) usb_clear_halt(d, g_m.ep_out, 0);
+            return r;
+        }
+        g_m.zlps++;
     }
     /* Only a packet that CARRIED the field advances it. The VERSION
        packet goes out on the short header, so it must not -- and
@@ -689,6 +734,51 @@ static int mux_tcp_recv(uint8_t *flags_out, uint32_t *seq_out,
     if (r == 0)  return USB_ETIMEOUT;   /* nothing yet, not a failure */
     if (r < 0)   return r;
 
+    /* ── v0.8.9.7: A CONTROL PACKET IS THE DEVICE TALKING ────────────
+     *
+     * Before this, every protocol but TCP on an open connection was a
+     * fault, and the connection was dropped on the spot. On Kyan's HP,
+     * 10 November, right after the 3728-byte pair request went out:
+     *
+     *     the request failed (-3):
+     *     a packet that was not TCP on an open connection
+     *
+     * Protocol 1 is CONTROL, and it is how an iPhone's usbmux sends the
+     * host a message in words. usbmuxd (device.c, device_control_input)
+     * takes the first payload byte as a type -- 3 is an error, 7 is
+     * information -- and the rest as text, LOGS IT, and carries on with
+     * the connection exactly as it was. So the phone had explained what
+     * it objected to, in a sentence, and this driver threw the sentence
+     * away unread and hung up.
+     *
+     * Now it is kept -- printable bytes only, so a phone's message
+     * cannot put control characters on the console -- logged, counted,
+     * and skipped: USB_ETIMEOUT is what every caller already reads as
+     * "nothing for you yet, keep polling". usbmux_device_said() hands
+     * it to whoever is about to explain a failure on screen.
+     *
+     * The type values are usbmuxd's, not off the wire: no CONTROL
+     * packet has been captured from a real phone yet. The next photo
+     * of `pair` will be the first. */
+    if (proto == MUX_PROTO_CONTROL) {
+        const uint8_t *p = (const uint8_t *)usbmux_payload();
+        int i, k = 0;
+        g_m.dev_msgs++;
+        g_m.dev_msg_type = r > 0 ? p[0] : 0;
+        for (i = 1; i < r && k < (int)sizeof g_m.dev_msg - 1; i++) {
+            uint8_t c = p[i];
+            if (c == 0) break;
+            if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+            g_m.dev_msg[k++] = (c >= 32 && c < 127) ? (char)c : '.';
+        }
+        while (k > 0 && g_m.dev_msg[k - 1] == ' ') k--;
+        g_m.dev_msg[k] = 0;
+        klog(g_m.dev_msg_type == 3 ? KLOG_WARN : KLOG_INFO,
+             "usbmux: the device says (type %u): %s",
+             (uint32_t)g_m.dev_msg_type, k ? g_m.dev_msg : "(no text)");
+        return USB_ETIMEOUT;
+    }
+
     if (proto != MUX_PROTO_TCP) {
         g_m.why = "a packet that was not TCP on an open connection";
         klog(KLOG_WARN, "usbmux: protocol %u on an open connection, "
@@ -751,6 +841,18 @@ int usbmux_max_payload(void) { return MUX_MAX_PAYLOAD; }
    has not refused anything. Never null: a caller that has to test for
    one will one day not, and "(null)" on a diagnostic screen is worse
    than a sentence. */
+/* v0.8.9.7: the last thing the device said in a CONTROL packet, or 0
+   when it has said nothing. *type_out gets usbmuxd's type: 3 is an
+   error, 7 is information. */
+uint32_t usbmux_zlps(void) { return g_m.zlps; }
+
+const char *usbmux_device_said(int *type_out, uint32_t *count_out)
+{
+    if (type_out)  *type_out  = g_m.dev_msg_type;
+    if (count_out) *count_out = g_m.dev_msgs;
+    return g_m.dev_msgs ? g_m.dev_msg : 0;
+}
+
 const char *usbmux_why(void)
 {
     return g_m.why ? g_m.why : "the mux layer has not reported a reason";
@@ -764,6 +866,8 @@ int usbmux_connect(uint16_t dport)
 
     g_m.refused = 0;
     g_m.why     = 0;        /* a new connection owes nothing to the last */
+    /* The device's messages are NOT cleared: one sent while the last
+       connection died is exactly the one worth reading after it. */
 
     if (!g_m.open) return USB_ENODEV;
 

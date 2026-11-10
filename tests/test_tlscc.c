@@ -71,6 +71,7 @@
    writing another, which both sides would report as success.
    ════════════════════════════════════════════════════════════════════ */
 #include <stdio.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -562,6 +563,15 @@ static char g_page[32768];
 
 int main(void)
 {
+    /* v0.8.9.7: a write to a socket s_server has already closed raises
+       SIGPIPE, whose default action kills the process -- before it has
+       printed a single result line, so run_suite.py could only say "the
+       suite printed no result". It happened once in eight runs while
+       0.8.9.7 was being built. Ignored, the write fails with EPIPE
+       instead, and the check that made it fails with a reason. */
+    signal(SIGPIPE, SIG_IGN);
+    setvbuf(stdout, 0, _IOLBF, 0);   /* and what did print is not lost */
+
     printf("\n=== test_tlscc: TLS client certificates, judged by "
            "openssl s_server ===\n");
 

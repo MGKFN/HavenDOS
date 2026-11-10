@@ -115,6 +115,14 @@ static struct {
     int bad_len;           /* a valid magic, but length under 16      */
     int wrong_proto;       /* answers, but not with a VERSION         */
     int one_ep;            /* the interface offers one bulk endpoint  */
+    /* v0.8.9.7: the transfer the device is still reading, because the
+       last USB packet of it was full-sized. See s_bulk(). */
+    uint8_t xfer[8192];
+    int  xfer_len;
+    int  xfer_overrun;
+    int  xfer_calls;       /* non-empty OUTs in the transfer so far   */
+    int  zlps;             /* zero-length packets received            */
+    int  glued;            /* transfers that held more than one call  */
     int set_cfgs;          /* how many SET_CONFIGURATIONs were sent   */
     int dev_version;       /* what it says it is                      */
 
@@ -386,6 +394,25 @@ static void queue_tcp(uint8_t flags, uint32_t seq, uint32_t ack,
     wr16(th + 16, 0);
     wr16(th + 18, 0);
     if (len && data) memcpy(th + TH_LEN, data, (size_t)len);
+    ph.in_len = total;
+}
+
+/* v0.8.9.7: a CONTROL packet -- protocol 1, the device talking.
+   The layout (first payload byte a type, the rest text) is usbmuxd's
+   reading of it in device_control_input(), NOT bytes off a phone: none
+   has been captured yet. When one is, it replaces this. */
+static void queue_control(uint8_t type, const char *text)
+{
+    uint8_t *p = ph.in;
+    int tl = text ? (int)strlen(text) : 0;
+    int total = MUX_HDR_FULL + 1 + tl;
+    wr32(p + 0, 1u);                     /* MUX_PROTO_CONTROL */
+    wr32(p + 4, (uint32_t)total);
+    wr32(p + 8, 0xFACEFACEu);
+    wr16(p + 12, 0);
+    wr16(p + 14, ph.dev_mux_rx);
+    p[MUX_HDR_FULL] = type;
+    if (tl) memcpy(p + MUX_HDR_FULL + 1, text, (size_t)tl);
     ph.in_len = total;
 }
 
@@ -673,10 +700,47 @@ static int s_bulk(struct usb_hc *h, const usb_dev_t *d, uint8_t ep, int in,
     ph.out_len = len;
     if(len > 0 && len <= (int)sizeof ph.out && data)
         memcpy(ph.out, data, (size_t)len);
-    /* v0.8.7.7: handed to a device that VALIDATES it, rather than a
-       branch that answers a VERSION and ignores everything else. */
-    if(len > 0 && len <= (int)sizeof ph.out && data)
-        dev_rx(ph.out, len);
+
+    /* ── v0.8.9.7: A TRANSFER ENDS ON A SHORT PACKET ──────────────────
+       USB has no length field for a bulk transfer. It ends at the first
+       USB packet shorter than the endpoint's maximum -- here 512, the
+       iPhone's -- and a transfer whose length is an exact multiple of
+       that ends only when the host sends a zero-length packet. Until
+       then the device is still reading, and whatever the host sends
+       next is MORE OF THE SAME TRANSFER.
+
+       This fixture used to hand every call to the device as a complete
+       message, so a driver that never sent a ZLP was indistinguishable
+       from one that did. The real phone glued the pair request's two
+       mux packets into one transfer and refused it -- the first packet
+       is 2048 bytes, 4 x 512 -- and the suite had never been able to
+       see that happen. Now it accumulates, and delivers when the
+       transfer actually ends. */
+    {
+        int m = mps > 0 ? mps : 512;
+        if(len > 0 && data){
+            if(ph.xfer_len + len > (int)sizeof ph.xfer){
+                ph.xfer_overrun++;
+                ph.xfer_len = 0;
+                return USB_EXFER;
+            }
+            memcpy(ph.xfer + ph.xfer_len, data, (size_t)len);
+            ph.xfer_len += len;
+            ph.xfer_calls++;
+        }
+        if(len == 0) ph.zlps++;
+        if(len == 0 || (len % m) != 0){
+            /* v0.8.7.7: handed to a device that VALIDATES it, rather
+               than a branch that answers a VERSION and ignores
+               everything else. */
+            if(ph.xfer_len > 0){
+                if(ph.xfer_calls > 1) ph.glued++;   /* two messages, one transfer */
+                dev_rx(ph.xfer, ph.xfer_len);
+            }
+            ph.xfer_len = 0;
+            ph.xfer_calls = 0;
+        }
+    }
     return len;
 }
 

@@ -210,15 +210,13 @@ BUGS = [
      "and `usb lockdown` prints it. Recording only on success throws "
      "away exactly the evidence -- the same argument as `usb mux`'s "
      "raw packet line, one layer up",
-     """        if (r < 0) {
-            /* Keep what arrived. A reply that broke half way through
-               is evidence; discarding it on the way out is how the
-               only informative screen in a release gets thrown away. */
-            g_ld.reply_len  = have;
+     # Re-anchored in v0.8.9.7: 0.8.9.5 added the `why` lines inside
+     # this block and the injection went stale unnoticed for two
+     # releases, because this harness was not run when they shipped.
+     """            g_ld.reply_len  = have;
             g_ld.have_reply = have > 0;
-            return r;
-        }""",
-     """        if (r < 0) return r;"""),
+            /* v0.8.9.5: the transport knows WHY and this does not.""",
+     """            /* v0.8.9.5: the transport knows WHY and this does not."""),
 
     ("the state is not cleared between queries",
      "a second query whose reply has no Type reports the FIRST one's, "
@@ -686,12 +684,14 @@ BUGS = [
     ("an encrypted send that fails is reported as success",
      "the request never reached lockdownd and the caller goes on to "
      "read a reply that will never come",
-     """        if (r < 0) {
+     # Re-anchored in v0.8.9.7 -- stale since 0.8.9.5, see above.
+     """            g_ld.why = "the encrypted request would not go out";
             klog(KLOG_WARN, "lockdown: the encrypted request would not "
                  "send (%d)", (uint32_t)r);
-            return USB_EXFER;
-        }""",
-     """        ;"""),
+            return USB_EXFER;""",
+     """            g_ld.why = "the encrypted request would not go out";
+            klog(KLOG_WARN, "lockdown: the encrypted request would not "
+                 "send (%d)", (uint32_t)r);"""),
 
     # ── the transport ─────────────────────────────────────────────────
     ("a TLS record sent half way does not tear the session down",

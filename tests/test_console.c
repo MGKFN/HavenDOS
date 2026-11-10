@@ -59,6 +59,8 @@
    makes goes through fb_store(), which counts a write outside
    width*height as an escape and fails the suite.
    ════════════════════════════════════════════════════════════════════ */
+#define _GNU_SOURCE 1   /* MAP_32BIT */
+#include <sys/mman.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -219,8 +221,33 @@ static char pattern(int idx){ return (char)(33 + (idx % 94)); }
 
 int main(void)
 {
-    fb = malloc((size_t)FB_MAX_PX * 4);
-    if(!fb){ printf("cannot allocate the simulated panel\n"); return 2; }
+    /* ── v0.8.9.5: THE PANEL HAS TO BE BELOW 4 GB ─────────────────────
+       vga_fb_init() takes the framebuffer address as a uint32_t,
+       because on the machine it is a 32-bit physical address. This
+       suite used to get the panel from malloc(), and a 33 MB malloc is
+       an mmap -- which on an ordinary x86-64 Linux kernel lands near
+       0x7f0000000000. Cast to uint32_t, that is a different address
+       entirely, and the first pixel written there kills the process
+       before it prints a result line.
+
+       It passed for every release because the container the tree was
+       built in hands out low mmap addresses. The first run on a stock
+       Ubuntu kernel -- the GitHub Actions release build -- died here
+       with "the suite printed no result". MAP_32BIT asks the kernel
+       for the first 2 GB outright. The check below it is not belt and
+       braces: an address that does not survive the cast must stop the
+       suite with a sentence, not a segfault. */
+    fb = mmap(0, (size_t)FB_MAX_PX * 4, PROT_READ | PROT_WRITE,
+              MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+    if(fb == MAP_FAILED){
+        printf("cannot map the simulated panel below 4 GB\n");
+        return 2;
+    }
+    if((uintptr_t)fb != (uintptr_t)(uint32_t)(uintptr_t)fb){
+        printf("the simulated panel is at %p, which does not fit the "
+               "uint32_t vga_fb_init() takes\n", (void *)fb);
+        return 2;
+    }
 
     printf("\ntest_console -- the console grid, on both consoles\n");
 
@@ -1533,6 +1560,6 @@ int main(void)
     fbc_active = 0;
 
     printf("\n%d/%d passed\n", total - fails, total);
-    free(fb);
+    munmap(fb, (size_t)FB_MAX_PX * 4);
     return fails ? 1 : 0;
 }

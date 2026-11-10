@@ -1,7 +1,9 @@
 # Build, test and publish a HavenDOS release.
 #
-# A release happens when a commit on main changes include/version.h --
-# that is, when HAVENDOS_VER_NUM moves. Everything the release carries is
+# Every push to main runs this, and it publishes when the version in
+# include/version.h has no release yet -- so a version bump publishes,
+# and a release whose build failed is retried by the next push that
+# fixes it. When the release exists the run stops after a few seconds. Everything the release carries is
 # built here from the committed source, so the ISO, the kernel in it and
 # the source archive cannot describe three different trees.
 #
@@ -18,7 +20,6 @@ name: Release
 on:
   push:
     branches: [main]
-    paths: ["include/version.h"]
   workflow_dispatch:
 
 permissions:

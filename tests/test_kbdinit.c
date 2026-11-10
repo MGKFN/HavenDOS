@@ -190,6 +190,10 @@ void vga_flush(void){ }
 static int sim_cols = 80, sim_rows = 25;
 int vga_cols(void){ return sim_cols; }
 int vga_rows(void){ return sim_rows; }
+/* v0.8.9.6: and the size of a cell in pixels, so the speed can be a
+   fraction of the screen rather than a count of cells. */
+static int sim_cw = 8, sim_ch = 16;
+void vga_cell_px(int *w, int *h){ if(w) *w = sim_cw; if(h) *h = sim_ch; }
 
 /* v0.8.8: kernel_poll(), which keyboard_waitchar() now calls from
    its wait loop -- see tests/kpollguard.inc. */
@@ -350,6 +354,72 @@ int main(void)
         ck("and clamps at zero rather than going negative",
            mx >= 0 && my >= 0, mx);
         sim_cols = 80; sim_rows = 25;
+    }
+
+    /* ── v0.8.9.6: SPEED IS A FRACTION OF THE SCREEN ────────────────
+       Four counts per CELL made a 240-column grid three times slower
+       to cross than 80x25 -- "heel sloom" on the HP at high
+       resolution -- and moved the pointer twice as many pixels down as
+       across, because a cell is twice as tall as it is wide. */
+    {
+        int mx, my, mb;
+        /* Small reports, five counts each, so the acceleration (which
+           starts above six) is not what is being measured. */
+#define FEED(dx, dy, n) for(int i_ = 0; i_ < (n); i_++){ \
+            mouse_feed((uint8_t)(0x08 | ((dx) < 0 ? 0x10 : 0) | ((dy) > 0 ? 0x20 : 0))); \
+            mouse_feed((uint8_t)((dx) & 0xFF)); \
+            mouse_feed((uint8_t)((-(dy)) & 0xFF)); }
+        /* Home to the top-left: clamped there whatever the grid. */
+#define HOME() FEED(-5, -5, 400)
+
+        head("the same hand movement crosses the same share of any grid");
+        sim_cols = 80;  sim_rows = 25; sim_cw = 8; sim_ch = 16;
+        HOME(); FEED(5, 0, 32);                     /* 160 counts */
+        mouse_get(&mx, &my, &mb);
+        ck("80 columns: half the span is half the width", mx == 40, mx);
+        sim_cols = 240; sim_rows = 67; sim_cw = 8; sim_ch = 16;
+        HOME(); FEED(5, 0, 32);
+        mouse_get(&mx, &my, &mb);
+        ck("240 columns: the same movement is still half the width",
+           mx == 120, mx);
+        sim_cols = 160; sim_rows = 50; sim_cw = 8; sim_ch = 16;
+        HOME(); FEED(5, 0, 64);                     /* 320 counts */
+        mouse_get(&mx, &my, &mb);
+        ck("160 columns: the whole span reaches the last column",
+           mx == 159, mx);
+
+        head("a count is the same number of pixels on both axes");
+        /* 80x25 on 1280x800: 16x32 cells. 40 counts across is 10
+           cells = 160 px; 40 counts down must be 160 px = 5 rows. */
+        sim_cols = 80; sim_rows = 25; sim_cw = 16; sim_ch = 32;
+        HOME(); FEED(5, 5, 8);
+        mouse_get(&mx, &my, &mb);
+        ck("40 counts across is 10 columns (160 px)", mx == 10, mx);
+        ck("40 counts down is 5 rows (160 px), not 10", my == 5, my);
+
+        head("left and right are mirror images");
+        sim_cols = 80; sim_rows = 25; sim_cw = 8; sim_ch = 16;
+        HOME(); FEED(5, 0, 32);                     /* to column 40 */
+        FEED(3, 0, 37);                             /* 111 counts right */
+        FEED(-3, 0, 37);                            /* 111 counts left  */
+        mouse_get(&mx, &my, &mb);
+        ck("there and back again ends where it started", mx == 40, mx);
+        /* The v0.7.17 bug in a new place would show here: a fast
+           movement left must be boosted exactly as much as one right. */
+        FEED(20, 0, 2);                             /* +20 columns */
+        FEED(-20, 0, 2);
+        mouse_get(&mx, &my, &mb);
+        ck("and so does a fast one, acceleration and all", mx == 40, mx);
+        head("pushing against an edge leaves no debt behind");
+        HOME();
+        FEED(-5, -5, 50);                           /* keep pushing */
+        FEED(5, 0, 1);                              /* 5 counts back */
+        FEED(5, 0, 1);                              /* 10: 2.5 cells */
+        mouse_get(&mx, &my, &mb);
+        ck("the first movement off the edge moves at once", mx == 2, mx);
+#undef HOME
+#undef FEED
+        sim_cols = 80; sim_rows = 25; sim_cw = 8; sim_ch = 16;
     }
 
     head("a silent controller does not hang the mouse either");

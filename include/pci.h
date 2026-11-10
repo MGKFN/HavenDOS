@@ -73,6 +73,11 @@ int      pci_bar_is_64(const pci_dev_t *d, int n);
    that is not bus master cannot do DMA, which is how both USB and audio
    move their data. */
 void pci_enable(const pci_dev_t *d, int bus_master);
+/* v0.8.9.6: bring a function out of D3 into D0, restoring its BARs and
+   command register. Returns the previous state (0-3), or -1 if it has
+   no power-management capability. `delay_ms` waits the 10 ms recovery
+   time the specification requires; may be 0 in a simulation. */
+int  pci_set_d0(const pci_dev_t *d, void (*delay_ms)(uint32_t));
 
 /* Raw config space, for the registers a driver needs that are not BARs. */
 uint32_t pci_cfg_read32(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t reg);

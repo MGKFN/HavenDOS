@@ -132,6 +132,7 @@ void vga_present(void);
    laid out for 80x25 is told it has 80x25. */
 int  vga_rows(void);          /* v0.7.8: active row count (25 or 50) */
 int  vga_cols(void);
+void vga_cell_px(int *w, int *h);   /* v0.8.9.6: one cell, in pixels */
 
 /* ── the PHYSICAL grid ───────────────────────────────────────────────
    The real console. Needed only by code that owns the whole screen --

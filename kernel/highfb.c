@@ -18,16 +18,17 @@
 #define HIGHFB_STATIC static
 #endif
 
-/* Page-directory flags.  PWT (write-through) rather than plain
-   write-back: a framebuffer is memory-mapped I/O, and letting writes
-   sit in a cache line means pixels reach the panel whenever the line
-   happens to be evicted.  Write-combining would be better still, but
-   that needs MTRRs or PAT and this is a diagnostic path. */
+/* Page-directory flags.  See highfb_map() for which a framebuffer gets
+   and why it is no longer PWT. */
 #define PDE_P     0x001u
 #define PDE_RW    0x002u
 #define PDE_PWT   0x008u
 #define PDE_PCD   0x010u      /* cache disable -- see highfb_map_io */
 #define PDE_PS    0x080u      /* this entry is a large page */
+/* Bit 12 of a LARGE-page entry (4 MB PSE, 2 MB PAE) is PAT -- the third
+   bit of the index into the PAT MSR, with PCD and PWT the other two.
+   In a 4 KB entry it would be bit 7, which in a large one is PS. */
+#define PDE_PAT   0x1000u
 
 /* ---------------------------------------------------------------
    Entry builders.  Kept as pure functions so they can be tested.
@@ -58,7 +59,10 @@ uint64_t highfb_pae_pde(uint32_t phys_hi, uint32_t phys_lo, uint32_t flags)
 {
     uint64_t phys = ((uint64_t)phys_hi << 32) | phys_lo;
     return (phys & 0x000FFFFFFFE00000ULL)     /* bits 51:21 */
-         | (uint64_t)(flags & 0x0FFFu)
+         /* 0x1FFF, not 0x0FFF: bit 12 is PAT in a 2 MB entry. With the
+            old mask a write-combining request on the PAE path was
+            silently turned into write-back -- v0.8.9.6. */
+         | (uint64_t)(flags & 0x1FFFu)
          | PDE_PS;
 }
 
@@ -96,6 +100,22 @@ HIGHFB_STATIC uint32_t g_window_next = 0;
 #define PSE_PAGE      0x00400000u     /* 4 MB */
 #define PAE_PAGE      0x00200000u     /* 2 MB */
 
+/* ── v0.8.9.6: A WINDOW IS AS MANY SLOTS AS IT IS BIG ────────────────
+   Every window took ONE 16 MB slot whatever its size, and the page
+   loops below map as many pages as the size needs. So a framebuffer
+   over 16 MB -- 2560x1600 is 16.4, 4K is 33 -- ran on into the next
+   slot, and the next slot is where xHCI's registers are mapped next.
+   Its pages then overwrote the framebuffer's: the bottom of the screen
+   became USB registers, and pixels written there were writes to the
+   USB controller. 1920x1080 is 8 MB and never showed it.
+
+   A window now takes ceil(size / 16 MB) slots. Up to 16 MB nothing
+   moves -- every address the HP has ever printed is unchanged. */
+static uint32_t slots_for(uint32_t off, uint32_t bytes)
+{
+    return (off + bytes + WINDOW_STRIDE - 1u) / WINDOW_STRIDE;
+}
+
 static void cpuid1(uint32_t *edx)
 {
     uint32_t a, b, c, d;
@@ -107,6 +127,88 @@ static void cpuid1(uint32_t *edx)
 
 static int have_pse36(void){ uint32_t d; cpuid1(&d); return (d >> 17) & 1u; }
 static int have_pae  (void){ uint32_t d; cpuid1(&d); return (d >>  6) & 1u; }
+static int have_pse  (void){ uint32_t d; cpuid1(&d); return (d >>  3) & 1u; }
+
+/* ── v0.8.9.6: WRITE-COMBINING, THROUGH PAT ───────────────────────────
+ *
+ * Everything on the HP was slow, and it was this. The framebuffer is
+ * above 4 GB there, in the range the firmware's MTRRs mark
+ * UNCACHEABLE, and this file mapped it PWT. The effective memory type
+ * of MTRR-UC and PAT-WT is UC: every 32-bit pixel store was its own
+ * uncached bus transaction, waited for before the next one could start.
+ * A 16x32 cell is 512 of them; a full repaint of 80x25 is a million;
+ * and the shell repaints every cell each time it scrolls a line. QEMU
+ * could not show it -- its framebuffer is ordinary host memory.
+ *
+ * Write-combining lets the CPU gather stores into 64-byte bursts and
+ * not wait for them. The PAT is how a page asks for it: the PAT MSR
+ * holds eight memory types, and a page's PAT/PCD/PWT bits pick one.
+ * MTRR-UC combined with PAT-WC is WC (Intel SDM vol. 3, "Selecting
+ * Memory Types for Pentium III and More Recent Processor Families"),
+ * so it works whatever the firmware's MTRRs say.
+ *
+ * Entry 4 is the one reprogrammed: PAT=1, PCD=0, PWT=0. Nothing in this
+ * kernel has ever set the PAT bit, so no existing page changes type,
+ * and entries 0-3 -- the only ones PCD and PWT alone can reach, and the
+ * ones highfb_map_io() relies on for UC -- keep their reset values.
+ * Linux uses entry 1 for WC instead; that would have quietly turned
+ * every PWT page in this kernel into a WC one.
+ *
+ * `nowc` on the kernel command line turns it off. */
+#define MSR_PAT     0x277u
+#define PAT_TYPE_WC 0x01u
+#define PAT_WC_SLOT 4
+int highfb_nowc = 0;                     /* set from the command line */
+HIGHFB_STATIC int g_wc = -1;             /* -1 not tried, 0 no, 1 yes */
+
+#ifdef HIGHFB_TEST
+uint64_t highfb_test_pat = 0x0007040600070406ULL;   /* the reset value */
+int      highfb_test_have_pat = 1;
+int      highfb_test_pat_sticks = 1;     /* 0: the write is ignored    */
+static int      have_pat(void){ return highfb_test_have_pat; }
+static uint64_t pat_read(void){ return highfb_test_pat; }
+static void     pat_write(uint64_t v){ if(highfb_test_pat_sticks) highfb_test_pat = v; }
+#else
+static int have_pat(void){ uint32_t d; cpuid1(&d); return (d >> 16) & 1u; }
+static uint64_t pat_read(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(MSR_PAT));
+    return ((uint64_t)hi << 32) | lo;
+}
+static void pat_write(uint64_t v)
+{
+    __asm__ volatile("wrmsr" :: "c"(MSR_PAT), "a"((uint32_t)v),
+                                "d"((uint32_t)(v >> 32)) : "memory");
+}
+#endif
+
+/* Program the slot once, and read it back: a hypervisor that ignores
+   the write must not leave this file setting PAT bits that now select
+   write-back on a framebuffer. */
+HIGHFB_STATIC int pat_wc(void)
+{
+    uint64_t v;
+    if (g_wc >= 0) return g_wc;
+    if (highfb_nowc || !have_pat()) { g_wc = 0; return 0; }
+    v  = pat_read();
+    v &= ~(0xFFULL << (PAT_WC_SLOT * 8));
+    v |= (uint64_t)PAT_TYPE_WC << (PAT_WC_SLOT * 8);
+    pat_write(v);
+    g_wc = (pat_read() == v) ? 1 : 0;
+    return g_wc;
+}
+
+/* "write-combining (PAT)", "write-through, uncached by the firmware" --
+   for the boot log, which says what the framebuffer IS, not what was
+   attempted. */
+int highfb_wc(void){ return g_wc == 1; }
+
+/* The flags a framebuffer page gets. */
+static uint32_t fb_type_flags(void)
+{
+    return pat_wc() ? PDE_PAT : PDE_PWT;
+}
 
 /* Paging is switched on with the kernel identity-mapped, so the
    instruction after the write to CR0 is at the same address it was
@@ -194,7 +296,7 @@ HIGHFB_STATIC int map_pse36(uint32_t hi, uint32_t lo, uint32_t bytes,
         tlb_flush();   /* paging is already on; the new entries need telling */
     }
     *virt_out = WINDOW_VIRT + off;
-    g_window_next++;
+    g_window_next += slots_for(off, bytes);
     g_mech = 1;
     return 1;
 }
@@ -233,7 +335,7 @@ HIGHFB_STATIC int map_pae(uint32_t hi, uint32_t lo, uint32_t bytes,
         tlb_flush();
     }
     *virt_out = WINDOW_VIRT + off;
-    g_window_next++;
+    g_window_next += slots_for(off, bytes);
     g_mech = 2;
     return 1;
 }
@@ -242,6 +344,9 @@ HIGHFB_STATIC int map_pae(uint32_t hi, uint32_t lo, uint32_t bytes,
 void highfb_test_reset(void){
     g_window_next = 0; g_pse_built = 0; g_pae_built = 0;
     g_mech = 0; highfb_test_flushes = 0;
+    g_wc = -1; highfb_nowc = 0;
+    highfb_test_pat = 0x0007040600070406ULL;
+    highfb_test_have_pat = 1; highfb_test_pat_sticks = 1;
 }
 #endif
 
@@ -250,7 +355,9 @@ static int map_any(uint32_t hi, uint32_t lo, uint32_t bytes,
 {
     if(!virt_out || !bytes) return 0;
     if(!hi)                 return 0;     /* already reachable; not our job */
-    if(g_window_next >= WINDOW_MAX) return 0;
+    if(bytes > 0xF0000000u) return 0;     /* off + bytes must not wrap */
+    if(g_window_next + slots_for(lo & (PSE_PAGE - 1u), bytes) > WINDOW_MAX)
+        return 0;
 
     if(have_pse36()) return map_pse36(hi, lo, bytes, virt_out, extra);
     if(have_pae())   return map_pae  (hi, lo, bytes, virt_out, extra);
@@ -260,9 +367,56 @@ static int map_any(uint32_t hi, uint32_t lo, uint32_t bytes,
 int highfb_map(uint32_t phys_hi, uint32_t phys_lo, uint32_t bytes,
                uint32_t *virt_out)
 {
-    /* A framebuffer: write-through. Reads of it are rare and writes must
-       reach the panel, which is what PWT buys. */
-    return map_any(phys_hi, phys_lo, bytes, virt_out, PDE_PWT);
+    /* Write-combining where the CPU has PAT, write-through where it
+       does not. See pat_wc() for why WT was the slow one. */
+    return map_any(phys_hi, phys_lo, bytes, virt_out, fb_type_flags());
+}
+
+/* ── a framebuffer BELOW 4 GB, made write-combining ──────────────────
+   A low framebuffer needs no window -- the kernel reaches it with
+   paging off -- so map_any() leaves it alone, and with paging off the
+   memory type is whatever the MTRRs say, which for a PCI aperture is
+   usually UC. The same slowness, on every machine whose firmware puts
+   the framebuffer low.
+
+   This turns paging on with the same identity map the high path builds
+   -- so every address still means what it meant -- and marks the large
+   pages under the framebuffer WC. A large page can reach past the
+   framebuffer into whatever follows it; that is safe here because a
+   framebuffer sits inside a prefetchable, naturally aligned graphics
+   BAR far bigger than one page, and prefetchable is by definition
+   memory that tolerates combined writes. The high window has always
+   mapped whole pages for the same reason.
+
+   Returns 1 when the framebuffer is write-combining afterwards. */
+int highfb_wc_low(uint32_t lo, uint32_t bytes)
+{
+    uint64_t end;
+    if (!bytes || !pat_wc()) return 0;
+    end = (uint64_t)lo + bytes;
+    if (end > 0x100000000ULL) return 0;
+
+    if (g_pae_built) {
+        for (uint64_t a = lo & ~(uint64_t)(PAE_PAGE - 1u); a < end; a += PAE_PAGE)
+            pae_pd[a >> 30][(a >> 21) & 0x1FFu] |= PDE_PAT;
+        tlb_flush();
+        return 1;
+    }
+    if (g_pse_built || have_pse36() || have_pse()) {
+        if (!g_pse_built)
+            for (uint32_t i = 0; i < 1024u; i++)
+                pse_pd[i] = highfb_pse36_pde(0u, i * PSE_PAGE, PDE_P | PDE_RW);
+        for (uint64_t a = lo & ~(uint64_t)(PSE_PAGE - 1u); a < end; a += PSE_PAGE)
+            pse_pd[a >> 22] |= PDE_PAT;
+        if (!g_pse_built) {
+            enable_paging((uint32_t)pse_pd, 0x00000010u);   /* CR4.PSE */
+            g_pse_built = 1;
+        } else {
+            tlb_flush();
+        }
+        return 1;
+    }
+    return 0;
 }
 
 /* v0.8.5.1 -- DEVICE REGISTERS ARE NOT A FRAMEBUFFER.

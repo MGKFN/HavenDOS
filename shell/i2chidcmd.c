@@ -30,7 +30,9 @@ void cmd_i2chid(const char *arg)
     vga_set_color(VGA_WHITE, VGA_BLACK);
 
     if(nbus == 0){
-        vga_puts("No I2C controller on this machine. Nothing to look at.\n");
+        vga_puts("No I2C controller came up. Nothing to look at.\n");
+        vga_puts("`dmesg` lines starting I2C say why: no BAR, powered\n"
+                 "down, or not a DesignWare core.\n");
         vga_set_color(VGA_DARK_GREY, VGA_BLACK);
         vga_puts("On the HP these are 00:15.0 and 00:15.1; `lspci` shows\n"
                  "whether the firmware has them enabled.\n");
@@ -53,7 +55,24 @@ void cmd_i2chid(const char *arg)
                    "input %u bytes at %04x\n",
                    d->report_desc_len, d->report_desc_reg,
                    d->max_input_len, d->input_reg);
+        /* v0.8.9.6: the three steps, each with its answer. */
+        if(d->reset_rc == IHID_OK)
+            vga_printf("  reset: answered in %u ms\n", d->reset_ms);
+        else {
+            vga_set_color(VGA_YELLOW, VGA_BLACK);
+            vga_printf("  reset: %s after %u ms\n",
+                       ihid_strerror(d->reset_rc), d->reset_ms);
+            vga_set_color(VGA_WHITE, VGA_BLACK);
+        }
+        if(d->up_rc != IHID_OK && d->up_rc != IHID_E_NOPTR){
+            vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+            vga_printf("  report descriptor: %s\n", ihid_strerror(d->up_rc));
+            vga_set_color(VGA_WHITE, VGA_BLACK);
+        }
         if(d->is_pointer){
+            vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+            vga_puts("  THIS IS THE POINTER, and it is attached to the cursor.\n");
+            vga_set_color(VGA_WHITE, VGA_BLACK);
             vga_printf("  POINTER: %s X/Y, %d button(s)%s, report id %d\n",
                        d->rd.field[d->rd.i_x].relative ? "relative"
                                                        : "absolute",

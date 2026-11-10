@@ -106,6 +106,68 @@ void pci_enable(const pci_dev_t *d, int bus_master) {
     pci_cfg_write16(d->bus, d->dev, d->fn, 0x04, cmd);
 }
 
+/* ── v0.8.9.6: OUT OF D3 ─────────────────────────────────────────────
+ *
+ * A PCI function can be powered down -- D3hot -- with its config space
+ * still answering and its MEMORY space not: every MMIO read returns
+ * all ones. Firmware leaves devices it does not need in D3, and an
+ * operating system brings them up through ACPI's _PS0 or by writing
+ * PMCSR, which is what this does.
+ *
+ * Intel's Serial-IO I2C controllers are the case in point. Windows'
+ * driver powers them; GRUB and HavenDOS never did, so on a machine
+ * whose firmware leaves them off, drivers/i2c.c read IC_COMP_TYPE as
+ * FFFFFFFF, concluded "not a DesignWare core", and the trackpad behind
+ * it was never looked for.
+ *
+ * D3hot to D0 may reset the function ("No_Soft_Reset" clear), and a
+ * reset clears its BARs and command register -- the device would come
+ * up at address zero with memory decoding off. So both are saved before
+ * the write and put back after it, which is what Linux's
+ * pci_restore_state() is for. The specification wants 10 ms before the
+ * function is touched again; the caller supplies the delay, so this
+ * file stays free of the timer and the suites that compile it need no
+ * stub for one.
+ *
+ * Returns the state the function WAS in (0..3), or -1 when it has no
+ * power-management capability and so cannot have been powered down. */
+int pci_set_d0(const pci_dev_t *d, void (*delay_ms)(uint32_t))
+{
+    uint8_t  cap;
+    int      guard = 48, state;
+    uint32_t pmcsr, bar[6], cmd;
+
+    if (!d) return -1;
+    if (!(pci_cfg_read16(d->bus, d->dev, d->fn, 0x06) & 0x0010u))
+        return -1;                               /* no capability list */
+    cap = (uint8_t)(pci_cfg_read8(d->bus, d->dev, d->fn, 0x34) & 0xFCu);
+    while (cap && guard--) {
+        uint32_t hdr = pci_cfg_read32(d->bus, d->dev, d->fn, cap);
+        if ((hdr & 0xFFu) == 0x01u) break;       /* Power Management */
+        cap = (uint8_t)((hdr >> 8) & 0xFCu);
+    }
+    if (!cap || guard < 0) return -1;
+
+    pmcsr = pci_cfg_read32(d->bus, d->dev, d->fn, (uint8_t)(cap + 4));
+    state = (int)(pmcsr & 3u);
+    if (state == 0) return 0;                    /* already on         */
+
+    for (int i = 0; i < 6; i++)
+        bar[i] = pci_cfg_read32(d->bus, d->dev, d->fn, (uint8_t)(0x10 + i * 4));
+    cmd = pci_cfg_read32(d->bus, d->dev, d->fn, 0x04) & 0xFFFFu;
+
+    /* State bits to 00. PME_Status (bit 15) is write-one-to-clear and
+       is left as read -- clearing a pending wake event is harmless and
+       not clearing it is harmless too. */
+    pci_cfg_write32(d->bus, d->dev, d->fn, (uint8_t)(cap + 4), pmcsr & ~3u);
+    if (delay_ms) delay_ms(10);
+
+    for (int i = 0; i < 6; i++)
+        pci_cfg_write32(d->bus, d->dev, d->fn, (uint8_t)(0x10 + i * 4), bar[i]);
+    pci_cfg_write16(d->bus, d->dev, d->fn, 0x04, (uint16_t)cmd);
+    return state;
+}
+
 /* ── the log ──────────────────────────────────────────────────────────
    This file used to keep its own 768-byte text buffer, built a nibble at a
    time, which pci_get_log() returned and NOTHING ever called -- the scan

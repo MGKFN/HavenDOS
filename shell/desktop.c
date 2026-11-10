@@ -31,6 +31,7 @@ extern void        ui_erase_cursor(void);
 extern void        ui_force_cursor_redraw(void);
 extern void        shell_run(void);
 extern void        sleep_ms(uint32_t);
+extern void        ui_idle(uint32_t);
 extern uint32_t    get_ticks(void);
 extern uint32_t    pmm_free_blocks(void);
 extern uint32_t    pmm_total_blocks(void);
@@ -4253,7 +4254,9 @@ void desktop_run(void){
 
         int c=keyboard_getchar();
         if(c==-1){
-            sleep_ms(20); /* ~50fps polling, low CPU */
+            /* v0.8.9.6: listening to the pointer while it waits, and
+               back early when it moves -- see ui_idle(). */
+            ui_idle(20);
             continue;
         }
         needs_draw=1;

@@ -19,6 +19,7 @@
    a driver that draws nothing. */
 extern int vga_cols(void);
 extern int vga_rows(void);
+extern void vga_cell_px(int *w, int *h);
 
 static int mouse_x=40, mouse_y=12, mouse_btn=0;
 
@@ -67,30 +68,53 @@ static int mouse_btn_edge=0;
 static int accum_x=0, accum_y=0;
 static int sync_fail=0;   /* consecutive sync failures → force resync */
 
-/* ── Adaptive delta: fast movement gets 2× boost ─────────────── */
-static inline int adaptive_delta(int raw_accum, int divisor){
-    int whole = raw_accum / divisor;
-    /* v0.7.17 FIX — precedence bug that made the pointer asymmetric.
-     *
-     * The old test was:
-     *     if(raw_accum < 0 ? -raw_accum : raw_accum > 6 * divisor)
-     *
-     * `>` binds tighter than `?:`, so that parses as
-     *     if( raw_accum < 0 ? (-raw_accum) : (raw_accum > 6*divisor) )
-     *
-     * For a NEGATIVE accumulator the condition is `-raw_accum`, a positive
-     * number, which is always true — so every leftward and upward movement
-     * got the 2x boost regardless of speed, while rightward and downward
-     * movement was boosted only when genuinely fast.  The pointer moved
-     * twice as far left as right for the same hand motion, which reads as
-     * the mouse "drifting" or "fighting you" and is why precise clicking
-     * has always been awkward.
-     *
-     * Take the magnitude first, then compare. */
-    int mag = raw_accum < 0 ? -raw_accum : raw_accum;
-    if(mag > 6 * divisor) whole *= 2;
-    return whole;
+/* ── v0.8.9.6: SPEED IS A FRACTION OF THE SCREEN, NOT A NUMBER OF CELLS ──
+ *
+ * The pointer moved MOUSE_DIVISOR counts per CELL. On 80x25 that is
+ * 320 counts across the screen and felt right. On the high-resolution
+ * grids 0.8.8 made possible it is not: 240 columns is 960 counts, so
+ * the same hand movement crossed a third as much of the screen. Kyan,
+ * on the HP at high resolution: "heel sloom" -- very sluggish. Nothing
+ * was wrong with the mouse; the speed was tied to the wrong unit.
+ *
+ * And the two axes disagreed. A cell is twice as tall as it is wide,
+ * so four counts per cell moved the pointer twice as many PIXELS
+ * vertically as horizontally -- 80x25 on 1280x800 was 4 px per count
+ * across and 8 px per count down.
+ *
+ * Both are one rule now: MOUSE_SPAN counts cross the whole width, at
+ * every grid, and the vertical span is whatever keeps a count the same
+ * number of pixels on both axes. At 80 columns the horizontal speed is
+ * exactly what it always was -- 320 / 80 is MOUSE_DIVISOR -- so the
+ * stock desktop feels the same left-to-right; only the grids that were
+ * slow got faster, and the vertical that was twice too fast got
+ * honest.
+ *
+ * The accumulators are in count*cell units, so the arithmetic stays
+ * integer and nothing below a cell is lost between reports. */
+#define MOUSE_SPAN (80 * MOUSE_DIVISOR)          /* counts per screen width */
+
+/* The per-report acceleration, on the RAW counts: a report bigger than
+   six counts is a fast movement and moves twice as far. Applied to the
+   magnitude, then the sign restored -- see the v0.7.17 note below for
+   what comparing a signed value costs. */
+static inline int accelerate(int raw){
+    int mag = raw < 0 ? -raw : raw;
+    return mag > 6 ? raw * 2 : raw;
 }
+
+/* ── v0.7.17, kept because the rule outlived the function ─────────────
+   The acceleration used to be adaptive_delta(), whose test was
+
+       if(raw_accum < 0 ? -raw_accum : raw_accum > 6 * divisor)
+
+   `>` binds tighter than `?:`, so for a NEGATIVE accumulator the
+   condition was just `-raw_accum` -- always true -- and every leftward
+   and upward movement got the boost regardless of speed. The pointer
+   moved twice as far left as right for the same hand motion. The rule
+   that fixed it is the one accelerate() follows: take the magnitude
+   first, then compare. adaptive_delta() itself went in v0.8.9.6, when
+   the acceleration moved onto the raw counts. */
 
 /* ── mouse_apply ──────────────────────────────────────────────────────
    The accumulator, the acceleration, the clamp and the button edge --
@@ -107,17 +131,44 @@ static inline int adaptive_delta(int raw_accum, int divisor){
    y is DOWN. A caller whose hardware disagrees flips the sign on the
    way in, which is what mouse_feed() does for PS/2's inverted Y.
    `new_btn` is a PS/2-style mask: 1 left, 2 right. */
+/* How far one count moves on each axis, as a fraction: `num` cells per
+   `den` counts. Derived from the grid every time, because a grid can
+   change under the pointer -- an app's viewport, a `layout`. */
+static void mouse_ratio(int *num_x, int *den_x, int *num_y, int *den_y)
+{
+    int cols = vga_cols(), rows = vga_rows(), cw = 8, ch = 16;
+    long pw, ph;
+    vga_cell_px(&cw, &ch);
+    if (cols < 1) cols = 1;
+    if (rows < 1) rows = 1;
+    if (cw < 1) cw = 1;
+    if (ch < 1) ch = 1;
+    pw = (long)cols * cw;                    /* the grid in pixels */
+    ph = (long)rows * ch;
+    *num_x = cols;  *den_x = MOUSE_SPAN;
+    /* Same pixels per count vertically: the height takes
+       MOUSE_SPAN * ph / pw counts. Never below one. */
+    *num_y = rows;
+    *den_y = (int)((MOUSE_SPAN * ph + pw / 2) / pw);
+    if (*den_y < 1) *den_y = 1;
+}
+
 static void mouse_apply(int raw_dx, int raw_dy, int new_btn)
 {
-    int dx, dy;
+    int dx, dy, nx, dnx, ny, dny;
 
-    accum_x += raw_dx;
-    accum_y += raw_dy;
+    mouse_ratio(&nx, &dnx, &ny, &dny);
+    accum_x += accelerate(raw_dx) * nx;
+    accum_y += accelerate(raw_dy) * ny;
 
-    dx = adaptive_delta(accum_x, MOUSE_DIVISOR);
-    dy = adaptive_delta(accum_y, MOUSE_DIVISOR);
-    accum_x -= dx * MOUSE_DIVISOR;
-    accum_y -= dy * MOUSE_DIVISOR;
+    /* Truncating division keeps the remainder's sign with the
+       accumulator's, so a slow drift left and a slow drift right are
+       treated alike -- the asymmetry v0.7.17 removed must not come
+       back through the rounding. */
+    dx = accum_x / dnx;
+    dy = accum_y / dny;
+    accum_x -= dx * dnx;
+    accum_y -= dy * dny;
 
     mouse_x += dx;
     mouse_y += dy;
@@ -129,10 +180,15 @@ static void mouse_apply(int raw_dx, int raw_dy, int new_btn)
         int maxx = vga_cols() - 1, maxy = vga_rows() - 1;
         if(maxx < 0) maxx = 0;
         if(maxy < 0) maxy = 0;
-        if(mouse_x < 0)     mouse_x = 0;
-        if(mouse_x > maxx)  mouse_x = maxx;
-        if(mouse_y < 0)     mouse_y = 0;
-        if(mouse_y > maxy)  mouse_y = maxy;
+        /* v0.8.9.6: and a clamped axis forgets its remainder. Pushing
+           against an edge piled sub-cell movement up in the accumulator
+           that the pointer could never use, and the first movement back
+           out had to pay it off before anything happened -- up to a
+           whole cell of dead travel on every edge. */
+        if(mouse_x < 0)    { mouse_x = 0;    accum_x = 0; }
+        if(mouse_x > maxx) { mouse_x = maxx; accum_x = 0; }
+        if(mouse_y < 0)    { mouse_y = 0;    accum_y = 0; }
+        if(mouse_y > maxy) { mouse_y = maxy; accum_y = 0; }
     }
 
     mouse_btn_edge |= (new_btn & ~mouse_btn_prev);

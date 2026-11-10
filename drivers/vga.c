@@ -136,6 +136,22 @@ static int       fbc_sx = 2, fbc_sy = 4;
 static uint32_t  fbc_ox = 0, fbc_oy = 0;   /* top-left of the centred grid */
 static int       fbc_active;
 
+/* v0.8.9.6: one cell's size in pixels on the glass -- for the mouse,
+   which has to move the same distance across the SCREEN for the same
+   hand movement whatever grid is on it. A text mode is 720x400 or
+   640x400 drawn by the card; 8 wide and 400/rows high is near enough
+   for a ratio, which is all the caller uses. */
+void vga_cell_px(int *w, int *h)
+{
+    if (fbc_active) {
+        if (w) *w = FBC_CW * fbc_sx;
+        if (h) *h = FBC_CH * fbc_sy;
+        return;
+    }
+    if (w) *w = 8;
+    if (h) *h = g_rows > 0 ? 400 / g_rows : 16;
+}
+
 /* What is actually on the glass.
  *
  * The text path gets this for free: it can read 0xB8000 back and diff

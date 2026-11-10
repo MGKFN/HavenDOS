@@ -6,7 +6,18 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.8.9.5 Beta "Helios"
+## Current version: 0.8.9.6 Beta "Helios"
+
+**0.8.9.6 is a performance release.** The framebuffer is now
+write-combining. It was uncached on real hardware, which made every
+redraw crawl. The mouse moves at the same speed on every resolution,
+the cursor reaches the whole screen on high-resolution grids, and the
+trackpad driver powers its controller up and waits for the device after
+resetting it. USB no longer tears the whole bus down every second when
+a port flaps, and the kernel log keeps recording after the boot.
+[Changelog](changelogs/CHANGELOG-v0.8.9.6.md).
+
+### Helios
 
 Helios is the iPhone release. The HP laptop HavenDOS is tested on has no Ethernet port and its Wi-Fi chip has no driver, so its route to a network is an iPhone over USB — and iOS only turns tethering on for a computer it has *paired* with. Pairing means a usbmux channel, Apple property lists, two 2048-bit RSA keys generated on the machine, three X.509 certificates, and TLS 1.2 with a client certificate, all written for this kernel.
 
@@ -34,17 +45,17 @@ Tested on an HP laptop with an Intel Alder Lake CPU, NVMe SSD and xHCI USB, and 
 | --- | --- |
 | UEFI boot, install beside Windows 11 on NVMe | Working |
 | Built-in keyboard | Working |
-| USB mouse | Working |
+| USB mouse | Working; slow and choppy before 0.8.9.6 |
 | USB sticks (FAT16/FAT32; exFAT read-only) | Working |
 | `update` from a USB stick | Working |
 | iPhone pairing, stages 1 and 2 | Working |
 | iPhone pairing, stage 3 | Built and tested in emulation, next to confirm on hardware |
-| Built-in trackpad (I2C-HID) | Driver written, not yet confirmed |
+| Built-in trackpad (I2C-HID) | Not working in 0.8.9.5; 0.8.9.6 fixes two likely causes, untested |
 | MediaTek Wi-Fi | No driver |
 
 AHCI has only ever run against simulated controllers — there is no SATA machine to test it on.
 
-**Known issues:** a single USB transaction error can drop every device on the bus until the next rescan; the kernel log fills and drops lines in a long session; the desktop can be choppy on the HP. The cause of the last one is not yet known.
+**Known issues:** the 0.8.9.6 performance and pointer fixes have not been confirmed on the HP yet. A USB transaction error can still make one rescan come back empty; 0.8.9.6 retries it once and holds off a port that keeps flapping.
 
 ## Try it
 
@@ -52,11 +63,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.5.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.6.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.5.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.6.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

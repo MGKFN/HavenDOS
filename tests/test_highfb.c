@@ -260,8 +260,101 @@ int main(void){
     ck("highfb_map maps", highfb_map(HI, 0u, 0x100000u, &vfb)==1, 0);
     ck("a framebuffer window does NOT disable caching",
        (pse_pd[vfb>>22] & PDE_PCD)==0, pse_pd[vfb>>22]);
-    ck("...but is write-through", (pse_pd[vfb>>22] & PDE_PWT)!=0,
+    /* v0.8.9.6: write-combining, not write-through. WT under the
+       firmware's UC MTRR was UC, and that was the whole of the HP's
+       slowness. */
+    ck("...it selects PAT entry 4: the PAT bit, and NOT PWT",
+       (pse_pd[vfb>>22] & PDE_PAT)!=0 && (pse_pd[vfb>>22] & PDE_PWT)==0,
        pse_pd[vfb>>22]);
+    ck("...and PAT entry 4 is write-combining",
+       ((highfb_test_pat >> 32) & 0xFFu) == 0x01u, highfb_test_pat);
+    ck("entries 0-3 keep their reset values, so PCD/PWT pages are unchanged",
+       (highfb_test_pat & 0xFFFFFFFFull) == 0x00070406ull, highfb_test_pat);
+    ck("...and entries 5-7 too",
+       (highfb_test_pat >> 40) == 0x000704ull, highfb_test_pat);
+    ck("highfb_wc() reports it", highfb_wc()==1, 0);
+    {
+        uint32_t vreg = 0;
+        highfb_map_io(HI, 0x02120000u, 0x10000u, &vreg);
+        ck("a DEVICE window mapped after it is still UC, with no PAT bit",
+           (pse_pd[vreg>>22] & (PDE_PCD|PDE_PWT|PDE_PAT)) == (PDE_PCD|PDE_PWT),
+           pse_pd[vreg>>22]);
+    }
+    ck("the identity map never gets the PAT bit",
+       (pse_pd[0x01000000u>>22] & PDE_PAT)==0, pse_pd[0x01000000u>>22]);
+
+    head("no PAT, or a PAT that ignores the write: write-through, as before");
+    highfb_test_reset();
+    highfb_test_have_pat = 0;
+    highfb_map(HI, 0u, 0x100000u, &vfb);
+    ck("without PAT the window is PWT", (pse_pd[vfb>>22] & PDE_PWT)!=0
+       && (pse_pd[vfb>>22] & PDE_PAT)==0, pse_pd[vfb>>22]);
+    ck("and highfb_wc() says so", highfb_wc()==0, 0);
+    highfb_test_reset();
+    highfb_test_pat_sticks = 0;
+    highfb_map(HI, 0u, 0x100000u, &vfb);
+    ck("a PAT write that does not stick is not trusted",
+       (pse_pd[vfb>>22] & PDE_PAT)==0 && (pse_pd[vfb>>22] & PDE_PWT)!=0,
+       pse_pd[vfb>>22]);
+    highfb_test_reset();
+    highfb_nowc = 1;
+    highfb_map(HI, 0u, 0x100000u, &vfb);
+    ck("`nowc` on the command line keeps write-through",
+       (pse_pd[vfb>>22] & PDE_PAT)==0 && (pse_pd[vfb>>22] & PDE_PWT)!=0,
+       pse_pd[vfb>>22]);
+    ck("...and leaves the PAT MSR alone",
+       highfb_test_pat == 0x0007040600070406ULL, highfb_test_pat);
+
+    head("the PAE builder keeps the PAT bit");
+    ck("bit 12 survives highfb_pae_pde()",
+       (highfb_pae_pde(HI, 0u, PDE_P|PDE_RW|PDE_PAT) & PDE_PAT) != 0,
+       highfb_pae_pde(HI, 0u, PDE_P|PDE_RW|PDE_PAT));
+    ck("...and does not leak into the reserved bits 20:13",
+       (highfb_pae_pde(HI, 0u, PDE_P|PDE_RW|PDE_PAT) & 0x1FE000ull) == 0,
+       highfb_pae_pde(HI, 0u, PDE_P|PDE_RW|PDE_PAT));
+
+    head("a framebuffer bigger than one window slot");
+    highfb_test_reset();
+    {
+        uint32_t vbig = 0, vx = 0;
+        uint32_t big = 3840u * 2160u * 4u;               /* 33 MB, 4K */
+        ck("a 4K framebuffer maps", highfb_map(HI, 0u, big, &vbig)==1, 0);
+        ck("the next window does not start inside it",
+           highfb_map_io(HI, 0x02120000u, 0x10000u, &vx)==1 &&
+           (vx & ~0x3FFFFFu) >= vbig + big, vx);
+        ck("so the bottom of the screen is still the screen",
+           walk_pse36(vbig + big - 4u) ==
+           (((uint64_t)HI << 32) | (big - 4u)), walk_pse36(vbig + big - 4u));
+    }
+    highfb_test_reset();
+    {
+        uint32_t v8 = 0, vx = 0;
+        highfb_map(HI, 0u, 1920u * 1080u * 4u, &v8);
+        highfb_map_io(HI, 0x02120000u, 0x10000u, &vx);
+        ck("an 8 MB framebuffer leaves xHCI exactly where the HP printed it",
+           vx == 0xE1120000u, vx);
+    }
+
+    head("a framebuffer below 4 GB is made write-combining too");
+    highfb_test_reset();
+    ck("highfb_wc_low() succeeds",
+       highfb_wc_low(0xFD000000u, 1280u * 800u * 4u)==1, 0);
+    ck("paging is on, with PSE", highfb_test_cr4 == 0x10u, highfb_test_cr4);
+    ck("the framebuffer's pages carry the PAT bit",
+       (pse_pd[0xFD000000u>>22] & PDE_PAT)!=0, pse_pd[0xFD000000u>>22]);
+    ck("...and are still identity-mapped",
+       walk_pse36(0xFD123456u) == 0xFD123456ull, walk_pse36(0xFD123456u));
+    ck("the page before it does not",
+       (pse_pd[(0xFD000000u>>22)-1] & PDE_PAT)==0, pse_pd[(0xFD000000u>>22)-1]);
+    ck("nor the one after it",
+       (pse_pd[((0xFD000000u + 1280u*800u*4u)>>22)+1] & PDE_PAT)==0, 0);
+    ck("low memory stays write-back",
+       (pse_pd[0] & (PDE_PAT|PDE_PCD|PDE_PWT))==0, pse_pd[0]);
+    highfb_test_reset();
+    highfb_test_have_pat = 0;
+    highfb_test_cr4 = 0;       /* highfb_test_reset() leaves the stubs' CRs */
+    ck("without PAT it declines rather than half-doing it",
+       highfb_wc_low(0xFD000000u, 0x400000u)==0 && highfb_test_cr4==0, 0);
 
     head("a device window above 4 GB works under PAE too");
     highfb_test_reset();

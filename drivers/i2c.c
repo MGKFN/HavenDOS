@@ -72,6 +72,8 @@
 #endif
 
 /* ── DesignWare register offsets ─────────────────────────────────── */
+extern void sleep_ms(uint32_t);
+
 #define IC_CON              0x00
 #define IC_TAR              0x04
 #define IC_DATA_CMD         0x10
@@ -427,8 +429,19 @@ static int bring_up(i2c_bus_t *b)
        Without this every register reads back zero, which is
        indistinguishable from a BAR mapped at nothing -- and that is
        the shape of the bug that cost v0.8.5 its USB. */
+    /* v0.8.9.6: ASSERT, THEN RELEASE -- the order Linux's intel-lpss
+       uses. Releasing a reset that firmware left half-way through a
+       transfer leaves the core in whatever state the transfer did;
+       holding it first puts it somewhere known.
+
+       And the wait is a real one now. It was `for(t = 0; t < 10000u;
+       t++) { }`, which -O2 deletes outright: an empty loop with no
+       side effect is no loop at all, so there was never any delay
+       between the release and the first register read. */
+    wr(b, LPSS_RESET, 0);
+    for(volatile uint32_t w = 0; w < 20000u; w++) { }
     wr(b, LPSS_RESET, LPSS_RESET_RELEASE);
-    for(t = 0; t < 10000u; t++) { }
+    for(volatile uint32_t w = 0; w < 20000u; w++) { }
 
     /* THE CORE IDENTIFIES ITSELF. If this is not a DesignWare core,
        the offsets above are somebody else's registers and writing
@@ -489,6 +502,18 @@ int i2c_init(void)
         memset(b, 0, sizeof *b);
         b->pci = d;
 
+        /* v0.8.9.6: POWER IT UP FIRST. Firmware leaves a Serial-IO
+           controller it does not use in D3, where every register reads
+           FFFFFFFF -- and bring_up() then says "not a DesignWare core",
+           which on such a machine is the trackpad's whole story.
+           pci_set_d0() keeps the BARs across the transition. */
+        {
+            int was = pci_set_d0(d, sleep_ms);
+            if(was > 0)
+                klog(KLOG_INFO, "I2C %2x:%2x.%u: was powered down (D%d), "
+                     "brought up to D0", (uint32_t)d->bus,
+                     (uint32_t)d->dev, (uint32_t)d->fn, (uint32_t)was);
+        }
         pci_enable(d, 0);            /* memory space on, no bus master */
 
         /* THE BAR IS ABOVE 4 GB ON THIS MACHINE. pci_bar_mem() would

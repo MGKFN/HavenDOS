@@ -326,6 +326,9 @@ static void apply_cmdline(const char *s){
         else if(tok_eq(p,"fbsilent"))     g_fb_silent=1;
         else if(tok_eq(p,"fbmap"))        g_fb_map=1;
         else if(tok_eq(p,"nohighfb"))     g_fb_nomap=1;
+        /* v0.8.9.6: the way back from write-combining, if a machine
+           turns up whose framebuffer does not like it. */
+        else if(tok_eq(p,"nowc"))         highfb_nowc=1;
         else if(tok_eq(p,"live"))         g_live=1;
         /* v0.8.5.2 -- the escape hatch for a firmware that will not hand
            the xHCI over. If SMM keeps its USB legacy emulation running,
@@ -698,6 +701,15 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
             vga_fb_init(v, g_fb_w, g_fb_h, g_fb_pitch, g_fb_bpp);
         }
     }
+    /* v0.8.9.6: a framebuffer below 4 GB gets write-combining as well.
+       It needs no window, but with paging off its memory type is the
+       firmware's MTRR type -- UC for a graphics aperture -- and that is
+       the same slow drawing the high one had. `nohighfb` still means
+       paging stays off, so it skips this too. */
+    else if(!g_fb_unreachable && !g_fb_nomap && g_fb_lo && g_fb_w
+            && g_fb_h && g_fb_pitch){
+        highfb_wc_low(g_fb_lo, g_fb_h * g_fb_pitch);
+    }
 
     /* `fbdiag` -- see the signal helpers above for why this no longer
        answers by resetting the machine.
@@ -934,6 +946,19 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
     else
         klog(KLOG_OK, "Framebuffer %ux%u %u bpp at %x",
              g_fb_w, g_fb_h, g_fb_bpp, g_fb_lo);
+
+    /* v0.8.9.6: and what KIND of memory the framebuffer is, because on
+       real hardware that decides whether the desktop is usable. Said only
+       when there is a framebuffer: VGA text memory is not this question. */
+    if(g_fb_w && !g_fb_unreachable && g_fb_kind < 0){
+        if(highfb_wc())
+            klog(KLOG_OK, "Framebuffer memory: write-combining (PAT)");
+        else
+            klog(KLOG_WARN, "Framebuffer memory: not write-combining (%s) "
+                            "-- drawing will be slow on real hardware",
+                 highfb_nowc ? "`nowc`" : g_fb_nomap ? "`nohighfb`"
+                                        : "no PAT on this CPU");
+    }
 
     klog(KLOG_OK, "VGA: text %ux%u, shadow buffer, 16 colours",
          (uint32_t)vga_cols(), (uint32_t)vga_rows());

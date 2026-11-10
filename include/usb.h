@@ -389,6 +389,9 @@ void                usb_hotplug_baseline(void);
 uint32_t            usb_hotplug_changes(void);
 uint32_t            usb_hotplug_rescans(void);
 uint32_t            usb_hotplug_truncated(void);
+/* v0.8.9.6: storms held off, and zero-device retries run. */
+uint32_t            usb_hotplug_holds(void);
+uint32_t            usb_hotplug_retries(void);
 
 /* Transfers. These take the device and find its controller, so no caller
    above this line ever names a controller type -- which is the whole

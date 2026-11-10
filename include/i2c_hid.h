@@ -82,6 +82,7 @@
 #define IHID_E_NOPTR   (-6)   /* parsed, but there is no X and Y in it */
 #define IHID_E_FULL    (-7)   /* more devices than it can hold        */
 #define IHID_E_SHORT   (-8)   /* a report shorter than its own header */
+#define IHID_E_NORESET (-9)   /* no reset response within the budget  */
 
 #define IHID_MAX_DEV      4
 #define IHID_DESC_LEN     30
@@ -130,6 +131,12 @@ typedef struct {
 
     hrd_t    rd;              /* the parsed report descriptor         */
     int      is_pointer;      /* it has an X and a Y                  */
+    /* v0.8.9.6: what bring-up said, for `i2chid` to print. reset_rc is
+       ihid_power_and_reset()'s answer and reset_ms its time; up_rc is
+       ihid_bring_up()'s. A trackpad that does not work has to be able
+       to say which of the three steps it stopped at in one photo. */
+    int      reset_rc, up_rc;
+    uint32_t reset_ms;
 
     /* Absolute-to-relative state. See the header note. */
     int      touching;
@@ -160,6 +167,22 @@ int ihid_bring_up(const ihid_ops_t *ops, void *ctx, ihid_dev_t *d,
 int ihid_set_power(const ihid_ops_t *ops, void *ctx,
                    const ihid_dev_t *d, int on);
 int ihid_reset(const ihid_ops_t *ops, void *ctx, const ihid_dev_t *d);
+
+/* v0.8.9.6: power the device on, reset it, and WAIT for it.
+   A device takes time to come out of a reset and then expects the host
+   to read a two-byte, all-zero "reset response" before anything else.
+   Reading the report descriptor straight after the RESET command --
+   which is what 0.8.8.11 did -- reaches a device that is still busy,
+   gets a refused transfer, and the trackpad is never attached.
+   `delay_ms` is the wait; `budget_ms` the most to spend (the
+   specification allows five seconds; a second is plenty in practice).
+   IHID_OK when the device answered; IHID_E_NORESET when it did not,
+   which the caller may treat as a warning -- some devices never send
+   the response, and Linux keeps a quirk list for them. *took_ms, when
+   given, says how long it took. */
+int ihid_power_and_reset(const ihid_ops_t *ops, void *ctx, ihid_dev_t *d,
+                         void (*delay_ms)(uint32_t), uint32_t budget_ms,
+                         uint32_t *took_ms);
 
 /* Read one input report. Returns its length in bytes (0 when the
    device has nothing to say, which it signals with a length of zero)

@@ -683,7 +683,8 @@ void usbnet_release(void){ note('r'); releases++; }
 int  usbnet_probe(void){ note('p'); probes++; return 1; }
 void lockdown_forget(void){ note('l'); forgets++; }
 void usbmux_close(void){ note('x'); closes++; }
-int  usb_enumerate(void){ note('e'); enumerates++; return 3; }
+static int sim_enum_result = 3;   /* v0.8.9.6: a walk can find nothing */
+int  usb_enumerate(void){ note('e'); enumerates++; return sim_enum_result; }
 int  usb_hub_count(void){ return 0; }
 int  usb_hub_devices(void){ return 0; }
 
@@ -856,6 +857,68 @@ static void clients_main(void)
     ck("the truncation is counted, not silent",
        usb_hotplug_truncated() > 0, usb_hotplug_truncated());
     sim_nports[0] = 4;
+
+    /* ── v0.8.9.6: the storm and the retry ───────────────────────── */
+    head("hot-plug: a port that flaps every second is held off");
+    kpoll_init();
+    sim_nhc = 1; sim_ports[0] = 0x1;
+    usb_kpoll_register();
+    e = enumerates;
+    for(int i = 0; i < 6; i++){
+        sim_ports[0] ^= 0x2;               /* in, out, in, out ... */
+        ticks(100); kernel_poll();
+    }
+    ck("three rescans, then the storm is recognised",
+       enumerates - e == 3, enumerates - e);
+    ck("  ... and counted as one hold", usb_hotplug_holds() == 1,
+       usb_hotplug_holds());
+    {
+        long held = enumerates;
+        for(int i = 0; i < 11; i++){ ticks(100); kernel_poll(); }
+        ck("when the hold ends the change it hid is acted on, once",
+           enumerates - held == 1, enumerates - held);
+        ticks(100); kernel_poll();
+        ck("  ... and only once", enumerates - held == 1, enumerates - held);
+    }
+
+    head("hot-plug: two real plug events a few seconds apart are not a storm");
+    kpoll_init();
+    sim_ports[0] = 0x1;
+    usb_kpoll_register();
+    e = enumerates;
+    sim_ports[0] = 0x3; ticks(100); kernel_poll();
+    for(int i = 0; i < 6; i++){ ticks(100); kernel_poll(); }
+    sim_ports[0] = 0x7; ticks(100); kernel_poll();
+    for(int i = 0; i < 6; i++){ ticks(100); kernel_poll(); }
+    sim_ports[0] = 0xF; ticks(100); kernel_poll();
+    ck("three plugs seven seconds apart are three rescans",
+       enumerates - e == 3, enumerates - e);
+    ck("  ... and no hold", usb_hotplug_holds() == 1, usb_hotplug_holds());
+
+    head("hot-plug: a walk that finds nothing on an occupied bus is retried once");
+    kpoll_init();
+    sim_ports[0] = 0x1;
+    usb_kpoll_register();
+    sim_enum_result = 0;
+    e = enumerates;
+    {
+        uint32_t r0 = usb_hotplug_retries();
+        sim_ports[0] = 0x3; ticks(100); kernel_poll();
+        ck("the change rescans", enumerates - e == 1, enumerates - e);
+        ticks(100); kernel_poll();
+        ck("  ... and a second later it tries once more, unprompted",
+           enumerates - e == 2 && usb_hotplug_retries() == r0 + 1,
+           enumerates - e);
+        for(int i = 0; i < 5; i++){ ticks(100); kernel_poll(); }
+        ck("  ... and not again: a broken bus is reported, not hammered",
+           enumerates - e == 2, enumerates - e);
+    }
+    e = enumerates;
+    sim_ports[0] = 0x0; ticks(100); kernel_poll();   /* still finds 0 */
+    ticks(100); kernel_poll();
+    ck("an EMPTY bus that enumerates nothing is not retried",
+       enumerates - e == 1, enumerates - e);
+    sim_enum_result = 3;
 
     head("hot-plug: a NIC that arrives gets the DHCP sequence reset");
     /* The retry sequence has to have MOVED first.  The first version

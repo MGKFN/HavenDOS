@@ -30,7 +30,7 @@ static uint16_t inw(uint16_t p)              { (void)p; return 0xFFFF; }
 static void     outl(uint16_t port, uint32_t val);
 static uint32_t inl(uint16_t port);
 
-typedef struct { uint8_t bus, dev, fn; uint32_t cfg[16]; } fake_fn_t;
+typedef struct { uint8_t bus, dev, fn; uint8_t pm_cap; uint32_t cfg[64]; } fake_fn_t;
 
 /* Build the first 64 bytes of a config header. */
 static void mk(fake_fn_t *f, uint8_t bus, uint8_t dev, uint8_t fn,
@@ -99,7 +99,16 @@ static void outl(uint16_t port, uint32_t val)
     uint8_t bus = (cur_addr >> 16) & 0xFF, dev = (cur_addr >> 11) & 0x1F;
     uint8_t fn  = (cur_addr >> 8) & 7,     reg = cur_addr & 0xFC;
     fake_fn_t *f = lookup(bus, dev, fn);
-    if (f && reg < 64) f->cfg[reg / 4] = val;
+    if (!f) return;
+    /* v0.8.9.6: a D3hot -> D0 write on a function without
+       No_Soft_Reset resets it -- BARs and command register to zero,
+       which is what pci_set_d0() has to put back. */
+    if (f->pm_cap && reg == f->pm_cap + 4
+        && (f->cfg[reg / 4] & 3u) == 3u && (val & 3u) == 0u) {
+        for (int i = 4; i <= 9; i++) f->cfg[i] = 0;
+        f->cfg[1] &= 0xFFFF0000u;
+    }
+    f->cfg[reg / 4] = val;
 }
 
 static uint32_t inl(uint16_t port)
@@ -109,7 +118,7 @@ static uint32_t inl(uint16_t port)
     uint8_t fn  = (cur_addr >> 8) & 7,     reg = cur_addr & 0xFC;
     fake_fn_t *f = lookup(bus, dev, fn);
     if (!f) return 0xFFFFFFFFu;          /* no device answers */
-    return reg < 64 ? f->cfg[reg / 4] : 0;
+    return f->cfg[reg / 4];
 }
 
 #include "../include/types.h"
@@ -159,6 +168,9 @@ static void ck(const char *what, int cond, const char *detail)
                            detail ? detail : ""); }
 }
 static void head(const char *t) { printf("\n%s\n", t); }
+
+static int g_delays_seen;
+void count_delay(uint32_t ms){ (void)ms; g_delays_seen++; }
 
 int main(void)
 {
@@ -251,6 +263,38 @@ int main(void)
            "the device at 00:01.2 is the one three earlier scans could not "
            "see at all; the log is how you find out whether it is there");
         ck("and the IDE ports it chose are too", klog_mentions("IDE: primary"), "");
+    }
+
+    head("pci_set_d0: a function left in D3 comes back with its BARs");
+    {
+        nbus_devs = 1;
+        fake_fn_t *f = &bus_devs[0];
+        mk(f, 0, 0x15, 0, 0x8086, 0x51E8, 0x0C, 0x80, 0, 0, 0);
+        f->cfg[1] = 0x00100006u;          /* status: cap list; cmd: mem+bm */
+        f->cfg[4] = 0x4000000Cu;          /* BAR0: 64-bit prefetchable   */
+        f->cfg[5] = 0x00000060u;          /* BAR1: its high dword         */
+        f->cfg[13] = 0x80;                /* capabilities at 0x80          */
+        f->cfg[0x80/4] = 0x00009005u;     /* MSI (05), next 0x90           */
+        f->cfg[0x90/4] = 0x00030001u;     /* PM (01), end of list          */
+        f->cfg[0x94/4] = 0x00000003u;     /* PMCSR: D3hot                  */
+        f->pm_cap = 0x90;
+        pci_init();
+        const pci_dev_t *d = pci_get(0);
+        g_delays_seen = 0;
+        int was = pci_set_d0(d, count_delay);
+        ck("it reports the state it was in", was == 3, "");
+        ck("PMCSR now says D0", (f->cfg[0x94/4] & 3u) == 0, "");
+        ck("the 10 ms recovery was waited for", g_delays_seen == 1, "");
+        ck("BAR0 survived the reset the transition caused",
+           f->cfg[4] == 0x4000000Cu, "");
+        ck("  ... and its high dword", f->cfg[5] == 0x00000060u, "");
+        ck("  ... and memory decoding is back on",
+           (f->cfg[1] & 0x0006u) == 0x0006u, "");
+        ck("a second call finds it on and touches nothing",
+           pci_set_d0(d, count_delay) == 0 && g_delays_seen == 1, "");
+        f->cfg[1] &= ~0x00100000u;        /* no capability list at all */
+        ck("a function with no capability list answers -1",
+           pci_set_d0(d, count_delay) == -1, "");
     }
 
     head("a bus with nothing on it does not invent devices");

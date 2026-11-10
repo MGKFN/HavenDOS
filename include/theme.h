@@ -23,6 +23,7 @@ void ui_toggle_desk_pattern(void);
 int  ui_desk_pattern(void);
 void ui_load_preview(int n);
 void ui_force_cursor_redraw(void);
+void ui_idle(uint32_t ms);   /* v0.8.9.6: a wait that keeps reading the pointer */
 void ui_unlock_extra_themes(void);
 int  ui_extra_themes_unlocked(void);
 #endif

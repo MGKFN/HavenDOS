@@ -50,15 +50,20 @@ BUGS = [
      "does not answer the PS/2 reset, a working USB mouse is tracked "
      "and invisible, because every consumer in the tree gates on this "
      "one function",
-     """int  mouse_is_ready(void)              { return ps2_ready || usb_pointers > 0; }""",
+     """int  mouse_is_ready(void)              { return ps2_ready
+                                                || usb_pointers > 0
+                                                || i2c_pointers > 0; }""",
      """int  mouse_is_ready(void)              { return ps2_ready; }"""),
 
     ("readiness ignores the PS/2 side instead",
      "the same mistake pointing the other way: a machine with a "
      "working trackpad and no USB mouse loses its cursor. Half a "
      "subsystem answering for all of it is wrong in both directions",
-     """int  mouse_is_ready(void)              { return ps2_ready || usb_pointers > 0; }""",
-     """int  mouse_is_ready(void)              { return usb_pointers > 0; }"""),
+     """int  mouse_is_ready(void)              { return ps2_ready
+                                                || usb_pointers > 0
+                                                || i2c_pointers > 0; }""",
+     """int  mouse_is_ready(void)              { return usb_pointers > 0
+                                                || i2c_pointers > 0; }"""),
 
     ("a USB mouse is a flag rather than a count",
      "two mice is a thing people do. With a flag, unplugging one takes "
@@ -104,6 +109,31 @@ BUGS = [
      "answered nothing",
      """int  mouse_ps2_ready(void)             { return ps2_ready; }""",
      """int  mouse_ps2_ready(void)             { return mouse_is_ready(); }"""),
+
+    # ── v0.8.9.6 ──────────────────────────────────────────────────────
+    ("speed is counted in cells again",
+     "four counts per cell: a 240-column grid takes three times the "
+     "hand movement of 80x25 to cross -- 'heel sloom' on the HP",
+     """    *num_x = cols;  *den_x = MOUSE_SPAN;""",
+     """    *num_x = 1;  *den_x = MOUSE_DIVISOR;"""),
+
+    ("the vertical span ignores the cell's shape",
+     "a cell is twice as tall as it is wide, so the pointer moves twice "
+     "as many pixels down as across for the same hand movement",
+     """    *den_y = (int)((MOUSE_SPAN * ph + pw / 2) / pw);""",
+     """    *den_y = MOUSE_SPAN * rows / cols;"""),
+
+    ("an edge keeps the remainder pushed into it",
+     "the first movement away from an edge pays off sub-cell debt "
+     "before anything happens -- a cell of dead travel at every edge",
+     """        if(mouse_y < 0)    { mouse_y = 0;    accum_y = 0; }""",
+     """        if(mouse_y < 0)    { mouse_y = 0; }"""),
+
+    ("acceleration on the signed value",
+     "the v0.7.17 bug in its new home: every leftward movement is "
+     "boosted whatever its speed, and the pointer drifts left",
+     """    int mag = raw < 0 ? -raw : raw;""",
+     """    int mag = raw;"""),
 ]
 
 HARMLESS = (

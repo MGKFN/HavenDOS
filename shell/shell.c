@@ -2472,7 +2472,17 @@ void cmd_dmesg_pager(void){
            holds twenty-five -- an unpaged dump scrolls the beginning away,
            and the beginning is where a boot that went wrong went wrong. */
         int per=vga_rows()-2, shown=0;
+        extern int klog_gap_at(void);
         for(int i=0;i<total;i++){
+            /* v0.8.9.6: the boot is pinned and the rest is a ring, so a
+               long session has a gap between them. Said where it is. */
+            if(i==klog_gap_at()){
+                vga_set_color(VGA_YELLOW,VGA_BLACK);
+                vga_printf("(... %d older lines rotated out after the boot ...)\n",
+                           klog_dropped());
+                vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
+                shown++;
+            }
             klog_print_line(i);
             if(++shown>=per && i<total-1){
                 shown=0;
@@ -2483,11 +2493,6 @@ void cmd_dmesg_pager(void){
                 vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
                 if(c=='q'||c=='Q'||c==27) break;
             }
-        }
-        if(klog_dropped()){
-            vga_set_color(VGA_YELLOW,VGA_BLACK);
-            vga_puts("(log full: later lines were dropped)\n");
-            vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
         }
     
 }

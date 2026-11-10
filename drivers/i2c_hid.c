@@ -151,6 +151,50 @@ int ihid_reset(const ihid_ops_t *ops, void *ctx, const ihid_dev_t *d)
     return command(ops, ctx, d, IHID_CMD_RESET, 0);
 }
 
+/* See include/i2c_hid.h. The first wait is longer than the rest:
+   nothing comes out of a reset in under a few tens of milliseconds,
+   and asking sooner only adds refused transfers to the bus. */
+#define IHID_POWER_SETTLE_MS  10u
+#define IHID_RESET_FIRST_MS   50u
+#define IHID_RESET_STEP_MS    10u
+int ihid_power_and_reset(const ihid_ops_t *ops, void *ctx, ihid_dev_t *d,
+                         void (*delay_ms)(uint32_t), uint32_t budget_ms,
+                         uint32_t *took_ms)
+{
+    uint8_t  buf[64];
+    uint32_t t = 0;
+    int r;
+
+    if (took_ms) *took_ms = 0;
+    if (!ops || !d) return IHID_E_PARAM;
+
+    ihid_set_power(ops, ctx, d, 1);
+    if (delay_ms) delay_ms(IHID_POWER_SETTLE_MS);
+
+    r = ihid_reset(ops, ctx, d);
+    if (r != IHID_OK) return r;
+
+    if (delay_ms) delay_ms(IHID_RESET_FIRST_MS);
+    t = IHID_RESET_FIRST_MS;
+    for (;;) {
+        /* Any successful read ends the wait: a zero length is the reset
+           response itself, and a real report means the device is past
+           it. A refused transfer is the device still busy. */
+        if (ihid_read_report(ops, ctx, d, buf, sizeof buf) >= 0) {
+            if (took_ms) *took_ms = t;
+            return IHID_OK;
+        }
+        /* Counted whether or not there is a delay function, so a
+           simulation without one still ends. */
+        if (t >= budget_ms) {
+            if (took_ms) *took_ms = t;
+            return IHID_E_NORESET;
+        }
+        if (delay_ms) delay_ms(IHID_RESET_STEP_MS);
+        t += IHID_RESET_STEP_MS;
+    }
+}
+
 int ihid_read_report(const ihid_ops_t *ops, void *ctx,
                      const ihid_dev_t *d, uint8_t *buf, uint32_t cap)
 {
@@ -265,6 +309,7 @@ const char *ihid_strerror(int code)
     case IHID_E_PARAM:   return "bad argument";
     case IHID_E_IO:      return "the bus refused the transfer";
     case IHID_E_SIG:     return "no HID descriptor signature at that register";
+    case IHID_E_NORESET: return "the device did not answer its reset";
     case IHID_E_FIELDS:  return "a HID descriptor that contradicts itself";
     case IHID_E_DESC:    return "the report descriptor would not parse";
     case IHID_E_NOPTR:   return "no X and Y in it -- not a pointer";
@@ -295,6 +340,7 @@ static int        g_ndev;
 static uint8_t    g_rdbuf[IHID_RD_MAX];
 static uint8_t    g_report[64];
 
+extern void sleep_ms(uint32_t);
 extern void mouse_feed_i2c(int dx, int dy, int buttons);
 extern void mouse_i2c_attach(void);
 
@@ -317,9 +363,30 @@ int i2c_hid_init(void)
                  (uint32_t)bus, (uint32_t)d->addr, (uint32_t)d->desc_reg,
                  (uint32_t)d->vid, (uint32_t)d->pid,
                  (uint32_t)d->report_desc_len);
-            ihid_set_power(&LIVE, 0, d, 1);
-            ihid_reset(&LIVE, 0, d);
-            r = ihid_bring_up(&LIVE, 0, d, g_rdbuf, sizeof g_rdbuf);
+            /* v0.8.9.6: power, reset, and WAIT -- see
+               ihid_power_and_reset(). A device that never sends the
+               reset response is warned about and tried anyway: some
+               do not, and the descriptor read below is the real test. */
+            {
+                uint32_t took = 0;
+                r = ihid_power_and_reset(&LIVE, 0, d, sleep_ms, 1000u, &took);
+                d->reset_rc = r; d->reset_ms = took;
+                if (r == IHID_OK)
+                    klog(KLOG_INFO, "i2c-hid: addr %2x answered its reset "
+                         "in %u ms", (uint32_t)d->addr, took);
+                else
+                    klog(KLOG_WARN, "i2c-hid: addr %2x -- %s (%u ms); "
+                         "trying it anyway", (uint32_t)d->addr,
+                         ihid_strerror(r), took);
+            }
+            /* And the descriptor read gets three chances: a device
+               just out of reset can still refuse the first one. */
+            for (int tries = 0; ; tries++) {
+                r = ihid_bring_up(&LIVE, 0, d, g_rdbuf, sizeof g_rdbuf);
+                if (r != IHID_E_IO || tries >= 2) break;
+                sleep_ms(50);
+            }
+            d->up_rc = r;
             if (r != IHID_OK) {
                 klog(KLOG_WARN, "i2c-hid: addr %2x -- %s",
                      (uint32_t)d->addr, ihid_strerror(r));

@@ -203,10 +203,10 @@ BUGS = [
      "hypothetical: it is what v0.8.5's xHCI did, and it got a "
      "nonsense CAPLENGTH and correctly refused to start",
      """        lo = pci_bar_mem64(d, 0, &hi);
-        if(!lo && !hi) continue;""",
+        if(!lo && !hi){""",
      """        lo = pci_bar_mem64(d, 0, &hi);
         hi = 0;
-        if(!lo && !hi) continue;"""),
+        if(!lo && !hi){"""),
 
     ("a BAR that will not map is used anyway",
      "highfb_map_io() returns SUCCESS and writes the address out. "
@@ -216,6 +216,13 @@ BUGS = [
      """            if(!highfb_map_io(hi, lo, 0x1000u, &virt) || !virt){""",
      """            highfb_map_io(hi, lo, 0x1000u, &virt);
             if(0){"""),
+
+    # ── v0.8.9.6 ──────────────────────────────────────────────────────
+    ("a controller left in D3 is never powered up",
+     "every register reads FFFFFFFF, bring_up() says 'not a DesignWare "
+     "core', and the trackpad behind it is never looked for",
+     """            int was = pci_set_d0(d, sleep_ms);""",
+     """            int was = 0;"""),
 ]
 
 HARMLESS = (

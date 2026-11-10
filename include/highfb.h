@@ -42,6 +42,15 @@ int highfb_map_io(uint32_t phys_hi, uint32_t phys_lo, uint32_t bytes,
 /* Which mechanism ended up being used: 0 none, 1 PSE-36, 2 PAE. */
 int highfb_mechanism(void);
 
+/* v0.8.9.6. Whether the framebuffer is write-combining (1) -- the
+   difference between a usable desktop on real hardware and one that
+   repaints a cell at a time. highfb_wc_low() does for a framebuffer
+   below 4 GB what highfb_map() does for one above it. highfb_nowc is
+   the `nowc` command-line switch. */
+int  highfb_wc(void);
+int  highfb_wc_low(uint32_t phys_lo, uint32_t bytes);
+extern int highfb_nowc;
+
 /* The entry builders, exposed so tests/test_highfb.c can check their bit
  * layout against the Intel manual.  A misplaced bit here is a wild write
  * to an address nobody chose, which on real hardware looks exactly like a

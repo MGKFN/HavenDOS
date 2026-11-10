@@ -334,9 +334,19 @@ static uint16_t saved_char=0;
 void ui_draw_cursor(void){
     if(!mouse_is_ready())return;
     int mx,my,mb; mouse_get(&mx,&my,&mb);
-    /* Keep cursor glyph in content area only */
-    if(my<1) my=1;
-    if(my>23) my=23;
+    /* Keep cursor glyph in content area only: below the menu bar on
+       row 0 and above the taskbar on the bottom row.
+       v0.8.9.6: the bottom was `23` written out -- row 23 of an 80x25
+       screen. On a high-resolution grid of 50 or 67 rows that is
+       halfway down the glass, and the pointer stopped there however
+       far the mouse moved. Reported on the HP as a cursor that would
+       not go past the middle of the screen. */
+    {
+        int bottom = vga_rows() - 2;
+        if(bottom < 1) bottom = 1;
+        if(my<1) my=1;
+        if(my>bottom) my=bottom;
+    }
     if(mx==last_mx&&my==last_my)return;
     /* Restore old cell from shadow (ground truth), then save new
        cell from shadow and draw cursor to both shadow+VGA directly
@@ -356,6 +366,37 @@ void ui_erase_cursor(void){
 }
 
 void ui_force_cursor_redraw(void){ last_mx=-1; last_my=-1; }
+
+/* ── v0.8.9.6: AN IDLE WAIT THAT KEEPS LISTENING TO THE MOUSE ─────────
+   The desktop's idle was `sleep_ms(20)`, and a USB or I2C pointer is
+   only read when somebody asks where it is -- so it was read once per
+   pass and its reports queued behind the sleep. A boot-protocol report
+   holds at most 127 counts per axis, so a fast movement that piled up
+   for a whole slow pass was clipped, and the pointer lagged the hand.
+
+   This waits the same total time in 4 ms slices, pumping the pointer
+   in each, and returns early the moment something happened -- the
+   pointer moved, a button changed, a key arrived -- so the caller
+   redraws now rather than at the end of the wait. The same 50 passes
+   a second when nothing is happening; far fewer missed reports when
+   something is. */
+extern int  keyboard_haschar(void);
+extern void sleep_ms(uint32_t);
+void ui_idle(uint32_t ms)
+{
+    int x0, y0, b0, x, y, b;
+    uint32_t done = 0;
+    if(!mouse_is_ready()){ sleep_ms(ms); return; }
+    mouse_get(&x0, &y0, &b0);
+    while(done < ms){
+        uint32_t step = (ms - done) < 4u ? (ms - done) : 4u;
+        sleep_ms(step);
+        done += step;
+        mouse_get(&x, &y, &b);      /* pumps USB and I2C */
+        if(x != x0 || y != y0 || b != b0) return;
+        if(keyboard_haschar()) return;
+    }
+}
 
 /* ── a pager, for output longer than the screen ──────────────────────
  *

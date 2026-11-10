@@ -43,15 +43,11 @@ BUGS = [
      "bus a second later for no reason -- and v0.8.6.1's slot leak "
      "means a rescan is not free: on xHCI the controller owns the "
      "device and the third rescan loses one",
-     """void usb_kpoll_register(void)
-{
+     """    g_retry_owed = 0;
     usb_hotplug_baseline();
-    kpoll_register("usb ports", 1000, usb_hotplug_work);
-}""",
-     """void usb_kpoll_register(void)
-{
-    kpoll_register("usb ports", 1000, usb_hotplug_work);
-}"""),
+    kpoll_register("usb ports", 1000, usb_hotplug_work);""",
+     """    g_retry_owed = 0;
+    kpoll_register("usb ports", 1000, usb_hotplug_work);"""),
 
     ("the bitmap is not re-read after the rescan",
      "enumeration resets ports, so a reading taken before it can "
@@ -60,8 +56,8 @@ BUGS = [
      "every second until the readings happen to agree",
      """    usb_hotplug_baseline();
 
-    /* A NIC that has just arrived needs an address""",
-     """    /* A NIC that has just arrived needs an address"""),
+    /* Nothing enumerated, while the settled bitmap says something is""",
+     """    /* Nothing enumerated, while the settled bitmap says something is"""),
 
     # ── NOT A DEFECT, and recorded rather than deleted ───────────────
     #
@@ -161,6 +157,25 @@ BUGS = [
      """    g_rescans++;
     usb_rescan_all();""",
      """    g_rescans++;"""),
+
+    # ── v0.8.9.6 ──────────────────────────────────────────────────────
+    ("a flapping port is never held off",
+     "the storm the HP had: every flap tears the whole bus down, the "
+     "mouse freezes with it every second, and the log fills",
+     """            if(storm_now(now)){""",
+     """            if(0){"""),
+
+    ("a walk that found nothing is never retried",
+     "`0 devices after hot-plug` on a bus with things plugged in stays "
+     "that way until somebody types `usb rescan`",
+     """        if(occupied && changed) g_retry_owed = 1;""",
+     """        (void)occupied;"""),
+
+    ("the retry retries for ever",
+     "a bus that is genuinely broken is hammered with a full walk every "
+     "second instead of reported once",
+     """        if(occupied && changed) g_retry_owed = 1;""",
+     """        if(occupied) g_retry_owed = 1;"""),
 ]
 
 HARMLESS = (

@@ -83,6 +83,9 @@ void vga_shadow_write(int x,int y,uint16_t v){ (void)x;(void)y;(void)v; }
 int  keyboard_waitchar(void){ return 27; }
 void mouse_get(int *x,int *y,int *b){ if(x)*x=0; if(y)*y=0; if(b)*b=0; }
 int  mouse_is_ready(void){ return 0; }
+/* v0.8.9.6: shell/ui.c's ui_idle() waits and listens for keys. */
+void sleep_ms(uint32_t ms){ (void)ms; }
+int  keyboard_haschar(void){ return 0; }
 void rtc_get_time(uint8_t *h,uint8_t *m,uint8_t *s){ *h=12;*m=0;*s=0; }
 const char *current_username(void){ return "admin"; }
 int  current_user_admin(void){ return 1; }

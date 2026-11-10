@@ -290,7 +290,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -Wno-unused-function \
 	           -o /tmp/hd_tpci tests/test_pci.c drivers/pci_bar.c \
 	           && \
-	  python3 tools/run_suite.py --name test_pci --min 26 -- /tmp/hd_tpci
+	  python3 tools/run_suite.py --name test_pci --min 34 -- /tmp/hd_tpci
 	@echo "── test_diskname ──────────────────────────"
 	@echo "  a disk is named for the bus it is really on"
 	@# v0.8.6: -Iinclude, because this links fs/blkdev.c now instead of
@@ -301,7 +301,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@echo "── test_klog ──────────────────────────────"
 	@echo "  the kernel log: what goes in comes out, and dmesg agrees with it"
 	@$(TESTCC) -o /tmp/hd_tklog tests/test_klog.c && \
-	  python3 tools/run_suite.py --name test_klog --min 22 -- /tmp/hd_tklog
+	  python3 tools/run_suite.py --name test_klog --min 31 -- /tmp/hd_tklog
 	@echo "── test_uhci ──────────────────────────────"
 	@echo "  the USB host controller, against a simulated UHCI and device"
 	@# -no-pie keeps every static below 4 GB, so the 32-bit physical
@@ -351,7 +351,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@echo "  page-directory entries for a framebuffer above 4 GB"
 	@$(TESTCC) -Wno-pointer-to-int-cast -Iinclude \
 	           -o /tmp/hd_thf tests/test_highfb.c && \
-	  python3 tools/run_suite.py --name test_highfb --min 125 -- /tmp/hd_thf
+	  python3 tools/run_suite.py --name test_highfb --min 150 -- /tmp/hd_thf
 	@echo "── test_mbinfo ────────────────────────────"
 	@echo "  the Multiboot structs against the spec -- fbdiag reads its answer here"
 	@$(TESTCC) -o /tmp/hd_tmb tests/test_mbinfo.c && \
@@ -482,7 +482,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tkbd tests/test_kbdinit.c && \
-	  python3 tools/run_suite.py --name test_kbdinit --min 34 -- /tmp/hd_tkbd
+	  python3 tools/run_suite.py --name test_kbdinit --min 42 -- /tmp/hd_tkbd
 	@echo "── test_theme ─────────────────────────────"
 	@echo "  previewing a theme is not choosing one"
 	@# shell/ui.c is COMPILED here, not copied: the stubs are only the
@@ -527,7 +527,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_ti2c tests/test_i2c.c && \
-	  python3 tools/run_suite.py --name test_i2c --min 44 -- /tmp/hd_ti2c
+	  python3 tools/run_suite.py --name test_i2c --min 49 -- /tmp/hd_ti2c
 	@echo "── test_rsa ───────────────────────────────"
 	@echo "  Miller-Rabin and RSA keygen, against CPython and openssl"
 	@# net/rsa.c arrived with a suite and a harness and was never added
@@ -579,7 +579,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@# and are named at the end of drivers/i2c_hid.c. Under ASAN.
 	@$(TESTCC) -g -fsanitize=address,undefined -Iinclude -Itests \
 	           -o /tmp/hd_tih tests/test_i2c_hid.c && \
-	  python3 tools/run_suite.py --name test_i2c_hid --min 71 -- /tmp/hd_tih
+	  python3 tools/run_suite.py --name test_i2c_hid --min 84 -- /tmp/hd_tih
 	@echo "── test_hid_rd ────────────────────────────"
 	@echo "  HID report descriptors, judged by hid_parser -- under ASAN"
 	@# The parser that makes a trackpad possible: I2C-HID has no boot
@@ -645,7 +645,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tkp tests/test_kpoll.c && \
-	  python3 tools/run_suite.py --name test_kpoll --min 146 -- /tmp/hd_tkp
+	  python3 tools/run_suite.py --name test_kpoll --min 156 -- /tmp/hd_tkp
 	@echo "── test_netdev ────────────────────────────"
 	@echo "  one NIC layer, its two orders, and what it refuses"
 	@# NET_NO_HW keeps the PCI drivers out: this suite links net/netdev.c

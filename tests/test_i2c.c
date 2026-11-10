@@ -157,7 +157,13 @@ static uint32_t sim_read(uint32_t off)
 
 static void sim_write(uint32_t off, uint32_t v)
 {
-    if(off == SIM_LPSS_RESET){ in_reset = 0; sim[off/4] = v; return; }
+    /* v0.8.9.6: the value matters. The driver now ASSERTS the reset
+       (writes 0) before releasing it, and a simulation that took any
+       write as a release passed a driver that only ever asserted --
+       tools/check_i2c_suite.py's "never released" injection went
+       MISSED the moment the first write became a 0. Bits 0-1 are the
+       function reset; both set is out of reset. */
+    if(off == SIM_LPSS_RESET){ in_reset = ((v & 3u) != 3u); sim[off/4] = v; return; }
     if(in_reset) return;
     switch(off){
     case SIM_IC_ENABLE:
@@ -194,6 +200,19 @@ static pci_dev_t fake_pci;
 static int       n_pci = 1;
 const pci_dev_t *pci_get(int i){ return (i == 0 && n_pci) ? &fake_pci : 0; }
 void pci_enable(const pci_dev_t *d, int bm){ (void)d; (void)bm; }
+/* v0.8.9.6: D3. While the simulated function is powered down every
+   MMIO read is all ones, which is what real hardware does and what
+   made bring_up() call a perfectly good core "not DesignWare". */
+static int sim_d3, d0_calls, d0_delays;
+static void sim_delay(uint32_t ms){ (void)ms; d0_delays++; }
+void sleep_ms(uint32_t ms){ sim_delay(ms); }
+int pci_set_d0(const pci_dev_t *d, void (*delay_ms)(uint32_t)){
+    (void)d; d0_calls++;
+    if(!sim_d3) return 0;
+    sim_d3 = 0;
+    if(delay_ms) delay_ms(10);
+    return 3;
+}
 static uint32_t bar_hi = 0, bar_lo = 0x1000u;
 uint32_t pci_bar_mem64(const pci_dev_t *d, int n, uint32_t *hi){
     (void)d; (void)n; if(hi) *hi = bar_hi; return bar_lo;
@@ -213,6 +232,7 @@ void klog(int lvl, const char *fmt, ...){ (void)lvl; (void)fmt; }
 static uint32_t sim_rd_hook(uint32_t base, uint32_t off)
 {
     (void)base;
+    if(sim_d3) return 0xFFFFFFFFu;
     return sim_read(off);
 }
 static void sim_wr_hook(uint32_t base, uint32_t off, uint32_t v)
@@ -245,11 +265,25 @@ static void reset_sim(int depth)
     fake_pci.vendor = 0x8086; fake_pci.device = 0x51E8;
     fake_pci.class = 0x0C; fake_pci.subclass = 0x80;
     n_pci = 1;
+    sim_d3 = 0; d0_calls = 0; d0_delays = 0;
 }
 
 int main(void)
 {
     printf("test_i2c: the DesignWare core, against a simulated one\n");
+
+    /* ── v0.8.9.6: a controller the firmware left powered down ─── */
+    head("a controller left in D3 is powered up before it is read");
+    reset_sim(16);
+    sim_d3 = 1;
+    ck("it still comes up as a bus", i2c_init() == 1, i2c_bus_count());
+    ck("  ... because it was asked to go to D0", d0_calls == 1, d0_calls);
+    ck("  ... and given the recovery time the spec requires",
+       d0_delays >= 1, d0_delays);
+    ck("  ... and is ready", i2c_bus_ready(0) == 1, 0);
+    reset_sim(16);
+    ck("a controller already in D0 is asked, and nothing changes",
+       i2c_init() == 1 && d0_calls == 1, d0_calls);
 
     /* ── bringing it up ──────────────────────────────────────────── */
     head("a controller comes up, and the reset is released first");

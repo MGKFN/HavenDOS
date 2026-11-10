@@ -59,6 +59,8 @@ static void klog(int lv, const char *f, ...){ (void)lv;(void)f; }
 #define KLOG_OK   2
 static void mouse_feed_i2c(int dx,int dy,int b){ (void)dx;(void)dy;(void)b; }
 static void mouse_i2c_attach(void){ }
+static uint32_t slept_ms; static int sleeps;
+static void sleep_ms(uint32_t ms){ slept_ms += ms; sleeps++; }
 #define I2C_H          /* keep the real include/i2c.h out */
 #define KLOG_H
 #include "../drivers/i2c_hid.c"
@@ -124,6 +126,12 @@ static struct {
     uint16_t inrep_len;
     /* what the host did */
     int resets, powerons, poweroffs, cmds;
+    /* v0.8.9.6: a device that is busy after a reset. reset_busy is how
+       many transfers it refuses once reset; busy_left counts down. A
+       power-on that comes AFTER the reset is the wrong order, and
+       last_cmd_order records which came first. */
+    int reset_busy, busy_left;
+    char order[8]; int norder;
     int reads, wrrds, probes;
 } dev;
 
@@ -177,6 +185,7 @@ static int m_wrrd(void *c, int bus, uint8_t a, const uint8_t *w,
     (void)c;
     dev.wrrds++;
     if(bus != 0 || a != dev.addr || wl != 2) return -1;
+    if(dev.busy_left > 0){ dev.busy_left--; return -1; }   /* NAK */
     reg = (uint16_t)(w[0] | (w[1] << 8));
 
     if(reg == dev.desc_reg){
@@ -203,6 +212,7 @@ static int m_rd(void *c, int bus, uint8_t a, uint8_t *b, uint32_t l)
     (void)c;
     dev.reads++;
     if(bus != 0 || a != dev.addr) return -1;
+    if(dev.busy_left > 0){ dev.busy_left--; return -1; }   /* NAK */
     memset(b, 0, l);
     if(dev.inrep_len == 0){
         /* The device says "nothing to report" with a length of zero,
@@ -222,9 +232,16 @@ static int m_wr(void *c, int bus, uint8_t a, const uint8_t *b, uint32_t l)
         uint16_t reg = (uint16_t)(b[0] | (b[1] << 8));
         if(reg != dev.cmd_reg) return -1;
         dev.cmds++;
-        if(b[3] == IHID_CMD_RESET) dev.resets++;
+        if(b[3] == IHID_CMD_RESET){
+            dev.resets++;
+            dev.busy_left = dev.reset_busy;
+            if(dev.norder < 7) dev.order[dev.norder++] = 'R';
+        }
         if(b[3] == IHID_CMD_SET_POWER){
-            if(b[2] == IHID_POWER_ON) dev.powerons++;
+            if(b[2] == IHID_POWER_ON){
+                dev.powerons++;
+                if(dev.norder < 7) dev.order[dev.norder++] = 'P';
+            }
             else dev.poweroffs++;
         }
     }
@@ -650,6 +667,85 @@ int main(void)
            == IHID_E_PARAM, 0);
         ck("discovery with a zero maximum",
            ihid_find(&OPS, 0, 0, found, 0) == IHID_E_PARAM, 0);
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       v0.8.9.6 -- THE DEVICE NEEDS TIME AFTER A RESET
+       0.8.8.11 sent SET_POWER and RESET and read the report descriptor
+       in the same breath. A device still busy with the reset refuses
+       that read, ihid_bring_up() returned IHID_E_IO, and the trackpad
+       was never attached -- on the HP, "trackpad werkt niet". The mock
+       below refuses transfers for a while after a reset, as real ones
+       do; every check before this one used a device that was ready
+       the instant it was told to reset.
+       ══════════════════════════════════════════════════════════════ */
+    head("a device busy after its reset is waited for");
+    dev_reset(RD_TOUCH, sizeof RD_TOUCH);
+    ihid_find(&OPS, 0, 0, found, IHID_MAX_DEV);
+    dev.reset_busy = 6;                 /* six refused transfers */
+    {
+        uint32_t took = 0;
+        int r;
+        slept_ms = 0; sleeps = 0;
+        r = ihid_power_and_reset(&OPS, 0, &found[0], sleep_ms, 1000u, &took);
+        ck("it answers in the end", r == IHID_OK, r);
+        ck("  ... powered on BEFORE it was reset",
+           dev.norder >= 2 && dev.order[0] == 'P' && dev.order[1] == 'R',
+           dev.norder);
+        ck("  ... and the wait was spent, not skipped",
+           slept_ms >= 50u && took >= 50u, (long)took);
+        ck("  ... and the busy period is over", dev.busy_left == 0,
+           dev.busy_left);
+        ck("then the report descriptor reads first time",
+           ihid_bring_up(&OPS, 0, &found[0], rdbuf, sizeof rdbuf) == IHID_OK,
+           0);
+    }
+
+    head("the old order -- reset, then read at once -- is what failed");
+    dev_reset(RD_TOUCH, sizeof RD_TOUCH);
+    ihid_find(&OPS, 0, 0, found, IHID_MAX_DEV);
+    dev.reset_busy = 6;
+    ihid_set_power(&OPS, 0, &found[0], 1);
+    ihid_reset(&OPS, 0, &found[0]);
+    ck("reading the descriptor immediately is refused",
+       ihid_bring_up(&OPS, 0, &found[0], rdbuf, sizeof rdbuf) == IHID_E_IO,
+       0);
+
+    head("a device that never answers its reset does not hang the boot");
+    dev_reset(RD_TOUCH, sizeof RD_TOUCH);
+    ihid_find(&OPS, 0, 0, found, IHID_MAX_DEV);
+    dev.reset_busy = 1000000;
+    {
+        uint32_t took = 0;
+        int r;
+        slept_ms = 0; sleeps = 0;
+        r = ihid_power_and_reset(&OPS, 0, &found[0], sleep_ms, 1000u, &took);
+        ck("it gives up with IHID_E_NORESET", r == IHID_E_NORESET, r);
+        ck("  ... after the budget, not before", took >= 1000u, (long)took);
+        ck("  ... and not long after it", slept_ms <= 1100u, (long)slept_ms);
+        ck("  ... and says so in words",
+           strcmp(ihid_strerror(IHID_E_NORESET), "unknown") != 0, 0);
+    }
+    {
+        uint32_t took = 0;
+        dev_reset(RD_TOUCH, sizeof RD_TOUCH);
+        ihid_find(&OPS, 0, 0, found, IHID_MAX_DEV);
+        dev.reset_busy = 1000000;
+        ck("without a delay function it still ends",
+           ihid_power_and_reset(&OPS, 0, &found[0], 0, 200u, &took)
+               == IHID_E_NORESET, (long)took);
+    }
+
+    head("a device ready at once is not made to wait for nothing");
+    dev_reset(RD_TOUCH, sizeof RD_TOUCH);
+    ihid_find(&OPS, 0, 0, found, IHID_MAX_DEV);
+    {
+        uint32_t took = 0;
+        slept_ms = 0;
+        ck("it answers", ihid_power_and_reset(&OPS, 0, &found[0], sleep_ms,
+                                              1000u, &took) == IHID_OK, 0);
+        ck("  ... on the first look after the initial settle",
+           took == 50u, (long)took);
     }
 
     printf("\n%d/%d passed\n", total - fails, total);

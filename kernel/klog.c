@@ -17,7 +17,30 @@
 
 extern uint32_t boot_ms(void);          /* kernel/pit.c */
 
-#define KLOG_MAX_LINES 160
+/* ── v0.8.9.6: THE BOOT IS PINNED, EVERYTHING AFTER IT ROTATES ─────────
+ *
+ * This was 160 lines that kept the START and dropped everything after
+ * it. The reasoning was sound for a boot -- the beginning is where a
+ * boot that went wrong went wrong -- and wrong for every other hour of
+ * the machine's life. On the HP the boot alone writes over a hundred
+ * lines, so a few minutes of USB events filled the rest and from then
+ * on NOTHING new was kept: `dmesg | grep lockdown` after a failed pair
+ * found nothing, because the lines that would have explained it were
+ * the dropped ones. A diagnostic log that stops recording is worse
+ * than a small one, because it looks like a log of a quiet machine.
+ *
+ * So: the first KLOG_PIN lines are kept for ever, as before -- that is
+ * the boot -- and everything after them goes round a ring of
+ * KLOG_RING lines, newest overwriting oldest. klog_dropped() now
+ * counts lines ROTATED OUT of the ring, and `dmesg` says where the
+ * gap is: between the boot and the oldest line still held.
+ *
+ * 512 lines of 80 bytes is 40 KB of .bss. The heap has been 125 times
+ * bigger than this since 0.8.8.5; 160 was a number from a kernel that
+ * had 255 KB to its name. */
+#define KLOG_PIN       192
+#define KLOG_RING      320
+#define KLOG_MAX_LINES (KLOG_PIN + KLOG_RING)
 #define KLOG_LINE_LEN  72               /* 80 columns minus the timestamp */
 
 typedef struct {
@@ -27,8 +50,19 @@ typedef struct {
 } klog_line_t;
 
 static klog_line_t g_lines[KLOG_MAX_LINES];
-static int         g_nlines;
-static int         g_dropped;
+static int         g_nlines;     /* logical lines held: pinned + ring  */
+static int         g_ring_head;  /* ring slot holding the OLDEST line  */
+static int         g_dropped;    /* lines rotated out of the ring      */
+
+/* Logical index -> storage. 0..KLOG_PIN-1 are the boot, in place; the
+   rest are the ring, read from its oldest slot onward. Every accessor
+   goes through this, so a reader never sees the ring's seam. */
+static klog_line_t *line_at(int i)
+{
+    if (i < 0 || i >= g_nlines) return 0;
+    if (i < KLOG_PIN) return &g_lines[i];
+    return &g_lines[KLOG_PIN + (g_ring_head + (i - KLOG_PIN)) % KLOG_RING];
+}
 static int         g_echo = 1;          /* on from the first line */
 static void      (*g_sink)(int, const char *) = 0;
 
@@ -40,9 +74,12 @@ int  klog_echo_on(void)    { return g_echo; }
 
 int         klog_count(void)       { return g_nlines; }
 int         klog_dropped(void)     { return g_dropped; }
-uint32_t    klog_ms(int i)         { return (i >= 0 && i < g_nlines) ? g_lines[i].ms : 0; }
-int         klog_level(int i)      { return (i >= 0 && i < g_nlines) ? g_lines[i].level : KLOG_INFO; }
-const char *klog_text(int i)       { return (i >= 0 && i < g_nlines) ? g_lines[i].text : ""; }
+uint32_t    klog_ms(int i)         { klog_line_t *l = line_at(i); return l ? l->ms : 0; }
+int         klog_level(int i)      { klog_line_t *l = line_at(i); return l ? l->level : KLOG_INFO; }
+const char *klog_text(int i)       { klog_line_t *l = line_at(i); return l ? l->text : ""; }
+/* Where the gap is, for a reader that prints one: the logical index of
+   the first ring line, or -1 when nothing has rotated out. */
+int         klog_gap_at(void)      { return g_dropped ? KLOG_PIN : -1; }
 
 /* ── a small formatter ────────────────────────────────────────────────
    The same specifiers vga_printf takes, written into a bounded buffer so a
@@ -157,17 +194,29 @@ static void echo_line(uint32_t ms, int level, const char *text)
    this file has no business waiting on a keyboard. */
 void klog_print_line(int i)
 {
-    if (i < 0 || i >= g_nlines) return;
-    echo_line(g_lines[i].ms, g_lines[i].level, g_lines[i].text);
+    klog_line_t *l = line_at(i);
+    if (!l) return;
+    echo_line(l->ms, l->level, l->text);
 }
 
 void klog_dump(void)
 {
-    for (int i = 0; i < g_nlines; i++) klog_print_line(i);
-    if (g_dropped) {
-        vga_set_color(VGA_YELLOW, VGA_BLACK);
-        vga_puts("  (log full: later lines were dropped)\n");
-        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    for (int i = 0; i < g_nlines; i++) {
+        if (i == klog_gap_at()) {
+            vga_set_color(VGA_YELLOW, VGA_BLACK);
+            /* Formatted here rather than through vga_printf: every
+               native suite that links this file would otherwise need a
+               printf stub, and klog already owns a formatter. */
+            char note[64]; int k = 0;
+            put_s(note, (int)sizeof note, &k, "  (... ");
+            put_d(note, (int)sizeof note, &k, g_dropped);
+            put_s(note, (int)sizeof note, &k,
+                  " older lines rotated out after the boot ...)\n");
+            note[k] = 0;
+            vga_puts(note);
+            vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        }
+        klog_print_line(i);
     }
 }
 
@@ -183,18 +232,26 @@ void klog(int level, const char *fmt, ...)
 
     uint32_t ms = boot_ms();
 
-    if (g_nlines < KLOG_MAX_LINES) {
-        klog_line_t *l = &g_lines[g_nlines++];
+    {
+        klog_line_t *l;
+        if (g_nlines < KLOG_MAX_LINES) {
+            l = &g_lines[g_nlines < KLOG_PIN ? g_nlines
+                         : KLOG_PIN + (g_ring_head + (g_nlines - KLOG_PIN))
+                                      % KLOG_RING];
+            g_nlines++;
+        } else {
+            /* Full: the oldest RING line gives way. The boot never does
+               -- see the note at KLOG_PIN. Counted, so the gap is shown
+               rather than hidden. */
+            l = &g_lines[KLOG_PIN + g_ring_head];
+            g_ring_head = (g_ring_head + 1) % KLOG_RING;
+            g_dropped++;
+        }
         l->ms    = ms;
         l->level = (uint8_t)level;
         int i = 0;
         while (text[i] && i < KLOG_LINE_LEN - 1) { l->text[i] = text[i]; i++; }
         l->text[i] = 0;
-    } else {
-        /* Keep the START of the boot rather than the end: the beginning is
-           where a boot that went wrong went wrong.  The count is reported so
-           the loss is visible instead of silent. */
-        g_dropped++;
     }
 
     /* ── WHERE THE LINE GOES ──────────────────────────────────────────

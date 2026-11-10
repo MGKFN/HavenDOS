@@ -126,6 +126,74 @@ static uint32_t g_truncated;        /* controllers with >32 root ports  */
 uint32_t usb_hotplug_changes(void){ return g_changes; }
 uint32_t usb_hotplug_rescans(void){ return g_rescans; }
 
+/* ── v0.8.9.6: A STORM IS NOT A SERIES OF PLUG EVENTS ───────────────
+ *
+ * Every change rescans the WHOLE bus: every device is released and
+ * enumerated again, the mouse and the keyboard included, and on the HP
+ * that is hundreds of milliseconds of port resets during which nothing
+ * on USB answers. Right for one plug event. Ruinous for a port that
+ * flaps -- a device that drops and comes back every second, an iPhone
+ * switching configurations mid-pair -- because then the bus is torn
+ * down every second, the pointer freezes in time with it, and the log
+ * fills with a dozen lines a pass. Choppy, and a full log, and
+ * eventually `0 devices after hot-plug`, are one symptom.
+ *
+ * So the first change is still acted on at once, as before -- a person
+ * plugging in a stick should not wait. But a change arriving when
+ * HP_STORM_COUNT rescans already ran inside HP_STORM_WINDOW is a storm, and the client holds off: ten
+ * seconds, then twenty, forty, eighty, for as long as it continues.
+ * The hold is said once in the log, with the way out (`usb rescan`
+ * still works whenever a person asks). A minute of quiet ends it.
+ *
+ * Changes seen during a hold are not lost: g_seen is not updated, so
+ * the first pass after the hold sees the difference and rescans once. */
+#define HP_STORM_COUNT   3
+#define HP_STORM_WINDOW  500u           /* ticks: 5 s -- a flap is ~1 s */
+#define HP_HOLD_FIRST    1000u          /* 10 s                         */
+#define HP_HOLD_MAX      8000u          /* 80 s                         */
+#define HP_QUIET_RESET   6000u          /* 60 s without a rescan        */
+static uint32_t g_rescan_at[HP_STORM_COUNT];   /* ring of recent rescans */
+static int      g_rescan_n;
+static uint32_t g_hold_until;
+static uint32_t g_hold_len;
+static uint32_t g_holds;                /* storms detected, for the tests */
+static int      g_hold_said;
+
+/* ── and a rescan that finds nothing gets one more try ───────────────
+ * `xHCI slot 2 ep0: USB Transaction Error (cc 4)` followed by
+ * `usb: 0 devices ... after hot-plug` on a bus with things plainly
+ * plugged into it. A device caught mid-reset by the walk answers
+ * nothing, and when the walk was triggered by that same device
+ * flapping, everything is caught. One retry, a second later, when the
+ * ports say something is connected and the table says nothing is. Not
+ * more than one: a bus that is genuinely broken should be reported,
+ * not hammered. */
+static int      g_retry_owed;
+static uint32_t g_retries;
+
+uint32_t usb_hotplug_holds(void)  { return g_holds; }
+uint32_t usb_hotplug_retries(void){ return g_retries; }
+
+static int storm_now(uint32_t now)
+{
+    int i, recent = 0;
+    for(i = 0; i < g_rescan_n && i < HP_STORM_COUNT; i++)
+        if(now - g_rescan_at[i] < HP_STORM_WINDOW) recent++;
+    return recent >= HP_STORM_COUNT;
+}
+
+static void note_rescan(uint32_t now)
+{
+    /* Quiet for long enough: the next storm starts from the shortest
+       hold again. */
+    if(g_rescan_n > 0){
+        uint32_t last = g_rescan_at[(g_rescan_n - 1) % HP_STORM_COUNT];
+        if(now - last >= HP_QUIET_RESET) g_hold_len = 0;
+    }
+    g_rescan_at[g_rescan_n % HP_STORM_COUNT] = now;
+    g_rescan_n++;
+}
+
 static uint32_t ports_of(const usb_hc_t *h, int *n_out)
 {
     uint32_t bits = 0;
@@ -194,7 +262,36 @@ static void usb_hotplug_work(void)
         changed = 1;
     }
 
-    if(!changed) return;
+    {
+        uint32_t now = kpoll_ticks();
+
+        if(!changed){
+            if(!g_retry_owed) return;
+            g_retry_owed = 0;
+            g_retries++;
+            klog(KLOG_WARN, "usb: ports are occupied but nothing "
+                            "enumerated -- trying once more");
+        } else {
+            if((int32_t)(now - g_hold_until) < 0) return;  /* held */
+            if(storm_now(now)){
+                g_hold_len = g_hold_len ? g_hold_len * 2u : HP_HOLD_FIRST;
+                if(g_hold_len > HP_HOLD_MAX) g_hold_len = HP_HOLD_MAX;
+                g_hold_until = now + g_hold_len;
+                g_holds++;
+                g_hold_said = 0;
+            }
+            if((int32_t)(now - g_hold_until) < 0){
+                if(!g_hold_said){
+                    g_hold_said = 1;
+                    klog(KLOG_WARN, "usb: ports keep changing -- rescans "
+                         "held off for %u s (`usb rescan` forces one)",
+                         g_hold_len / 100u);
+                }
+                return;
+            }
+        }
+        note_rescan(now);
+    }
 
     g_rescans++;
     usb_rescan_all();
@@ -209,6 +306,16 @@ static void usb_hotplug_work(void)
        could rescan twice. */
     usb_hotplug_baseline();
 
+    /* Nothing enumerated, while the settled bitmap says something is
+       plugged in: owe exactly one retry -- see g_retry_owed. A retry
+       that itself finds nothing does not owe another. */
+    if(g_last.devices == 0 && !g_retry_owed){
+        int occupied = 0;
+        for(int c = 0; c < nhc && c < USB_MAX_HC; c++)
+            if(g_have[c] && g_seen[c]) occupied = 1;
+        if(occupied && changed) g_retry_owed = 1;
+    }
+
     /* A NIC that has just arrived needs an address, and the compile-
        time fallback is QEMU's.  v0.8.7.2 added this to `usb rescan`;
        here it is the same reasoning with nobody having typed
@@ -222,6 +329,9 @@ static void usb_hotplug_work(void)
  * takes a person to plug something in and look at the screen. */
 void usb_kpoll_register(void)
 {
+    /* A fresh client starts with no storm behind it. */
+    g_rescan_n = 0; g_hold_until = 0; g_hold_len = 0; g_hold_said = 0;
+    g_retry_owed = 0;
     usb_hotplug_baseline();
     kpoll_register("usb ports", 1000, usb_hotplug_work);
 }

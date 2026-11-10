@@ -52,7 +52,7 @@ static void head(const char *t) { printf("\n%s\n", t); }
 
 static void reset(void)
 {
-    g_nlines = 0; g_dropped = 0; g_echo = 1; v_ms = 0;
+    g_nlines = 0; g_dropped = 0; g_ring_head = 0; g_echo = 1; v_ms = 0;
     screen_clear();
 }
 
@@ -130,6 +130,48 @@ int main(void)
        "a boot that went wrong went wrong at the start, so the start is "
        "what a full log has to keep");
     ck("and the loss is counted, not silent", klog_dropped() == 25, "");
+
+    /* ── v0.8.9.6: AND THE END IS KEPT TOO ────────────────────────────
+       The old buffer kept the start and dropped everything after it, so
+       a machine that had been up for ten minutes recorded nothing new
+       at all -- `dmesg | grep lockdown` after a failed pair on the HP
+       found nothing because those were the dropped lines. The boot is
+       pinned now and the rest rotates. */
+    ck("the LAST line written is the last line held",
+       !strcmp(klog_text(klog_count() - 1), "line 536"),
+       "a log that stops recording looks exactly like a quiet machine");
+    ck("the pinned boot ends where it should",
+       !strcmp(klog_text(KLOG_PIN - 1), "line 191"), "");
+    ck("and the oldest ring line is the first one not rotated out",
+       !strcmp(klog_text(KLOG_PIN), "line 217"),
+       "25 lines past capacity means the ring's first 25 are gone");
+    ck("the gap is reported at the seam", klog_gap_at() == KLOG_PIN, "");
+    ck("timestamps follow the lines through the ring",
+       klog_ms(klog_count() - 1) == 536u && klog_ms(KLOG_PIN) == 217u, "");
+
+    head("a long session: the ring wraps many times and stays in order");
+    reset();
+    for (int i = 0; i < KLOG_MAX_LINES * 4 + 7; i++) {
+        v_ms = (uint32_t)i;
+        klog(KLOG_OK, "line %u", (uint32_t)i);
+    }
+    {
+        int ordered = 1;
+        for (int i = KLOG_PIN + 1; i < klog_count(); i++)
+            if (klog_ms(i) != klog_ms(i - 1) + 1u) ordered = 0;
+        ck("every ring line is one later than the one before", ordered,
+           "a ring read from the wrong head shows its seam as a jump back");
+        ck("the boot is untouched after four laps",
+           !strcmp(klog_text(0), "line 0") &&
+           !strcmp(klog_text(KLOG_PIN - 1), "line 191"), "");
+        ck("and the count of rotated lines is exact",
+           klog_dropped() == KLOG_MAX_LINES * 3 + 7, "");
+    }
+
+    head("below capacity there is no gap to report");
+    reset();
+    klog(KLOG_OK, "one");
+    ck("klog_gap_at() is -1 while nothing has rotated", klog_gap_at() == -1, "");
 
     head("echo can be turned off, and the line is still recorded");
     reset();

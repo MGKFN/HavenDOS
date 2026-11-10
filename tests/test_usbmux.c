@@ -1703,6 +1703,131 @@ int main(void)
     }
 
 
+    /* ══════════════════════════════════════════════════════════════════
+       v0.8.9.5 -- A CLOSE IS NOT A FAULT
+
+       Found on Kyan's HP, and the reason this suite did not find it
+       first is the same shape as v0.8.9.2's: muxdev.inc could send a
+       FIN and no test had ever asked it to. Every established-state
+       check in the 150 above this one is driven by a device that
+       answers and keeps the connection, because that is the device a
+       protocol test naturally models.
+
+       The real one does not. lockdownd closes a connection left idle,
+       `pair` left one idle for seventy-one seconds while it generated
+       two RSA keys, and usbmux_recv() reported the resulting FIN
+       through the catch-all for malformed packets -- USB_EXFER, the
+       code for CRC, babble and buffer faults. The screen said the
+       request "did not get a reply (-3)" and -3 sent the diagnosis at
+       the USB layer, where nothing had gone wrong at all.
+
+       So: three flag outcomes, three distinguishable answers, and a
+       sentence for each. The sentences are checked because an error
+       code that cannot say which of four things happened is four bugs
+       wearing one number -- v0.8.7.4, and it cost that release.
+       ══════════════════════════════════════════════════════════════════ */
+
+    head("a FIN is a close, not a transfer error");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        uint8_t buf[64];
+        int r;
+        /* FIN|ACK is 0x11. A bare ACK is 0x10, so a test written
+           against equality with F_ACK -- which is what shipped --
+           funnels this into the malformed-packet branch. */
+        queue_tcp((uint8_t)(F_FIN | F_ACK), ph.dev_seq,
+                  ph.exp_host_seq, 0, 0);
+        r = usbmux_recv(buf, (int)sizeof buf);
+        ck("it is USB_ENODEV, the connection is gone", r == USB_ENODEV, r);
+        ck("NOT USB_EXFER -- that is the bus, and the bus was fine",
+           r != USB_EXFER, r);
+        ck("usbmux_connected() agrees", usbmux_connected() == 0,
+           usbmux_connected());
+        ck("and the reason says it was closed",
+           strstr(usbmux_why(), "closed") != 0, 0);
+        ck("naming the FIN, so the next reader does not have to guess",
+           strstr(usbmux_why(), "FIN") != 0, 0);
+    }
+
+    head("a bare FIN, with no ACK bit, closes the same way");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        uint8_t buf[64];
+        int r;
+        queue_tcp(F_FIN, ph.dev_seq, ph.exp_host_seq, 0, 0);
+        r = usbmux_recv(buf, (int)sizeof buf);
+        ck("still a close", r == USB_ENODEV, r);
+        ck("still says so", strstr(usbmux_why(), "closed") != 0, 0);
+    }
+
+    head("an RST is still an RST, and says a different thing");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        uint8_t buf[64];
+        int r;
+        queue_tcp(F_RST, ph.dev_seq, ph.exp_host_seq, 0, 0);
+        r = usbmux_recv(buf, (int)sizeof buf);
+        ck("USB_ENODEV, as before", r == USB_ENODEV, r);
+        ck("reported as a reset, not a close",
+           strstr(usbmux_why(), "reset") != 0, 0);
+        ck("and the two reasons are different sentences",
+           strstr(usbmux_why(), "FIN") == 0, 0);
+    }
+
+    head("flags that are none of the three are still a transfer error");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        uint8_t buf[64];
+        int r;
+        /* URG. Nothing in this protocol sends it; a packet carrying it
+           is a packet this side does not understand, which is what
+           USB_EXFER is for and what the FIN was wrongly folded into. */
+        queue_tcp((uint8_t)0x20, ph.dev_seq, ph.exp_host_seq, 0, 0);
+        r = usbmux_recv(buf, (int)sizeof buf);
+        ck("USB_EXFER, kept for the case it belongs to", r == USB_EXFER, r);
+        ck("and named as neither of the three",
+           strstr(usbmux_why(), "neither") != 0, 0);
+    }
+
+    head("usbmux_why() is never null, even before anything has failed");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        const char *w = usbmux_why();
+        ck("a sentence, not a null pointer", w != 0, 0);
+        ck("and not an empty one", w && w[0] != 0, 0);
+    }
+
+    head("and a new connection does not inherit the last one's reason");
+    machine();
+    usbmux_open(); usbmux_handshake(); usbmux_connect(MUX_PORT_LOCKDOWN);
+    {
+        uint8_t buf[64];
+        /* The reason has to be SET before the clearing can be tested.
+           Checking it on a connection that never failed proves only
+           that the fixture was reset, which is what the first version
+           of this check did -- and tools/check_usbmux_suite.py caught
+           it: the injection that kept the stale reason was reported
+           MISSED, because there was no stale reason to keep. */
+        queue_tcp((uint8_t)(F_FIN | F_ACK), ph.dev_seq,
+                  ph.exp_host_seq, 0, 0);
+        usbmux_recv(buf, (int)sizeof buf);
+        ck("the close is on record", strstr(usbmux_why(), "closed") != 0, 0);
+
+        /* The device accepts a fresh connection after a close, which
+           is what `pair` now does across the keygen. The fixture is
+           put back in the closed state to model that; everything else
+           about it, counters included, is left exactly as the failed
+           conversation left it. */
+        ph.tcp_state = 0;
+        ck("it reconnects", usbmux_connect(MUX_PORT_LOCKDOWN) == USB_OK, 0);
+        ck("and the reason no longer names the old conversation",
+           strstr(usbmux_why(), "closed") == 0, 0);
+    }
 
     printf("\n%d/%d passed\n", total - fails, total);
     return fails ? 1 : 0;

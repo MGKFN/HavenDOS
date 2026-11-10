@@ -491,6 +491,40 @@ void cmd_pair(const char *arg)
                  "   minute or two on real hardware -- `pair` prints the\n"
                  "   elapsed time for each.)\n");
         vga_set_color(VGA_WHITE, VGA_BLACK);
+
+        /* ── v0.8.9.5: HANG UP FIRST ─────────────────────────────────
+           On Kyan's HP the two keys took 54180 ms and 17090 ms. For
+           those seventy-one seconds this function held a lockdownd
+           connection open and sent it nothing, because the connection
+           was opened before the keys were needed and simply stayed
+           open across the arithmetic.
+
+           lockdownd closes an idle connection. It is entitled to, and
+           it did: the FIN was sitting on the wire by the time the
+           3728-byte pair request went out, the request went into a
+           connection the device had already finished with, and the
+           first read afterwards picked up the FIN. Before this
+           release usbmux_recv() reported that as USB_EXFER, so the
+           screen said `the request did not get a reply (-3)` and
+           pointed at the USB layer, where nothing was wrong.
+
+           The fix is not a keepalive. A keepalive would mean holding a
+           connection open for over a minute in order to send nothing
+           down it, and the right number of packets to send during a
+           computation is zero. Nothing in the keygen needs the device:
+           the only thing taken from it is the public key, and that is
+           already parsed and in g_devn by the time this runs.
+
+           So: hang up, generate, call back. The device sees two short
+           conversations instead of one long silence, and the second
+           one starts from a stream position both ends agree on. */
+        vga_set_color(VGA_DARK_GREY, VGA_BLACK);
+        vga_puts("   hanging up while they are generated -- lockdownd\n"
+                 "   closes an idle connection, and this takes over a\n"
+                 "   minute. `pair` calls back when the keys are ready.\n");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        lockdown_close();
+
         if(keygen("root", &g_root) != 1) return;
         if(keygen("host", &g_host) != 1) return;
     }
@@ -535,12 +569,52 @@ void cmd_pair(const char *arg)
                        / (uint32_t)usbmux_max_payload());
 
     /* ── ask ─────────────────────────────────────────────────────── */
+
+    /* Idempotent: this returns at once if the connection above is
+       still up, and reconnects if the keygen hung up on it. Which of
+       the two happened is not worth a branch -- what matters is that
+       nothing below here talks into a closed stream. */
+    r = lockdown_connect();
+    if(r < 0){
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        vga_printf("  could not call lockdownd back (%d).\n", r);
+        vga_puts("  The keys are generated but unsaved. Unplug the\n"
+                 "  phone, plug it in again and run `pair`.\n");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        return;
+    }
+    /* A cheap sentence down the new channel before the expensive one.
+       QueryType is 285 bytes and its reply says the stream is aligned;
+       finding that out from a 3728-byte request means spending the
+       request to learn it. */
+    if(lockdown_query_type() != 1){
+        vga_set_color(VGA_YELLOW, VGA_BLACK);
+        vga_puts("  the reconnected channel did not answer QueryType.\n");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        lockdown_show_reply();
+    }
+
+    /* ── v0.8.9.5: THIS REQUEST WAITS FOR A PERSON ───────────────────
+       Every other request in this protocol is answered by software.
+       Pair puts a dialog on the phone, and on an iOS that decides to
+       wait for the tap before replying, five seconds is a budget for
+       the wrong kind of delay. Thirty, for this request only. */
+    lockdown_reply_budget(3000);        /* 3000 * 10 ms = 30 s */
+
     vga_puts("  sending it...\n");
+    vga_set_color(VGA_DARK_GREY, VGA_BLACK);
+    vga_puts("  (watch the phone -- the Trust dialog appears there.)\n");
+    vga_set_color(VGA_WHITE, VGA_BLACK);
     r = lockdown_request(g_req);
     if(r != 1){
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
-        vga_printf("  the request did not get a reply (%d).\n", r);
+        vga_printf("  the request failed (%d):\n", r);
+        /* v0.8.9.5: the number was never the diagnosis. "did not get a
+           reply" was also wrong for most of the codes that reach here
+           -- -3 meant something DID arrive and could not be used. */
+        vga_printf("  %s\n", lockdown_why());
         vga_set_color(VGA_WHITE, VGA_BLACK);
+        lockdown_show_reply();
         return;
     }
 
@@ -559,7 +633,7 @@ void cmd_pair(const char *arg)
         vga_puts("  Unlock the phone with its passcode and try again.\n");
     if(status == PAIR_R_OTHER || status == PAIR_R_NOREPLY){
         vga_set_color(VGA_DARK_GREY, VGA_BLACK);
-        vga_puts("  `lockdown dump` shows the reply verbatim.\n");
+        vga_puts("  `lockdown` shows the reply verbatim.\n");
         vga_set_color(VGA_WHITE, VGA_BLACK);
     }
     if(status == PAIR_R_SUCCESS){

@@ -187,6 +187,19 @@ typedef struct {
     int      ssl_on;         /* the handshake succeeded          */
     int      ssl_broken;     /* a record went out half way       */
     uint32_t tls_tx, tls_rx;
+
+    /* ── v0.8.9.5 ────────────────────────────────────────────────────
+       The reason the last request failed, in words. Set at the point
+       the decision is taken; read by whatever is going to put it on a
+       screen. See usbmux_why() for why a number is not enough. */
+    const char *why;
+
+    /* How long the NEXT reply may take, in 10 ms ticks, or 0 for the
+       ordinary budget. One request in this protocol waits for a human
+       to tap a dialog, and a budget sized for a machine is the wrong
+       budget for it. Cleared after it is used, so it cannot leak into
+       the request after the one it was set for. */
+    uint32_t next_budget;
 } ld_t;
 
 static ld_t g_ld;
@@ -519,6 +532,7 @@ static int ld_send_plist(const char *xml)
     if (g_ld.ssl_on) {
         r = tls_send(LD_TLS_HANDLE, out, (uint16_t)(len + 4));
         if (r < 0) {
+            g_ld.why = "the encrypted request would not go out";
             klog(KLOG_WARN, "lockdown: the encrypted request would not "
                  "send (%d)", (uint32_t)r);
             return USB_EXFER;
@@ -529,6 +543,7 @@ static int ld_send_plist(const char *xml)
 
     r = usbmux_send_stream(out, len + 4, &sent);
     if (r < 0) {
+        g_ld.why = usbmux_why();
         klog(KLOG_WARN, "lockdown: the request would not send (%d)",
              (uint32_t)r);
         if (sent > 0) {
@@ -617,6 +632,10 @@ static int ld_recv_plist(void)
     if (!g_ld.connected || !usbmux_connected()) return USB_ENODEV;
 
     budget = g_ld.recvd ? LD_REPLY_TICKS : LD_FIRST_TICKS;
+    if (g_ld.next_budget) {
+        budget = g_ld.next_budget;
+        g_ld.next_budget = 0;   /* this request only */
+    }
     t0 = get_ticks();
 
     g_ld.reply_len  = 0;
@@ -643,6 +662,11 @@ static int ld_recv_plist(void)
                only informative screen in a release gets thrown away. */
             g_ld.reply_len  = have;
             g_ld.have_reply = have > 0;
+            /* v0.8.9.5: the transport knows WHY and this does not.
+               Asking it beats inventing a sentence from a code. */
+            g_ld.why = g_ld.ssl_on ? "the encrypted channel broke while "
+                                     "the reply was arriving"
+                                   : usbmux_why();
             return r;
         }
         if (r == 0) continue;
@@ -669,17 +693,22 @@ static int ld_recv_plist(void)
     g_ld.have_reply = have > 0;
 
     if (have == 0) {
+        g_ld.why = "the device said nothing at all before the budget "
+                   "ran out";
         klog(KLOG_WARN, "lockdown: no reply at all");
         ld_desync("a request went unanswered");
         return USB_ETIMEOUT;
     }
     if (need < 0) {
+        g_ld.why = "fewer bytes arrived than the four-byte length "
+                   "prefix a reply begins with";
         klog(KLOG_WARN, "lockdown: %d bytes arrived, fewer than the "
              "four-byte length prefix", (uint32_t)have);
         ld_desync("a reply shorter than its own length prefix");
         return USB_EXFER;
     }
     if (have < need) {
+        g_ld.why = "the reply stopped part way through";
         klog(KLOG_WARN, "lockdown: %d of %d bytes arrived -- the reply "
              "stopped part way", (uint32_t)have, (uint32_t)need);
         ld_desync("a reply that stopped part way");
@@ -690,6 +719,7 @@ static int ld_recv_plist(void)
              (uint32_t)(have - need));
 
     g_ld.recvd++;
+    g_ld.why = 0;
     /* The scanner is given a terminator, inside the spare byte the
        buffer carries for it. Nothing below relies on it -- ld_find()
        is length-bounded -- but a buffer handed to anything that does
@@ -1128,6 +1158,26 @@ int lockdown_stop_session(void)
 }
 
 const char *lockdown_session_id(void) { return g_ld.session_id; }
+/* ── v0.8.9.5 ────────────────────────────────────────────────────────
+   Why the last request failed, as a sentence. Never null. */
+const char *lockdown_why(void)
+{
+    return g_ld.why ? g_ld.why
+                    : "lockdown has not reported a reason";
+}
+
+/* Give the NEXT request a longer reply budget, in 10 ms ticks. One
+   request in this protocol -- Pair -- can be waiting on a person
+   reaching for the phone, and LD_REPLY_TICKS is five seconds because
+   that is generous for a machine. Making the ordinary budget large
+   enough for a human would make every real timeout take half a
+   minute to report, so the exception is asked for rather than
+   assumed. */
+void lockdown_reply_budget(uint32_t ticks)
+{
+    g_ld.next_budget = ticks;
+}
+
 int lockdown_session(void)            { return g_ld.session; }
 int lockdown_ssl_wanted(void)         { return g_ld.ssl_wanted; }
 int lockdown_ssl(void)                { return g_ld.ssl_on; }

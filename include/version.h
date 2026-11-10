@@ -61,14 +61,14 @@
    direction: 0.8.9.1 compares NEWER than 0.8.9, so `update` offers
    it. The rule is only ever broken by going from a longer number to a
    shorter one at the same prefix. */
-#define HAVENDOS_VER_BUILD  4
+#define HAVENDOS_VER_BUILD  5
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.8.9.4"
+#define HAVENDOS_VER_NUM    "0.8.9.5"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"

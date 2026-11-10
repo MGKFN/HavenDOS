@@ -173,6 +173,19 @@ int lockdown_enable_ssl(const void *cc, uint32_t seed);
 int lockdown_stop_session(void);
 
 const char *lockdown_session_id(void);
+/* ── v0.8.9.5 ────────────────────────────────────────────────────────
+   Why the last request failed, as a sentence for a screen. Never null.
+   The return code says which layer gave up; this says what the wire
+   did. A device that politely closed an idle connection and a bus
+   that corrupted a packet arrived at the caller as the same number
+   until this release. */
+const char *lockdown_why(void);
+
+/* Let the NEXT request -- and only the next -- wait this many 10 ms
+   ticks for its reply. For Pair, which can be waiting on somebody
+   picking the phone up. */
+void lockdown_reply_budget(uint32_t ticks);
+
 int lockdown_session(void);      /* a SessionID came back            */
 int lockdown_ssl_wanted(void);   /* the device asked for SSL         */
 int lockdown_ssl(void);          /* the handshake SUCCEEDED -- never

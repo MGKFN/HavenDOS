@@ -244,6 +244,15 @@ int usbmux_connected(void);
    0.8.7's transfer-size bug happened, one layer down. */
 int usbmux_max_payload(void);
 
+/* ── v0.8.9.5 ────────────────────────────────────────────────────────
+   Why the last call refused, as a sentence, for a caller that is going
+   to put it on a screen. Never null. The numeric code says which LAYER
+   gave up; this says what the wire did, and the two are not the same
+   question -- a device that closes a connection and a controller that
+   corrupts a packet both reached usbmux_recv() as USB_EXFER until this
+   release. */
+const char *usbmux_why(void);
+
 /* Send `len` bytes on the open connection. Returns USB_OK or a
    negative USB_E*. The payload rides on an ACK packet, which is what
    usbmuxd does; there is no PSH. */

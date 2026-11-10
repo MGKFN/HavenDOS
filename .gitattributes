@@ -1,0 +1,13 @@
+# Windows batch files must keep CRLF. cmd.exe misreads labels and GOTO
+# targets in an LF-only .cmd, and the updater for the friend's laptop is
+# one. -text stores the bytes exactly as written.
+*.cmd -text
+*.bat -text
+
+# Shell scripts must stay LF or bash on the Mint laptop refuses them.
+*.sh  text eol=lf
+
+*.iso binary
+*.img binary
+*.pdf binary
+*.zip binary

@@ -1,0 +1,120 @@
+# Build, test and publish a HavenDOS release.
+#
+# A release happens when a commit on main changes include/version.h --
+# that is, when HAVENDOS_VER_NUM moves. Everything the release carries is
+# built here from the committed source, so the ISO, the kernel in it and
+# the source archive cannot describe three different trees.
+#
+# If release v<version> already exists the push run does nothing. Running
+# the workflow by hand (Actions -> Release -> Run workflow) rebuilds the
+# current version and replaces its files, which is how a broken upload is
+# repaired.
+#
+# The tests are a gate, not decoration: a red tree is not published.
+# Somebody other than Kyan updates their laptop from these files.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: ["include/version.h"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Which version is this
+        id: v
+        run: |
+          ver=$(sed -n 's/^#define[[:space:]]\+HAVENDOS_VER_NUM[[:space:]]\+"\([^"]*\)".*/\1/p' include/version.h)
+          [ -n "$ver" ] || { echo "::error::no HAVENDOS_VER_NUM in include/version.h"; exit 1; }
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+          if gh release view "v$ver" >/dev/null 2>&1; then
+            echo "exists=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=0" >> "$GITHUB_OUTPUT"
+          fi
+          if [ ! -f "changelogs/CHANGELOG-v$ver.md" ]; then
+            echo "::error::changelogs/CHANGELOG-v$ver.md is missing -- write it before bumping the version"
+            exit 1
+          fi
+          echo "HavenDOS $ver"
+
+      - name: Already published
+        if: steps.v.outputs.exists == '1' && github.event_name == 'push'
+        run: echo "v${{ steps.v.outputs.ver }} is already a release; nothing to do. Run the workflow by hand to rebuild it."
+
+      - name: Toolchain
+        if: steps.v.outputs.exists == '0' || github.event_name == 'workflow_dispatch'
+        run: |
+          sudo apt-get update -qq
+          # grub-pc-bin AND grub-efi-amd64-bin: without the first the ISO
+          # gets no BIOS boot image, which shipped silently once.
+          sudo apt-get install -y -qq --no-install-recommends \
+            gcc-multilib make python3 python3-pip \
+            grub-common grub-pc-bin grub-efi-amd64-bin xorriso mtools \
+            dosfstools exfatprogs exfat-fuse fuse3 gdisk openssl zip unzip
+          sudo pip3 install --break-system-packages -q hid-parser
+
+      # Built and tested as root: the exFAT fixture needs losetup and a FUSE
+      # mount, and that is how every release so far has been verified.
+      - name: Build
+        if: steps.v.outputs.exists == '0' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Serially after the two kernels: -j lets version-sync run its
+          # checks before havendos.elf exists.
+          sudo make havendos_pass1.elf -j"$(nproc)"
+          sudo make havendos.elf -j"$(nproc)"
+          sudo make all
+
+      - name: Test
+        if: steps.v.outputs.exists == '0' || github.event_name == 'workflow_dispatch'
+        run: sudo make test
+
+      - name: Bundle
+        if: steps.v.outputs.exists == '0' || github.event_name == 'workflow_dispatch'
+        run: sudo python3 tools/make_release_bundle.py
+
+      - name: Publish
+        if: steps.v.outputs.exists == '0' || github.event_name == 'workflow_dispatch'
+        run: |
+          ver="${{ steps.v.outputs.ver }}"
+          stage="dist/HavenDOS-$ver"
+          notes=$(mktemp)
+          {
+            echo "**Which file do I want?**"
+            echo ""
+            echo "| File | For |"
+            echo "|---|---|"
+            echo "| \`HavenDOS-$ver.iso\` | Booting or installing -- BIOS and UEFI, Secure Boot off |"
+            echo "| \`HavenDOS-$ver-bundle.zip\` | Updating an installed system: the kernel, \`update.inf\` and the Windows/Linux staging scripts, plus the ISO, handoff and hardware-test docs |"
+            echo "| \`HavenDOS-$ver-source.zip\` | Building it yourself -- \`make && make test\` |"
+            echo ""
+            echo "---"
+            echo ""
+            cat "changelogs/CHANGELOG-v$ver.md"
+          } > "$notes"
+          files=("HavenDOS-$ver.iso" "$stage/HavenDOS-$ver-source.zip" "dist/HavenDOS-$ver-bundle.zip")
+          for f in "${files[@]}"; do [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }; done
+          if gh release view "v$ver" >/dev/null 2>&1; then
+            gh release upload "v$ver" "${files[@]}" --clobber
+            gh release edit "v$ver" --notes-file "$notes"
+          else
+            gh release create "v$ver" "${files[@]}" \
+              --title "HavenDOS $ver" --notes-file "$notes" --target "$GITHUB_SHA"
+          fi
+          gh release view "v$ver" --json url,assets --jq '.url, (.assets[] | "  \(.name)  \(.size)")'

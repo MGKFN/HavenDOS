@@ -1,6 +1,0 @@
-HAVENDOS-UPDATE 1
-# Written by tools/make_iso_manifest.py at build time.
-version=0.8.9.4
-size=3400304
-crc32=3b0171eb
-kernel=havendos.elf

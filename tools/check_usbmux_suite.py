@@ -540,9 +540,8 @@ BUGS = [
      "a stale refusal makes `usb lockdown` report a closed port over a "
      "working connection",
      """    g_m.refused = 0;
-
-    if (!g_m.open) return USB_ENODEV;""",
-     """    if (!g_m.open) return USB_ENODEV;"""),
+    g_m.why     = 0;        /* a new connection owes nothing to the last */""",
+     """    g_m.why     = 0;        /* a new connection owes nothing to the last */"""),
 
     ("connect does not run the version exchange first",
      "the SYN goes out on an eight-byte header, because the version "
@@ -642,21 +641,30 @@ BUGS = [
     ("an RST on an open connection leaves it reported as up",
      "a caller keeps writing into it and every write succeeds at the "
      "USB layer",
-     """    if (flags & MUX_TH_RST) {
+     """        g_m.why = "the device reset the connection";
         klog(KLOG_WARN, "usbmux: the device reset the connection");
         g_m.conn = 0;""",
-     """    if (flags & MUX_TH_RST) {
+     """        g_m.why = "the device reset the connection";
         klog(KLOG_WARN, "usbmux: the device reset the connection");"""),
 
     ("flags other than a bare ACK are accepted on an open connection",
      "usbmuxd treats anything else as a reset; it has no half-close. "
      "v0.8.9.2: STALE since v0.8.8.10, which added the same check to "
      "mux_harvest() and gave this injection two matches -- anchored on "
-     "the comment that belongs to usbmux_recv() now",
-     """       connection as a reset, FIN included -- it has no half-close. */
-    if (flags != MUX_TH_ACK_F) {""",
-     """       connection as a reset, FIN included -- it has no half-close. */
-    if (0) {"""),
+     "the comment that belongs to usbmux_recv() now. v0.8.9.5: STALE "
+     "AGAIN, because that comment was wrong -- a FIN is not a reset -- "
+     "and splitting the FIN out took the comment with it. Anchored on "
+     "the reason string instead, which names the branch it belongs to "
+     "and is the thing a reader would have to change to move it",
+     """        g_m.why = "a packet whose TCP flags are neither a bare ACK, a "
+                  "FIN nor an RST";
+        klog(KLOG_WARN, "usbmux: flags %2x on an established "
+             "connection, expected %2x", (uint32_t)flags,
+             (uint32_t)MUX_TH_ACK_F);
+        g_m.conn = 0;
+        return USB_EXFER;""",
+     """        g_m.why = "a packet whose TCP flags are neither a bare ACK, a "
+                  "FIN nor an RST";"""),
 
     ("a TCP packet shorter than its own header is parsed",
      "a twenty-byte header read out of an eighteen-byte packet reads "
@@ -769,6 +777,100 @@ BUGS = [
     #
     # Recorded, not deleted, following v0.8.6.3's precedent: an
     # injection deleted without a word is one somebody writes again.
+
+    # ══════════════════════════════════════════════════════════════════
+    # v0.8.9.5 -- A CLOSE REPORTED AS A FAULT
+    #
+    # Found on Kyan's HP. `pair` held a lockdownd connection open for
+    # seventy-one seconds while it generated two RSA keys, lockdownd
+    # closed it -- which is the ordinary thing for it to do -- and the
+    # FIN came back to the caller as USB_EXFER, the code for CRC,
+    # babble and buffer faults. The screen said the request "did not
+    # get a reply (-3)" and the -3 pointed at the USB layer, which had
+    # done nothing wrong.
+    #
+    # The suite missed it for the same reason it missed v0.8.9.2's
+    # duplicate: tests/muxdev.inc COULD send a FIN -- queue_tcp() takes
+    # any flags -- and no check had ever asked it to. The fixture was
+    # not short of a feature. It was short of a question.
+    # ══════════════════════════════════════════════════════════════════
+    ("a FIN is reported as a transfer error",
+     "the defect that shipped. FIN|ACK is 0x11, a bare ACK is 0x10, so "
+     "equality with MUX_TH_ACK_F sends every close down the malformed-"
+     "packet path. USB_EXFER means the bus corrupted something; a "
+     "device hanging up politely is not that, and a caller told it is "
+     "goes looking at the wrong layer",
+     """    if (flags & MUX_TH_FIN) {
+        g_m.fins++;
+        g_m.why = "the device closed the connection (FIN). lockdownd "
+                  "does this to a connection left idle -- generate the "
+                  "keys first, then connect";
+        klog(KLOG_WARN, "usbmux: the device sent FIN (flags %2x) -- it "
+             "closed the connection", (uint32_t)flags);
+        g_m.conn = 0;
+        return USB_ENODEV;
+    }
+
+    if (flags != MUX_TH_ACK_F) {
+        g_m.why = "a packet whose TCP flags are neither a bare ACK, a "
+                  "FIN nor an RST";""",
+     """    if (flags != MUX_TH_ACK_F) {
+        g_m.why = "a packet whose TCP flags are neither a bare ACK, a "
+                  "FIN nor an RST";"""),
+
+    ("a FIN closes, but is reported with the wrong code",
+     "the branch exists and sets the right sentence, and still returns "
+     "the code that sends the reader to the bus. The sentence and the "
+     "code have to agree or the one nobody reads is the one that is "
+     "right",
+     """             "closed the connection", (uint32_t)flags);
+        g_m.conn = 0;
+        return USB_ENODEV;
+    }
+
+    if (flags != MUX_TH_ACK_F) {""",
+     """             "closed the connection", (uint32_t)flags);
+        g_m.conn = 0;
+        return USB_EXFER;
+    }
+
+    if (flags != MUX_TH_ACK_F) {"""),
+
+    ("a FIN is named but the connection is left up",
+     "usbmuxd has no half-close: a FIN ends the connection in both "
+     "directions. Leaving conn == 2 means the next send goes out on a "
+     "connection the device has finished with, which is exactly the "
+     "3728-byte request that started this",
+     """        klog(KLOG_WARN, "usbmux: the device sent FIN (flags %2x) -- it "
+             "closed the connection", (uint32_t)flags);
+        g_m.conn = 0;""",
+     """        klog(KLOG_WARN, "usbmux: the device sent FIN (flags %2x) -- it "
+             "closed the connection", (uint32_t)flags);"""),
+
+    ("an RST and a FIN are given the same sentence",
+     "two different things the device can do, one explanation. That is "
+     "v0.8.7.4's defect -- six faults wearing one number -- in words "
+     "rather than in a code, and it is no better for being prose",
+     """        g_m.why = "the device reset the connection";
+        klog(KLOG_WARN, "usbmux: the device reset the connection");""",
+     """        g_m.why = "the device closed the connection (FIN)";
+        klog(KLOG_WARN, "usbmux: the device reset the connection");"""),
+
+    ("the reason survives into the next connection",
+     "a fresh connect that keeps the last one's reason hands the next "
+     "reader a sentence about a conversation that is over. A stale "
+     "diagnostic is worse than none: it is confidently wrong",
+     """    g_m.refused = 0;
+    g_m.why     = 0;        /* a new connection owes nothing to the last */""",
+     """    g_m.refused = 0;"""),
+
+    ("usbmux_why() hands back a null pointer",
+     "every caller of this is about to put it on a screen or into a "
+     "format string. One that has to remember to test for null is one "
+     "that will one day not, and the result is a fault inside the "
+     "diagnostic that was meant to explain a fault",
+     """    return g_m.why ? g_m.why : "the mux layer has not reported a reason";""",
+     """    return g_m.why;"""),
 
     # ── AND ONE THAT CANNOT BE REACHED FROM A SUITE AT ALL ───────────
     #

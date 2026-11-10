@@ -185,7 +185,7 @@ if __name__ == "__main__":
     if not os.path.exists(HOUSE):
         sys.exit("build: cannot find the house stylesheet at %s" % HOUSE)
     from weasyprint import HTML, CSS
-    out = os.path.join(ROOT, "HavenDOS-Road-to-1.0-RM1003.pdf")
+    out = os.path.join(ROOT, "docs", "roadmap", "HavenDOS-Road-to-1.0-RM1003.pdf")
     doc = build()
     open(os.path.join(HERE, "rm1003.html"), "w").write(doc)
     HTML(string=doc, base_url=HERE).write_pdf(

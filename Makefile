@@ -174,6 +174,7 @@ version-sync: include/version.h \
 	python3 tools/check_console_grid.py
 	python3 tools/check_tls_stages.py
 	python3 tools/check_rsa_kg_loop.py
+	python3 tools/check_pair_idle.py
 	python3 tools/check_harnesses.py
 	python3 tools/check_update_size.py havendos.elf fs/update.c
 	python3 tools/make_version.py include/version.h isodir
@@ -668,7 +669,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -no-pie -Iinclude \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tmux tests/test_usbmux.c && \
-	  python3 tools/run_suite.py --name test_usbmux --min 304 -- /tmp/hd_tmux
+	  python3 tools/run_suite.py --name test_usbmux --min 334 -- /tmp/hd_tmux
 	@echo "── test_lockdown ──────────────────────────"
 	@echo "  lockdownd stage 1: QueryType over the real mux and its TCP"
 	@$(TESTCC) -no-pie -Iinclude \

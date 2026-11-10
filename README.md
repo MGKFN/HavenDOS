@@ -1,76 +1,132 @@
 # HavenDOS
 
-HavenDOS is a hobby operating system written in C and x86 Assembly, developed by Tech Haven Studios. It has its own 32-bit kernel, drivers, filesystems and networking stack, with a text-based desktop and shell.
+HavenDOS is an operating system written from scratch in C and x86 assembly by Tech Haven Studios: its own 32-bit kernel, drivers, filesystems, TCP/IP and TLS stack, a shell and a text-mode desktop with the look of an old DOS machine, on modern UEFI hardware.
 
-It started with a letter on a screen. It now boots on real UEFI hardware and runs from an NVMe SSD alongside Windows 11.
+It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB sticks, and is part-way through teaching itself to pair with an iPhone so it can use the phone's connection — that laptop has no Ethernet port.
 
-[Download HavenDOS](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
+[**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version
+## Current version: 0.8.9.5 Beta "Helios"
 
-**0.8.3.1 Beta — Lodger**
+Helios is the iPhone release. The HP laptop HavenDOS is tested on has no Ethernet port and its Wi-Fi chip has no driver, so its route to a network is an iPhone over USB — and iOS only turns tethering on for a computer it has *paired* with. Pairing means a usbmux channel, Apple property lists, two 2048-bit RSA keys generated on the machine, three X.509 certificates, and TLS 1.2 with a client certificate, all written for this kernel.
 
-On 18 October 2026, HavenDOS was installed to a Samsung NVMe SSD in an HP laptop. It boots from its own partition, the keyboard works, and Windows 11 still boots. Both the built-in touchpad and an external USB mouse are currently unusable on that laptop.
+Stages 1 and 2 of pairing are confirmed on the HP: lockdownd answers, and the phone hands over its public key. Stage 3 — the pair request itself — reached the phone for the first time in 0.8.9.4. 0.8.9.5 fixes why it went unanswered: the connection sat idle for 71 seconds while the keys were generated, and the phone, reasonably, hung up.
 
-This release fixes NVMe access after installation, adds AHCI support, fixes installation on disks larger than 2 GB, and corrects the interrupt handlers and panic reporting.
-
-The release includes the ISO, matching source archive and full changelog. Development is working towards 1.0.
+Every release has its full changelog in [`changelogs/`](changelogs/).
 
 ## What's in it
 
-- BIOS and UEFI boot through GRUB, with framebuffer output on UEFI systems.
-- A text desktop, shell, file manager, editor, calculator, calendar and games.
-- User accounts, themes, settings and hardware information tools.
-- FAT16 storage, FAT32 support, and ATA/IDE, AHCI, NVMe and VirtIO block drivers.
-- An installer that can use free space beside an existing Windows installation.
-- A networking stack with RTL8139 and e1000 drivers.
-
-## Try it
-
-Download `HavenDOS-0.8.3.1.iso` from [Releases](https://github.com/MGKFN/HavenDOS/releases). A virtual machine is the easiest place to start. For a basic BIOS boot with QEMU:
-
-```sh
-qemu-system-i386 -m 128 -cdrom HavenDOS-0.8.3.1.iso -boot d
-```
-
-UEFI testing needs UEFI firmware such as OVMF. The supplied GRUB loader is unsigned, so Secure Boot must be off.
-
-For installation, back up your files first and read the disk preview carefully. The option to install beside Windows uses existing unallocated space; it does not shrink Windows for you. The whole-disk option replaces the disk layout. HavenDOS partitions are currently limited to 2047 MB.
-
-On the tested HP laptop, a firmware boot entry had to be added manually from Windows. Automatic boot-entry creation is not implemented yet.
+- **Boot:** one hybrid ISO for BIOS and UEFI through GRUB. Framebuffer console at any resolution the firmware offers, with the character grid chosen by the user.
+- **Install:** beside an existing Windows installation in free space, or on an empty disk with its own EFI System Partition. `uninstall` removes it again and never touches a boot loader it did not put there.
+- **Update:** `update` installs a newer kernel from a USB stick, the EFI partition or CD, and checks a CRC before writing anything.
+- **Storage:** NVMe, AHCI, ATA/IDE and VirtIO disks; USB mass storage. FAT12, FAT16 and FAT32 read-write, exFAT read-only, GPT and MBR.
+- **USB:** xHCI and UHCI, hubs, keyboards and mice, mass storage, and Apple's USB Ethernet interface.
+- **Input:** PS/2 and USB keyboards and mice; an I2C-HID trackpad driver.
+- **Network:** RTL8139 and e1000, DHCP, DNS, TCP with retransmission, HTTP, TLS 1.2.
+- **Cryptography, in-kernel:** big-number arithmetic with Montgomery reduction, RSA-2048 key generation, SHA-256, AES-128-CBC, X.509 v3 and DER, PKCS#1 v1.5.
+- **Desktop:** a text-mode desktop with a start menu, file manager, editor, calculator, calendar, clock, chat client, games (Minefield among them) and settings. User accounts and themes.
 
 ## Hardware status
 
-| On the tested HP laptop | Status |
+Tested on an HP laptop with an Intel Alder Lake CPU, NVMe SSD and xHCI USB, and in QEMU and UTM. HavenDOS also runs day to day on a friend's laptop.
+
+| On the HP laptop | Status |
 | --- | --- |
-| UEFI boot | Working |
-| Install and run from NVMe | Working |
-| Dual boot with Windows 11 | Working |
+| UEFI boot, install beside Windows 11 on NVMe | Working |
 | Built-in keyboard | Working |
-| Touchpad and external USB mouse | Not working |
-| MediaTek network adapter | Unsupported |
+| USB mouse | Working |
+| USB sticks (FAT16/FAT32; exFAT read-only) | Working |
+| `update` from a USB stick | Working |
+| iPhone pairing, stages 1 and 2 | Working |
+| iPhone pairing, stage 3 | Built and tested in emulation, next to confirm on hardware |
+| Built-in trackpad (I2C-HID) | Driver written, not yet confirmed |
+| MediaTek Wi-Fi | No driver |
 
-AHCI has been tested with simulated controllers, but has not yet been verified on physical SATA hardware. Other computers may behave differently.
+AHCI has only ever run against simulated controllers — there is no SATA machine to test it on.
 
-USB support is still limited: there is no xHCI or USB mass-storage driver. The current updater reads an ATAPI CD-ROM, so it cannot provide an upgrade path on the tested laptop. Reinstallation also has a known issue when an existing `BOOTX64.HDB` backup is present.
+**Known issues:** a single USB transaction error can drop every device on the bus until the next rescan; the kernel log fills and drops lines in a long session; the desktop can be choppy on the HP. The cause of the last one is not yet known.
 
-A panic occurred once while the laptop was idle. The interrupt-frame bug has since been fixed, but the cause of that particular panic is not confirmed.
+## Try it
 
-## Source
+Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/MGKFN/HavenDOS/releases/latest). A virtual machine is the easiest place to start.
 
-Download `havendos-v0_8_3_1-source.zip` from the release assets and extract it. It contains the matching source tree, Makefile, tests and development notes. The older 0.7.18 archive in this repository is kept for history.
+```sh
+# BIOS
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.5.iso -boot d
 
-The build uses GCC with 32-bit support, GNU Binutils, Make, Python 3 and GRUB tools. See the included Makefile for the build targets and required image-building utilities. GitHub's automatic “Source code” downloads contain the repository snapshot; use the named source ZIP for the 0.8.3.1 code.
+# UEFI (needs OVMF firmware), with a disk to install to and a USB controller
+qemu-img create -f raw disk.img 4G
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.5.iso \
+  -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
+```
 
-## What's next
+The GRUB loader is unsigned, so **Secure Boot must be off** on real hardware.
 
-The immediate priorities are updates through the EFI System Partition, smoother reinstalls, better display sizing, and xHCI/USB input and storage support.
+Default accounts after installation: `admin` / `Admin@123`, `bootos` / `BootOS2026`, `guest` with no password. Change them.
+
+**Before installing on a real machine, back up your files** and read the installer's disk preview carefully. Installing beside Windows uses existing unallocated space and does not shrink Windows for you; the whole-disk option replaces the disk layout. The HavenDOS system partition is FAT16, so it is limited to 2047 MB.
+
+### Updating an installed system
+
+Download `HavenDOS-<version>-bundle.zip` and read `update/README-UPDATE.md` inside it. On Windows, `Update-HavenDOS.cmd` puts the new kernel on a USB stick or the EFI partition; on Linux, `stage-havendos-update.sh` does the same. Then run `update` in HavenDOS.
+
+## Build it
+
+On Debian or Ubuntu:
+
+```sh
+sudo apt install gcc-multilib make python3 python3-pip grub-common grub-pc-bin \
+  grub-efi-amd64-bin xorriso mtools dosfstools exfatprogs exfat-fuse gdisk openssl zip
+pip install hid-parser
+
+make havendos_pass1.elf && make havendos.elf && make   # the ISO
+sudo make test                                          # 59 suites
+```
+
+`grub-pc-bin` and `grub-efi-amd64-bin` are both needed: without the first the ISO has no BIOS boot image. The build is two-pass — the kernel embeds a copy of itself for the installer — so build the two kernels before `make`. `make test` runs as root because the exFAT fixture is made with a loop device.
+
+`HANDOFF.md` describes the state of the tree in detail and is the place to start reading the code.
+
+## Repository layout
+
+| Path | What |
+| --- | --- |
+| `kernel/`, `boot/` | Kernel entry, interrupts, memory, timer |
+| `drivers/` | Display, keyboard, mouse, PCI, storage controllers, I2C |
+| `usb/` | Host controllers, USB core, HID, mass storage, hubs, usbmux, lockdown |
+| `fs/` | FAT, exFAT, GPT, the block layer, installer and updater |
+| `net/` | TCP/IP, DNS, HTTP, TLS, RSA, X.509, plists |
+| `shell/` | The shell, the desktop and its apps |
+| `tests/` | Native test suites — `make test` |
+| `tools/` | Build scripts and the checks `make` runs |
+| `harness/` | Scripted QEMU testing |
+| `rescue/` | The update staging scripts for Windows and Linux |
+| `docs/` | Hardware test procedures; `docs/roadmap/` holds the road-to-1.0 plans |
+| `changelogs/` | One changelog per release |
+| `manual/` | The operator's manual |
+| `archive/` | Old source archives, kept for history |
+
+## How releases are made
+
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes release `v<version>` with three files:
+
+| File | For |
+| --- | --- |
+| `HavenDOS-<version>.iso` | Booting and installing |
+| `HavenDOS-<version>-bundle.zip` | Updating an installed system, plus the hardware test docs |
+| `HavenDOS-<version>-source.zip` | Building it yourself |
+
+A release whose tests fail is not published.
+
+## Where it's going
+
+The plan to 1.0 is in [`docs/roadmap/`](docs/roadmap/). 1.0 is the hardware release: install, boot, update and run on real machines without a second operating system's help. After it, 1.1 brings modern TLS and 1.2 a web browser.
 
 ## Bugs and contributions
 
-[Open an issue](https://github.com/MGKFN/HavenDOS/issues) with your version, hardware or VM settings, boot mode and steps to reproduce the problem. A photo of the error screen or boot log helps.
+[Open an issue](https://github.com/MGKFN/HavenDOS/issues) with your version, the hardware or VM settings, BIOS or UEFI, and the steps that lead to the problem. A photo of the screen or of `dmesg` helps more than a description of it.
 
-Hardware testing and code contributions are welcome.
+Hardware testing is the most useful contribution there is: every release so far has found something on a real machine that emulation never showed.
 
 ## License
 

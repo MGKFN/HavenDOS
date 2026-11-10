@@ -157,6 +157,24 @@ typedef struct {
     int      have_last;
 
     uint32_t sent, received, errs;
+
+    /* ── v0.8.9.5: WHY, IN WORDS ─────────────────────────────────────
+       A negative return says a layer refused; it does not say what the
+       wire did. usbmux_recv() alone returns USB_EXFER for a protocol
+       mismatch, a short header, a foreign port pair AND -- until this
+       release -- a device that simply closed the connection, which is
+       not an error at all. The caller prints a number and the reason
+       goes to a log whose echo kernel/main.c turns off before the
+       shell starts, which is the 0.8.9.1 failure repeating itself one
+       layer down.
+
+       This is a pointer to a string literal, not a buffer: it costs
+       four bytes, it cannot be overrun, and it is set at the point the
+       decision is taken rather than reconstructed from a code after
+       the fact. */
+    const char *why;
+
+    uint32_t fins;          /* times the device closed on us          */
 } mux_t;
 
 static mux_t g_m;
@@ -672,6 +690,7 @@ static int mux_tcp_recv(uint8_t *flags_out, uint32_t *seq_out,
     if (r < 0)   return r;
 
     if (proto != MUX_PROTO_TCP) {
+        g_m.why = "a packet that was not TCP on an open connection";
         klog(KLOG_WARN, "usbmux: protocol %u on an open connection, "
              "expected TCP", proto);
         return USB_EXFER;
@@ -684,6 +703,7 @@ static int mux_tcp_recv(uint8_t *flags_out, uint32_t *seq_out,
        buffer shape tests/test_usbmux.c already carries a check for one
        layer up. */
     if (r < MUX_TCP_HDR) {
+        g_m.why = "a TCP packet shorter than its own header";
         klog(KLOG_WARN, "usbmux: TCP packet of %d bytes, shorter than "
              "its own header", (uint32_t)r);
         return USB_EXFER;
@@ -701,6 +721,8 @@ static int mux_tcp_recv(uint8_t *flags_out, uint32_t *seq_out,
     dport = be16(*(const uint16_t *)(th + MUX_TH_SPORT));
     sport = be16(*(const uint16_t *)(th + MUX_TH_DPORT));
     if (sport != g_m.sport || dport != g_m.dport) {
+        g_m.why = "a packet for a different port pair -- another "
+                  "connection's traffic on the same bulk pipe";
         klog(KLOG_WARN, "usbmux: TCP %u->%u is not this connection's "
              "%u->%u", (uint32_t)dport, (uint32_t)sport,
              (uint32_t)g_m.dport, (uint32_t)g_m.sport);
@@ -725,6 +747,15 @@ int usbmux_connected(void)   { return g_m.conn == 2; }
 int usbmux_refused(void)     { return g_m.refused; }
 int usbmux_max_payload(void) { return MUX_MAX_PAYLOAD; }
 
+/* The last thing this layer refused, in words, or a string saying it
+   has not refused anything. Never null: a caller that has to test for
+   one will one day not, and "(null)" on a diagnostic screen is worse
+   than a sentence. */
+const char *usbmux_why(void)
+{
+    return g_m.why ? g_m.why : "the mux layer has not reported a reason";
+}
+
 int usbmux_connect(uint16_t dport)
 {
     uint8_t  flags = 0;
@@ -732,6 +763,7 @@ int usbmux_connect(uint16_t dport)
     int      r, tries;
 
     g_m.refused = 0;
+    g_m.why     = 0;        /* a new connection owes nothing to the last */
 
     if (!g_m.open) return USB_ENODEV;
 
@@ -983,12 +1015,28 @@ static int mux_harvest(void)
     if (r < 0)             return r;
 
     if (flags & MUX_TH_RST) {
+        g_m.why = "the device reset the connection part way through a "
+                  "request";
         klog(KLOG_WARN, "usbmux: the device reset the connection "
              "part way through a request");
         g_m.conn = 0;
         return USB_ENODEV;
     }
+    /* v0.8.9.5: the same split as usbmux_recv(), for the same reason.
+       Both readers see the same wire and a reason that depends on
+       which of them happened to be looking is not a reason. */
+    if (flags & MUX_TH_FIN) {
+        g_m.fins++;
+        g_m.why = "the device closed the connection (FIN) part way "
+                  "through a request";
+        klog(KLOG_WARN, "usbmux: the device sent FIN (flags %2x) "
+             "mid-request", (uint32_t)flags);
+        g_m.conn = 0;
+        return USB_ENODEV;
+    }
     if (flags != MUX_TH_ACK_F) {
+        g_m.why = "a mid-request packet whose TCP flags are neither a "
+                  "bare ACK, a FIN nor an RST";
         klog(KLOG_WARN, "usbmux: flags %2x mid-request, expected %2x",
              (uint32_t)flags, (uint32_t)MUX_TH_ACK_F);
         g_m.conn = 0;
@@ -1206,13 +1254,42 @@ int usbmux_recv(void *buf, int max)
     if (r < 0)             return r;
 
     if (flags & MUX_TH_RST) {
+        g_m.why = "the device reset the connection";
         klog(KLOG_WARN, "usbmux: the device reset the connection");
         g_m.conn = 0;
         return USB_ENODEV;
     }
-    /* usbmuxd treats anything but a bare ACK on an established
-       connection as a reset, FIN included -- it has no half-close. */
+
+    /* ── v0.8.9.5: A FIN IS NOT A TRANSFER ERROR ─────────────────────
+       usbmuxd has no half-close, so this still tears the connection
+       down -- that part was right. What was wrong is that it did so
+       through the catch-all below, which reports USB_EXFER, the code
+       for CRC, babble and buffer faults. A device that closed a
+       connection politely was indistinguishable from a bus that had
+       corrupted a packet.
+
+       On Kyan's HP that produced `the request did not get a reply
+       (-3)` after a 71-second keygen, and -3 sent the diagnosis
+       towards the USB layer, where nothing was wrong. lockdownd had
+       closed an idle connection, which is the ordinary thing for it to
+       do and the one outcome the error code could not say.
+
+       FIN|ACK is 0x11 and a bare ACK is 0x10, which is why this has to
+       be tested before equality with MUX_TH_ACK_F and not after. */
+    if (flags & MUX_TH_FIN) {
+        g_m.fins++;
+        g_m.why = "the device closed the connection (FIN). lockdownd "
+                  "does this to a connection left idle -- generate the "
+                  "keys first, then connect";
+        klog(KLOG_WARN, "usbmux: the device sent FIN (flags %2x) -- it "
+             "closed the connection", (uint32_t)flags);
+        g_m.conn = 0;
+        return USB_ENODEV;
+    }
+
     if (flags != MUX_TH_ACK_F) {
+        g_m.why = "a packet whose TCP flags are neither a bare ACK, a "
+                  "FIN nor an RST";
         klog(KLOG_WARN, "usbmux: flags %2x on an established "
              "connection, expected %2x", (uint32_t)flags,
              (uint32_t)MUX_TH_ACK_F);

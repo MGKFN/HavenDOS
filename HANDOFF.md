@@ -48,6 +48,61 @@ high resolution, and the trackpad (`i2chid`).
 Still open, not started: the desktop repaints the whole screen once a
 second.
 
+## DECIDED FOR 0.9: AN IRIS XE DISPLAY DRIVER, FOR THE EXTERNAL MONITOR
+
+Kyan, 11 November: GRUB and HavenDOS should use his monitor instead of
+the built-in panel. **There is no quick way.** Both just draw into the
+framebuffer the UEFI firmware lit, on the screen the firmware chose. So
+**0.9 builds a display driver for the Iris Xe** (`8086:46A8`, Alder
+Lake-P, display version 13).
+
+**Scope: the DISPLAY ENGINE only**, to light a second screen and draw on
+it. NOT acceleration: no GuC/HuC firmware, no command streamer, no
+GGTT/PPGTT beyond what scanout needs. The project doc
+`havendos-xe-graphics-and-64bit.md` called a full Xe driver
+unreachable, and that still holds for acceleration. Modesetting one
+output is a bounded subset.
+
+**Two limits to tell Kyan up front:**
+- **GRUB will not move.** GRUB runs before HavenDOS, on the firmware's
+  choice of screen. The driver takes over once the kernel starts. A
+  zero-code thing worth trying first: boot with the lid CLOSED and an
+  external keyboard. Many firmwares then light only the external
+  monitor, and GRUB and HavenDOS both follow.
+- **It cannot be tested in QEMU** (QEMU has no Xe display engine).
+  Every step is proved by photos from the HP, so every step must print
+  what it did and what it read back.
+
+**Ask Kyan in the first 0.9 chat:**
+- Does the monitor connect by **HDMI or USB-C**? HDMI on a combo PHY is
+  the reachable first target. USB-C means the Type-C PHY (FIA
+  ownership, TC cold handshake) and DP link training, which is a much
+  larger step.
+- The monitor's model and native resolution.
+
+**Reference:** Intel publishes open-source Programmer's Reference
+Manuals; Volume 12 "Display Engine" and Volume 2c registers are the
+ones needed. Tiger Lake (display 12) is the closest published
+predecessor; check whether an Alder Lake set exists before using TGL's.
+Fuchsia's `intel-display` driver is a small, readable reference that
+cites PRM sections.
+
+**Steps, each its own release, read-only first:**
+
+| step | what | writes to the GPU? |
+|---|---|---|
+| 0.9.0 | `gfx` inspector: map BAR0 (GTTMMADR, likely above 4 GB -- reuse `kernel/highfb.c`'s PSE-36 windows); print display version, power-well state, which pipes / transcoders / planes / DDIs are on, the panel's pipe, `PLANE_SURF` and stride, and hot-plug status per port | **no** |
+| 0.9.1 | EDID from the monitor: GMBUS (HDMI) or DP AUX (`DDI_AUX_CTL`), print the name and preferred mode | only the GMBUS/AUX controller |
+| 0.9.2 | modeset behind an explicit command (`gfx on`): enable the power well, program a DPLL for the pixel clock, DDI clock select and buffer, transcoder timings, pipe B, plane B scanning out a framebuffer at the monitor's mode | **yes**, never at boot until proved |
+| 0.9.3 | console and desktop follow the new framebuffer (`vga_cols()`/`vga_rows()` already derive the grid); `gfx off` hands back the panel; a boot option once it is proved | yes |
+
+**Rules for this work:**
+- Never touch the panel's pipe A. The laptop must stay usable if
+  pipe B fails.
+- Every write step reads back and prints what it got.
+- A fixture in `tests/` models the registers the driver touches, with
+  injections, like the xHCI and usbmux suites.
+
 **Standing rules for every release** (Kyan's): push each version to
 MGKFN/HavenDOS (the Actions workflow publishes the release with ISO,
 source and bundle when `HAVENDOS_VER_NUM` changes and

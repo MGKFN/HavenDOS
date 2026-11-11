@@ -114,6 +114,12 @@ def run(name, src, test, cc, bugs, harmless, timeout=60, files=None,
         sys.stderr.write("run me from the source root\n")
         return 2
     files = tuple(files) if files else (src, test)
+    # v0.8.9.8: an injection may name its own file as a fifth element,
+    # for a suite that covers a chain of files -- test_dhcp.c compiles
+    # ipv4.c, udp.c and dhcp.c, and DHCP's three defects were one in
+    # each. Every such file is restored before every injection too.
+    extra = tuple(b[4] for b in list(bugs) + [harmless] if len(b) > 4)
+    files = tuple(dict.fromkeys(files + extra))
     pristine = {f: open(f, encoding="utf-8").read() for f in files}
     exe = os.path.join(tempfile.gettempdir(), "hd_inj_" + name)
 
@@ -140,7 +146,9 @@ def run(name, src, test, cc, bugs, harmless, timeout=60, files=None,
     missed, stale = [], []
     harmless_verdict = None
     try:
-        for i, (label, why, old, new) in enumerate(list(bugs) + [harmless], 1):
+        for i, bug in enumerate(list(bugs) + [harmless], 1):
+            label, why, old, new = bug[:4]
+            target = bug[4] if len(bug) > 4 else src
             is_harmless = (i == len(bugs) + 1)
 
             # Every file back to pristine before every injection, not just
@@ -148,14 +156,14 @@ def run(name, src, test, cc, bugs, harmless, timeout=60, files=None,
             for f, text in pristine.items():
                 open(f, "w", encoding="utf-8").write(text)
 
-            n = pristine[src].count(old)
+            n = pristine[target].count(old)
             if n != 1:
                 stale.append((label, n))
                 print("  %2d. %-56s INJECTION STALE (%d matches)"
                       % (i, label, n))
                 continue
-            open(src, "w", encoding="utf-8").write(
-                pristine[src].replace(old, new, 1))
+            open(target, "w", encoding="utf-8").write(
+                pristine[target].replace(old, new, 1))
 
             st, _ = _build_and_run(cc, test, exe, timeout)
             if st == "pass":

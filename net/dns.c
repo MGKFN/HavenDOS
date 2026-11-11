@@ -17,6 +17,7 @@
 #include "pit.h"   /* v0.8.8.8: was a hand-copied extern */
 
 extern int      udp_send(uint32_t, uint16_t, uint16_t, const void*, uint16_t);
+extern void     udp_want_port(uint16_t);
 extern void     udp_recv_clear(void);
 extern uint16_t udp_recv_len(void);
 extern uint16_t udp_recv_port(void);
@@ -405,6 +406,10 @@ uint32_t dns_resolve(const char *hostname)
 
     uint32_t dns_ip = net_get_dns();
 
+    /* v0.8.9.8: hold the receive slot for our port while waiting, so an
+       mDNS announcement or a broadcast cannot overwrite the answer
+       between net_poll() and the check below -- see udp_want_port(). */
+    udp_want_port(DNS_LOCAL);
     for(int attempt = 0; attempt < 3; attempt++) {
         udp_recv_clear();
         udp_send(dns_ip, DNS_LOCAL, DNS_PORT, qbuf, qlen);
@@ -417,6 +422,7 @@ uint32_t dns_resolve(const char *hostname)
                 udp_recv_clear();
                 if(ip){
                     cache_put(hostname,g_last_addrs,g_last_naddr,g_last_ttl);
+                    udp_want_port(0);
                     return ip;
                 }
             }
@@ -424,6 +430,7 @@ uint32_t dns_resolve(const char *hostname)
         }
     }
 
+    udp_want_port(0);
     kernel_log(ERR_NET_DNS_FAILED, "dns: resolution failed");
     return 0;
 }

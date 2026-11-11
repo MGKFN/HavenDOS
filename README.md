@@ -6,7 +6,16 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.8.9.7 Beta "Helios"
+## Current version: 0.8.9.8 Beta "Helios"
+
+**0.8.9.8** makes DHCP work, for the first time on any network. It had
+never worked; in QEMU nobody could tell, because the fallback address is
+QEMU's own. After 0.8.9.7 the iPhone shows the Personal Hotspot
+indicator, which iOS only does for a host it trusts, so pairing appears
+to work and the phone is tethering. This release lets HavenDOS ask that
+network for an address.
+[Changelog](changelogs/CHANGELOG-v0.8.9.8.md).
+
 
 **0.8.9.7** fixes the iPhone pairing transport. Messages that were
 exactly a multiple of 512 bytes were never terminated, so the phone
@@ -39,7 +48,7 @@ Every release has its full changelog in [`changelogs/`](changelogs/).
 - **Storage:** NVMe, AHCI, ATA/IDE and VirtIO disks; USB mass storage. FAT12, FAT16 and FAT32 read-write, exFAT read-only, GPT and MBR.
 - **USB:** xHCI and UHCI, hubs, keyboards and mice, mass storage, and Apple's USB Ethernet interface.
 - **Input:** PS/2 and USB keyboards and mice; an I2C-HID trackpad driver.
-- **Network:** RTL8139 and e1000, DHCP, DNS, TCP with retransmission, HTTP, TLS 1.2.
+- **Network:** RTL8139, e1000 and iPhone USB tethering; DHCP (working since 0.8.9.8), DNS, TCP with retransmission, HTTP, TLS 1.2.
 - **Cryptography, in-kernel:** big-number arithmetic with Montgomery reduction, RSA-2048 key generation, SHA-256, AES-128-CBC, X.509 v3 and DER, PKCS#1 v1.5.
 - **Desktop:** a text-mode desktop with a start menu, file manager, editor, calculator, calendar, clock, chat client, games (Minefield among them) and settings. User accounts and themes.
 
@@ -55,7 +64,7 @@ Tested on an HP laptop with an Intel Alder Lake CPU, NVMe SSD and xHCI USB, and 
 | USB sticks (FAT16/FAT32; exFAT read-only) | Working |
 | `update` from a USB stick | Working |
 | iPhone pairing, stages 1 and 2 | Working |
-| iPhone pairing, stage 3 | Built and tested in emulation, next to confirm on hardware |
+| iPhone pairing, stage 3 | The phone shows the Personal Hotspot indicator after `pair`; networking over it is next |
 | Built-in trackpad (I2C-HID) | Not working in 0.8.9.5; 0.8.9.6 fixes two likely causes, untested |
 | MediaTek Wi-Fi | No driver |
 
@@ -69,11 +78,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.7.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.8.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.7.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.8.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -97,7 +106,7 @@ sudo apt install gcc-multilib make python3 python3-pip grub-common grub-pc-bin \
 pip install hid-parser
 
 make havendos_pass1.elf && make havendos.elf && make   # the ISO
-sudo make test                                          # 59 suites
+sudo make test                                          # 60 suites
 ```
 
 `grub-pc-bin` and `grub-efi-amd64-bin` are both needed: without the first the ISO has no BIOS boot image. The build is two-pass — the kernel embeds a copy of itself for the installer — so build the two kernels before `make`. `make test` runs as root because the exFAT fixture is made with a loop device.

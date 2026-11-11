@@ -54,6 +54,24 @@ static int resolve_mac(uint32_t dst_ip, uint8_t mac_out[ETH_ALEN])
     uint32_t my_ip = net_get_ip();
     uint32_t mask  = net_get_mask();
     uint32_t gw    = net_get_gw();
+
+    /* ── v0.8.9.8: A BROADCAST HAS NO OWNER TO ASK ───────────────────
+       Nothing answers "who has 255.255.255.255?" -- it is not an
+       address any host holds, it is everyone. This function asked
+       anyway, four times, a second each, got no answer, and ip_send()
+       gave up with -2 before a byte reached the wire. Every DHCP
+       DISCOVER this tree has ever built died here: a packet capture of
+       QEMU's link shows eight ARP requests and not one UDP datagram.
+
+       The limited broadcast, and the directed broadcast of our own
+       subnet, go to the Ethernet broadcast address. No ARP. */
+    if(dst_ip == 0xFFFFFFFFu ||
+       (mask && mask != 0xFFFFFFFFu && my_ip &&
+        (dst_ip & mask) == (my_ip & mask) && (dst_ip | mask) == 0xFFFFFFFFu)){
+        for(int i = 0; i < ETH_ALEN; i++) mac_out[i] = 0xFF;
+        return 1;
+    }
+
     uint32_t next_hop = ((dst_ip & mask) == (my_ip & mask)) ? dst_ip : gw;
 
     if(arp_lookup(next_hop, mac_out)) return 1;
@@ -139,7 +157,17 @@ void ip_handle(const uint8_t *payload, uint16_t len)
     if((flags_frag & 0x2000) || (flags_frag & 0x1FFF)){ NS_INC(ip_frag_drop); return; }
 
     uint32_t my_ip = net_get_ip();
-    if(hdr->dst != my_ip && hdr->dst != 0xFFFFFFFFu){ NS_INC(ip_not_mine); return; }
+    /* v0.8.9.8: before an address exists, a DHCP reply may be sent to
+       the address being OFFERED rather than to broadcast -- a server
+       is allowed to ignore the broadcast flag, and then the frame is
+       addressed to an IP this machine does not have yet. With no
+       address of our own, UDP to port 68 is ours whatever its IP. */
+    int dhcp_reply = (my_ip == 0 && hdr->proto == IP_PROTO_UDP
+                      && total_len >= ihl + 4
+                      && payload[ihl + 2] == 0 && payload[ihl + 3] == 68);
+    if(hdr->dst != my_ip && hdr->dst != 0xFFFFFFFFu && !dhcp_reply){
+        NS_INC(ip_not_mine); return;
+    }
 
     const uint8_t *upper = payload + ihl;
     uint16_t       ulen  = (uint16_t)(total_len - ihl);

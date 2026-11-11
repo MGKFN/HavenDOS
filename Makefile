@@ -676,6 +676,16 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tldn tests/test_lockdown.c && \
 	  python3 tools/run_suite.py --name test_lockdown --min 360 -- /tmp/hd_tldn
+	@echo "── test_dhcp ──────────────────────────────"
+	@echo "  DHCP through the real IP and UDP layers, against a simulated server"
+	@# v0.8.9.8. DHCP had never worked: the broadcast was ARPed for, UDP
+	@# refused 548 bytes, and the parser wanted replies no server sends.
+	@# The fallback address is QEMU's own, so nothing showed it until an
+	@# iPhone handed out 172.20.10.x.
+	@$(TESTCC) -g -fsanitize=address,undefined -fno-builtin -Iinclude \
+	           -Wno-builtin-declaration-mismatch \
+	           -o /tmp/hd_tdhcp tests/test_dhcp.c && \
+	  python3 tools/run_suite.py --name test_dhcp --min 23 -- /tmp/hd_tdhcp
 	@echo "── test_tlscc ─────────────────────────────"
 	@echo "  TLS client certificates -- openssl s_server is the judge"
 	@# Pairing stage 3's second half. lockdownd will not open a session

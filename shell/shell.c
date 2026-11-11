@@ -1315,6 +1315,36 @@ static void cmd_ifconfig(const char *a1, const char *a2){
     out_str("\n  ifconfig set <ip> <gw>  |  ifconfig dns <ip>  |  ifconfig dhcp\n");
 }
 
+/* ── v0.8.9.8: WHY NOTHING ANSWERED, IN WORDS ────────────────────────
+   This used to print "try 'ping 10.0.2.2' for the QEMU gateway" after
+   every failed ping, on every machine. On the HP with an iPhone that
+   advice was worse than none: 10.0.2.2 exists only inside QEMU, and the
+   reason nothing answered was that DHCP had never given this machine
+   an address on the phone's network at all. Say which case it is. */
+extern uint32_t dhcp_stat_sent(void), dhcp_stat_offers(void),
+                dhcp_stat_acks(void), dhcp_stat_naks(void);
+static void net_explain(void)
+{
+    char ip[20], gw[20];
+    ip_to_str(net_get_ip(), ip);
+    ip_to_str(net_get_gw(), gw);
+    if(net_config_source() == NET_CFG_FALLBACK){
+        out_str("  No address from DHCP: this machine is on the built-in\n"
+                "  "); out_str(ip); out_str(", which only exists inside QEMU.\n");
+        out_str("  DHCP so far: "); out_int((int)dhcp_stat_sent());
+        out_str(" asked, "); out_int((int)dhcp_stat_offers());
+        out_str(" offered, "); out_int((int)dhcp_stat_acks());
+        out_str(" acknowledged");
+        if(dhcp_stat_naks()){ out_str(", "); out_int((int)dhcp_stat_naks()); out_str(" refused"); }
+        out_str(".\n  'ifconfig dhcp' asks again.\n");
+    } else {
+        out_str("  This machine is "); out_str(ip);
+        out_str(", gateway "); out_str(gw);
+        out_str(". 'ping "); out_str(gw);
+        out_str("' tests the first hop.\n");
+    }
+}
+
 static void cmd_ping(const char *a1){
     if(!net_ready()){ out_str("No NIC.\n"); return; }
     if(!a1[0]){ out_str("Usage: ping <host|ip>\n"); return; }
@@ -1326,7 +1356,7 @@ static void cmd_ping(const char *a1){
     else {
         out_str("Resolving "); out_str(a1); out_str("...\n");
         dest=dns_resolve(a1);
-        if(!dest){ out_str("DNS failed.\n"); return; }
+        if(!dest){ out_str("DNS failed.\n"); net_explain(); return; }
         char buf[20]; ip_to_str(dest,buf);
         out_str("-> "); out_str(buf); out_str("\n");
     }
@@ -1338,7 +1368,7 @@ static void cmd_ping(const char *a1){
         else if(ms==-1){ out_str("  seq="); out_int(i); out_str(" timeout\n"); }
         else { out_str("  ARP failed - host unreachable\n"); break; }
     }
-    if(!replied) out_str("  (tip: try 'ping 10.0.2.2' for the QEMU gateway)\n");
+    if(!replied) net_explain();
 }
 
 static void cmd_dns(const char *a1){

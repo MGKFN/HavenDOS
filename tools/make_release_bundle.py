@@ -204,15 +204,13 @@ laptop's.
 
 ## What this release wants from the laptop
 
-**`docs/GFX-EDID-HARDWARE-TEST.md`.** Five minutes, the LG monitor on
-and set to HDMI. `gfx edid` asks the monitor for its EDID over the HDMI
-cable. It is the first command in the display series that writes, and
-it writes only the six registers of the display engine's I2C
-controller. Photograph every page, then `gfx` for the four fixed lines,
-then `gfx edid` once more with the monitor switched off.
-
-The first mode `gfx edid` lists is the one 0.9.2 will put on the
-monitor.
+**`docs/GFX-ON-HARDWARE-TEST.md`.** Ten minutes, the LG monitor on
+and set to HDMI. `gfx plan` lists every register write `gfx on` would
+make; `gfx on` asks y/N and then lights the monitor, mirroring the
+laptop's screen at 1920x1080, 60 Hz. It is the first command that
+changes what a screen shows, and the panel's own registers are not on
+the list it may write. Photograph BOTH screens at `gfx on`, and say
+whether the panel changed at all.
 
 The older plans are still in `docs/` and still unanswered:
 `TRACKPAD-AND-PAIR-HARDWARE-TEST.md` for `i2chid` and the Notepad

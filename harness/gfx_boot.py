@@ -14,7 +14,8 @@ What this CAN answer, and no suite can:
   - `gfx` DISPATCHES -- the word is not swallowed by another command
   - on a machine with no Intel display it says THAT, by name, and
     touches nothing: no BAR is mapped for a device that is not there
-  - `gfx regs` and `gfx vbt` refuse the same way, and an unknown
+  - `gfx regs` and `gfx vbt` refuse the same way; so (0.9.2) do
+    `gfx plan`, `gfx on` and `gfx off`, without asking y/N; an unknown
     argument prints the usage rather than running the inspector
   - the shell answers afterwards
 
@@ -112,12 +113,20 @@ def main():
         ck("it says there is no display engine to read through",
            "No display engine to read through" in scr, scr[-700:])
 
+        print("\n  `gfx plan`, `gfx on`, `gfx off` (0.9.2) refuse without an engine")
+        for c in ("plan", "on", "off"):
+            scr = run("gfx " + c)
+            ck(f"`gfx {c}` says there is no display engine, and asks nothing",
+               "No display engine: no Intel display controller" in scr and
+               "y/N" not in scr.split("gfx " + c)[-1], scr[-700:])
+
         print("\n  an argument it does not know prints the usage")
         scr = run("gfx bogus")
-        ck("the usage names all four forms",
+        ck("the usage names all seven forms",
            "gfx regs" in scr and "gfx vbt" in scr and "gfx edid" in scr and
-           "Read only" in scr,
-           scr[-700:])
+           "gfx plan" in scr and "gfx on" in scr and "gfx off" in scr and
+           "change what a screen shows" in scr,
+           scr[-900:])
 
         print("\n  the shell is still answering afterwards")
         scr = run("ver")

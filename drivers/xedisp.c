@@ -452,6 +452,7 @@ static int aux_to_port(uint8_t aux)
 #define CH_TYPE      2
 #define CH_DVO_PORT  16
 #define CH_DDC_PIN   19
+#define CH_LEVEL     7      /* hdmi_level_shifter_value (bits 4:0), 158+ */
 #define CH_FLAGS1    23     /* efp_routed, lane_reversal, lspcon(2) ... */
 #define CH_FLAGS2    24     /* hdmi_support(0), dp_support(1) ...       */
 #define CH_AUX       25
@@ -524,6 +525,10 @@ int gfx_vbt_parse(const uint8_t *vbt, uint32_t len, gfx_vbt_t *out)
         k->is_hdmi = (type & DT_TMDS) && !(type & DT_NOT_HDMI);
         k->is_edp  = k->is_dp && (type & DT_INTERNAL);
         k->lspcon  = (out->bdb_version >= 192) && (k->flags1 & 0x04u);
+        /* 0.9.2: the two the HDMI output needs (intel_bios.c
+           intel_bios_hdmi_level_shift, intel_bios_encoder_lane_reversal). */
+        k->hdmi_level = (out->bdb_version >= 158) ? (int)(c[CH_LEVEL] & 0x1Fu) : -1;
+        k->lane_reversal = (out->bdb_version >= 184) && (k->flags1 & 0x02u);
         k->gmbus_pin = ddc_to_gmbus(k->ddc_pin);
         k->aux_port  = aux_to_port(k->aux);
         out->nchild++;
@@ -771,11 +776,11 @@ static uint32_t muldiv(uint32_t a, uint32_t b, uint32_t c)
    (kdiv) and 5. */
 uint32_t gfx_combo_pll_khz(uint32_t cfgcr0, uint32_t cfgcr1, uint32_t dssm)
 {
-    uint32_t ref, dco, p0, p1, p2;
+    uint32_t ref, dco, p0, p1, p2, frac, frac_x2 = 0;
     switch((dssm >> 29) & 7u){
     case 0: ref = 24000; break;
     case 1: ref = 19200; break;
-    case 2: ref = 19200; break;            /* 38.4, halved by the PLL */
+    case 2: ref = 19200; frac_x2 = 1; break;  /* 38.4, halved by the PLL */
     default: return 0;
     }
     switch((cfgcr1 >> 2) & 0xFu){          /* DPLL_CFGCR1_PDIV        */
@@ -789,8 +794,16 @@ uint32_t gfx_combo_pll_khz(uint32_t cfgcr0, uint32_t cfgcr1, uint32_t dssm)
     }
     p1 = (cfgcr1 & (1u << 9)) ? ((cfgcr1 >> 10) & 0xFFu) : 1u;
     if(!p1) return 0;
-    dco = (cfgcr0 & 0x3FFu) * ref +
-          (((cfgcr0 >> 10) & 0x7FFFu) * ref) / 0x8000u;
+    /* v0.9.2: Display WA #22010492432 (ehl, tgl, adl-s, adl-p): with a
+       38.4 MHz reference the fraction is programmed at HALF its value
+       and must be doubled to read it (i915 icl_ddi_combo_pll_get_freq,
+       ehl_combo_pll_div_frac_wa_needed). 0.9.1 missed this and showed
+       the HP's HBR link as 269.7 MHz; it is 270.0 exactly, which is
+       what HBR is. The HP's own DPLL1 proves it: fraction 0x3800 is
+       half of the 0x7000 that 8.1 GHz / 19.2 MHz needs. */
+    frac = (cfgcr0 >> 10) & 0x7FFFu;
+    if(frac_x2) frac *= 2u;
+    dco = (cfgcr0 & 0x3FFu) * ref + (frac * ref) / 0x8000u;
     return dco / (p0 * p1 * p2 * 5u);
 }
 
@@ -1339,7 +1352,24 @@ void gfx_report_edid(const gmbus_trace_t *tr, const edid_t *e,
             if(m->block){ Ls(&l, " (block "); Lu(&l, m->block); Lc(&l, ')'); }
             E(&l, i == 0 ? GFX_T_GOOD : GFX_T_TEXT);
         }
-        if(e->nmodes) say(GFX_T_TEXT, "  0.9.2 lights pipe B with the first one.");
+        if(e->nmodes){
+            /* v0.9.2: NOT the first one. On the HP's LG the first is
+               1080p144 at 346.5 MHz, over HDMI 1.4's 340 MHz. */
+            int k = edid_pick(e, EDID_TMDS_NOSCRAMBLE_KHZ, 1024, 768);
+            if(k < 0){
+                say(GFX_T_WARN, "  `gfx on` has no mode it can light here: none is");
+                say(GFX_T_WARN, "  progressive, 1024x768 or larger, and 340 MHz or under.");
+            } else {
+                const edid_mode_t *m = &e->modes[k];
+                Ls(&l, "  `gfx on` lights "); Lu(&l, m->hactive); Lc(&l, 'x');
+                Lu(&l, m->vactive); Ls(&l, " at "); put_hz100(&l, m->refresh_x100);
+                Ls(&l, ", "); put_pclk(&l, m->pclk_khz); Lc(&l, '.');
+                E(&l, GFX_T_GOOD);
+                if(e->modes[0].pclk_khz > EDID_TMDS_NOSCRAMBLE_KHZ)
+                    say(GFX_T_TEXT, "  The preferred mode is over 340 MHz: it needs HDMI 2.0"
+                                    " scrambling.");
+            }
+        }
     }
 
     if(rawlen){

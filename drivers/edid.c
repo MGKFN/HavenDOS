@@ -176,3 +176,34 @@ int edid_parse(const uint8_t *buf, uint32_t len, edid_t *e)
     }
     return e->why = EDID_OK;
 }
+
+/* ── 0.9.2: which mode `gfx on` lights ───────────────────────────────
+   The first mode is the one the monitor PREFERS, and on the HP's LG it
+   is 1080p144 at 346.5 MHz -- over HDMI 1.4's 340 MHz, so it needs
+   HDMI 2.0 scrambling, which 0.9.2 does not do. So the rule is:
+
+     - progressive, at or under max_khz, and at least min_w x min_h
+       (the plane that is mirrored has to fit inside it);
+     - of those, one within a hertz of 60 if there is one -- the
+       largest, then the one listed first;
+     - otherwise the largest, then the one listed first.
+
+   -1 if nothing qualifies. Pure, like everything in this file. */
+int edid_pick(const edid_t *e, uint32_t max_khz, uint32_t min_w, uint32_t min_h)
+{
+    int i, best = -1, best60 = 0;
+    uint32_t best_area = 0;
+    if(!e || e->why != EDID_OK) return -1;
+    for(i = 0; i < e->nmodes; i++){
+        const edid_mode_t *m = &e->modes[i];
+        uint32_t area = (uint32_t)m->hactive * m->vactive;
+        int at60 = m->refresh_x100 >= 5900u && m->refresh_x100 <= 6100u;
+        if(m->interlaced || !m->pclk_khz || m->pclk_khz > max_khz) continue;
+        if(m->hactive < min_w || m->vactive < min_h) continue;
+        if(best < 0 || (at60 && !best60) ||
+           (at60 == best60 && area > best_area)){
+            best = i; best60 = at60; best_area = area;
+        }
+    }
+    return best;
+}

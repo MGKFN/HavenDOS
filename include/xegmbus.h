@@ -32,10 +32,11 @@
    ── READ-BACK ──────────────────────────────────────────────────────
 
    GMBUS0 (pin and rate) is read back after every write and must hold
-   what was written. GMBUS1 is a COMMAND register -- its SW_RDY bit is
-   consumed by the hardware -- so its read-back is logged, not
-   compared; a comparison there would fail on a controller that is
-   working correctly.
+   what was written. GMBUS1 is a COMMAND register, so its read-back is
+   logged, not compared. 0.9.1 said SW_RDY was "consumed" and its test
+   model cleared it; on the HP (11 Nov 2026) GMBUS1 read back exactly
+   as written, SW_RDY still set. Either way a comparison would prove
+   nothing about the transfer, and the model now does what the HP did.
    ════════════════════════════════════════════════════════════════════ */
 
 #define GMBUS_REG_FIRST   0xC5100u

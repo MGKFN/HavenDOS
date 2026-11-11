@@ -1,5 +1,12 @@
 # 0.9.1 on the HP: reading the monitor
 
+> **ANSWERED ON THE HP, 11 November 2026, on 0.9.1.** The EDID came back
+> first time: 8 GMBUS writes, 0 refused, both blocks, no NAK. The monitor
+> is an LG 24GN65R "LG ULTRAGEAR". It prefers 1080p144 at 346.5 MHz, which
+> needs HDMI 2.0 scrambling, and offers 1080p60 at 148.5 MHz. GMBUS1 reads
+> back as written, SW_RDY included. The next test is
+> `docs/GFX-ON-HARDWARE-TEST.md`.
+
 **Five minutes.** `gfx edid` asks the LG monitor to identify itself over
 the HDMI cable's DDC wires, using the display engine's own I2C
 controller (GMBUS).

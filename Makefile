@@ -23,7 +23,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           kernel/string.c kernel/idt.c kernel/pit.c kernel/kpoll.c kernel/appguard.c kernel/bootsplash.c kernel/pmm.c kernel/heap.c kernel/errors.c kernel/klog.c \
           drivers/vga.c drivers/keyboard.c drivers/mouse.c \
           drivers/ata.c drivers/ahci.c drivers/atapi.c drivers/pci.c drivers/pci_bar.c drivers/uhci.c drivers/nvme.c drivers/virtio.c \
-          drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/xedisp.c drivers/xegmbus.c drivers/edid.c drivers/rtc.c \
+          drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/xedisp.c drivers/xegmbus.c drivers/xemode.c drivers/edid.c drivers/rtc.c \
           fs/blkdev.c fs/ramfs.c fs/gpt.c fs/gpt_write.c fs/esp.c fs/fat16fmt.c fs/fat32fmt.c fs/espmake.c fs/uninstall.c fs/fat12.c fs/fat16.c fs/fat32.c fs/exfat.c fs/vfs.c fs/install.c \
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
@@ -538,7 +538,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tgfx tests/test_gfx.c && \
-	  python3 tools/run_suite.py --name test_gfx --min 199 -- /tmp/hd_tgfx
+	  python3 tools/run_suite.py --name test_gfx --min 203 -- /tmp/hd_tgfx
 	@echo "── test_edid ──────────────────────────────"
 	@echo "  EDID over GMBUS, against a model controller and monitor"
 	@# drivers/xegmbus.c is the first display code that WRITES; the
@@ -547,7 +547,17 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tedid tests/test_edid.c && \
-	  python3 tools/run_suite.py --name test_edid --min 99 -- /tmp/hd_tedid
+	  python3 tools/run_suite.py --name test_edid --min 106 -- /tmp/hd_tedid
+	@echo "── test_xemode ────────────────────────────"
+	@echo "  lighting pipe B on the HDMI socket, against a model engine"
+	@# drivers/xemode.c is the first code that changes what a screen
+	@# shows. The model starts from the HP's own registers, moves status
+	@# bits the way the hardware does, fans PHY group writes out to the
+	@# lanes, and counts every write that lands on pipe A's side.
+	@$(TESTCC) -fno-builtin -Iinclude -Itests \
+	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
+	           -o /tmp/hd_txm tests/test_xemode.c && \
+	  python3 tools/run_suite.py --name test_xemode --min 195 -- /tmp/hd_txm
 	@echo "── test_rsa ───────────────────────────────"
 	@echo "  Miller-Rabin and RSA keygen, against CPython and openssl"
 	@# net/rsa.c arrived with a suite and a harness and was never added

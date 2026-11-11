@@ -1,41 +1,114 @@
-# HavenDOS — handoff, 11 November 2026 (late)
+# HavenDOS — handoff, 11 November 2026 (night)
 
-Current release: **v0.9.1** (channel Beta, codename "Janus"), the second
-step of the display-engine driver: `gfx edid` reads the monitor over
-GMBUS. Paste this file into a new chat to pick up where this left off.
+Current release: **v0.9.2** (channel Beta, codename "Janus"), the third
+step of the display-engine driver: `gfx on` lights the HDMI monitor,
+mirroring the panel. Paste this file into a new chat to pick up where
+this left off.
 
-## START HERE: 0.9.1 HAS NOT RUN ON THE HP
+## START HERE: 0.9.2 HAS NOT RUN ON THE HP
 
 Built and tested here:
-- `make test`: 6428/6428 across 62 suites.
-- `check_edid_suite.py` 24/24, `check_gfx_suite.py` 38/38.
-- QEMU boot: 10/10.
+- `make test`: 6634/6634 across 63 suites.
+- `check_xemode_suite.py` 27/27, `check_gfx_suite.py` 41/41,
+  `check_edid_suite.py` 24/24.
+- QEMU boot: 13/13.
 
-QEMU has no Intel display engine, so **`gfx edid` has only ever run
-against a model GMBUS controller.** First thing the next chat needs:
-Kyan's photos of `docs/GFX-EDID-HARDWARE-TEST.md`.
-1. `gfx edid`, every page.
-2. `gfx`, to check the four fixed lines.
-3. `gfx edid` with the monitor off.
+QEMU has no Iris Xe, so **`gfx on` has only ever run against a model
+engine.** First thing the next chat needs: Kyan's photos of
+`docs/GFX-ON-HARDWARE-TEST.md`.
+1. `gfx`: DPLL1 should now read **270 MHz** and the panel **60.00 Hz**
+   (the 0.9.1 PLL misreading is fixed).
+2. `gfx plan`, every page.
+3. `gfx on`, `y`, then photograph BOTH screens.
+4. `gfx`.
+5. `gfx off`, then `gfx on` again.
 
-How to read `gfx edid`:
-- **Good:** `maker GSM` (LG), a name, and a mode list whose first line
-  is the monitor's preferred mode. That line is 0.9.2's target.
-- **`Nothing answered at 50, twice`:** no ACK on pin 2. Most likely the
-  monitor is off, on another input, or unplugged. If it repeats with the
-  monitor definitely on HDMI, suspect the pin. The VBT said DDC 2, which
-  maps to GMBUS pin 2 on ADL-P (i915 `adlp_ddc_pin_map`).
-- **`never said it was ready`:** a GMBUS sequencing fault. The write log
-  on screen shows exactly what was sent. Compare it with i915
-  `do_gmbus_xfer`.
-- **`not an EDID`, with raw bytes:** the wire works but the bytes are
-  wrong. Look for a 1-byte shift: GMBUS3 packs four bytes, LSB first.
-- **Any `refused` count above 0:** the guard stopped a write outside
-  GMBUS, which should be impossible. Treat it as a defect in whoever
-  called `gmbus_wr()`.
+How to read `gfx on`:
+- **`Lit.` + `scanning out.` and the HavenDOS screen on the monitor**:
+  done. 0.9.3 is HDMI mode (AVI infoframe), the pipe scaler (fill the
+  monitor), and 120 Hz (285.5 MHz, no scrambling). 144 Hz needs SCDC.
+- **`Lit.` but the monitor says "no signal"**: the PHY/PLL path. Check
+  the write log's PHY lane values against i915
+  `icl_ddi_combo_vswing_program`, and DPLL0 = 001001D0 / 00000E84.
+  Suspect the TX_DW5 group write first: it is read back from lane 0.
+- **Signal but black**: the plane, DDB or watermarks. The plane copies
+  pipe A's CTL/STRIDE/SIZE/SURF; the DDB is blocks 2048-4031 (S3+S4); the
+  WMs are copied from pipe A.
+- **`NOT MOVING.`**: the transcoder isn't running. Check TRANS_CLK_SEL B
+  (20000000) and DPCLKA (B ungated on DPLL0).
+- **`Stopped: ...`**: the screen names the step, the register, and what
+  was wanted vs read. `gfx off` first, then photograph.
+- **`Refused: ...`**: a precondition failed before any write. The line
+  under it gives the register; check it against the 0.9.0 table below.
+  Example: DBUF S3/S4 power state, MBUS_CTL, PLANE_BUF_CFG A.
+- **THE PANEL CHANGED AT ALL**: the most important possible finding.
+  Nothing on pipe A is on the allow-list, so it would mean a shared
+  register that's really two registers, or a power interaction.
 
-**The monitor:** an LG 24GN65R (label photographed 11 Nov). Its EDID
-gives the exact modes. Don't trust a spec sheet over it.
+## WHAT 0.9.1 FOUND ON THE HP (11 Nov, photos)
+
+The full write-up is the project doc
+`havendos-0.9.1-edid-on-the-hp.md`.
+- GMBUS EDID read worked first time: 8 writes, 0 refused, no NAK.
+- **GMBUS1 reads back as written, SW_RDY still set.** The test model now
+  does the same (0.9.2).
+- **The monitor:** LG 24GN65R "LG ULTRAGEAR", GSM 5C19.
+  - Modes: preferred 1080p144 (346.5 MHz, needs scrambling); 1080p60
+    (148.5, VIC 16, **the 0.9.2 target**); 1080p120 (285.5); 1440p75
+    (304.25).
+  - HF-VSDB: SCDC, 450 MHz max TMDS.
+- **The raw 256 bytes are NOT in the tree.** The photo wasn't kept in
+  this container, so `tests/test_xemode.c` uses the decoded modes, not
+  the bytes. If Kyan re-sends the `gfx edid` raw-bytes photo, add it as a
+  fixture with the serial (`0xFF` descriptor) scrubbed and the checksum
+  recomputed.
+
+## 0.9.2, IN ONE SCREEN
+
+- `drivers/xemode.c` and `include/xemode.h`: the writer. Its parts:
+  - `xm_read()`: gated reads;
+  - `xm_plan_on()` / `xm_plan_off()`: pure, returning a list of
+    operations;
+  - `xm_allowed()`: pure; the allow-list;
+  - `xm_apply()` → `xm_wr()`: the ONE `GFX_WR`, asking first and reading
+    back after.
+
+  The sequence is i915's `hsw_crtc_enable` for HDMI on a combo PHY;
+  each step names its i915 function.
+- **Mode choice:** `edid_pick()` in `drivers/edid.c` takes progressive,
+  ≤340 MHz, ≥ the plane, nearest 60 Hz, then largest. The `gfx edid`
+  screen names the same mode.
+- **Template, not model:**
+  - copied from pipe A: the watermarks, MBUS credits, context latency,
+    PLANE_COLOR_CTL, and the plane itself;
+  - computed: timings, PLL, line time (DIV_ROUND_UP(htotal·8000/pclk)),
+    DDB (S3+S4, blocks 2048-4031), PHY values (i915 HDMI table entry 6
+    unless the VBT says otherwise).
+- **DVI signalling** (TRANS_DDI_FUNC_CTL 91030000), so no infoframes.
+- **`gfx off`** does not clear power-well requests or DBUF slices. It
+  never stops a PLL that port A is on.
+- **The PLL fix:** `gfx_combo_pll_khz()` doubles the fraction on a
+  38.4 MHz reference (WA #22010492432). The HP's DPLL1 `00E001A5` is
+  exactly i915's halved HBR entry, so it reads 270 MHz.
+- **The VBT** now gives `hdmi_level` (byte 7) and `lane_reversal`
+  (flags1 bit 1).
+- **`check_gfx_readonly.py`** now covers two writers. It fails if:
+  - `xm_wr()` writes before `xm_allowed()`;
+  - `xm_allowed()` names any pipe-A offset;
+  - GFX_WR appears twice.
+
+## Next, after the photos
+
+- **0.9.3:**
+  - HDMI mode with an AVI infoframe (VIDEO_DIP_CTL B, DIP data);
+  - pipe B's scaler (PS_CTRL) to fill the monitor, pillarboxed 4:3, or
+    stretched as the panel is;
+  - `gfx on 120` for 1080p120 (285.5 MHz);
+  - `gfx` showing pipe B's state in its summary.
+- **0.9.4:** SCDC over GMBUS (I2C 0x54) plus TRANS_DDI_HDMI_SCRAMBLING
+  and HIGH_TMDS_CHAR_RATE for 144 Hz.
+- **Later:** an extended desktop. That needs a second framebuffer and a
+  GGTT mapping for it, which is a different kind of release.
 
 ## WHAT 0.9.0 FOUND ON THE HP (11 Nov, photos)
 
@@ -50,7 +123,7 @@ fixture in `tests/test_gfx.c`. The facts 0.9.2 builds on:
 | panel path | pipe A → transcoder A → DDI A, eDP, DP SST, 8 bpc, **x2** |
 | panel timing | 1920x1080 active, 2080x1112 total, hsync 1968-2000 |
 | the stretch | PIPESRC A 1024x768 scaled to 1920x1080 by the pipe scaler |
-| panel clock | DPLL1 (00E001A5 / 00000088) = **269.7 MHz**, HBR |
+| panel clock | DPLL1 (00E001A5 / 00000088) = **270 MHz**, HBR (0.9.1 misread it as 269.7; fixed in 0.9.2) |
 | free | **DPLL0** (stale 018001D4/00002644), **pipe B**, **transcoder B** |
 | power wells on | PW_1, PW_A, PW_2, **PW_B**, PW_C (PW_D off) |
 | who asked | the **driver** register 45404 = 0000FC0F (the GOP); BIOS reg has none |
@@ -139,7 +212,7 @@ second.
 - `kernel/main.c`: `kernel_fb_phys()`, the framebuffer's physical
   address for the cross-check.
 - `tools/check_gfx_readonly.py`, run by `make`: refuses any write in
-  the display code. **0.9.2 must change this check on purpose** when it
+  the display code. **0.9.2 must change this check on purpose** (it did) when it
   adds `GFX_WR`. Allow the write seam in a separate file, and keep the
   inspector itself read-only.
 - `tests/test_gfx.c` (174) and `tools/check_gfx_suite.py` (31/31). The
@@ -203,8 +276,8 @@ cites PRM sections.
 | step | what | writes to the GPU? |
 |---|---|---|
 | 0.9.0 | **CONFIRMED ON THE HP, 11 Nov.** `gfx` inspector: map BAR0 (GTTMMADR, likely above 4 GB -- reuse `kernel/highfb.c`'s PSE-36 windows); print display version, power-well state, which pipes / transcoders / planes / DDIs are on, the panel's pipe, `PLANE_SURF` and stride, and hot-plug status per port. Also reads the VBT, so the HP says which port HDMI is on | **no** |
-| 0.9.1 | **BUILT, NOT YET ON THE HP.** EDID from the monitor over GMBUS pin 2 (HDMI on DDI B, no LSPCON -- answered by 0.9.0 on the HP); DP AUX not needed for this machine | only the six GMBUS registers |
-| 0.9.2 | modeset behind an explicit command (`gfx on`): enable the power well, program a DPLL for the pixel clock, DDI clock select and buffer, transcoder timings, pipe B, plane B scanning out a framebuffer at the monitor's mode | **yes**, never at boot until proved |
+| 0.9.1 | **CONFIRMED ON THE HP, 11 Nov** (LG 24GN65R, 8 writes, both blocks). EDID from the monitor over GMBUS pin 2 (HDMI on DDI B, no LSPCON -- answered by 0.9.0 on the HP); DP AUX not needed for this machine | only the six GMBUS registers |
+| 0.9.2 | **BUILT, NOT YET ON THE HP.** modeset behind an explicit command (`gfx plan` / `gfx on` / `gfx off`): DDI B IO well + DBUF S3/S4, DPLL0 at 148.5 MHz, DPCLKA + TRANS_CLK_SEL, transcoder B 1080p60 DVI, PHY B HDMI levels, DDI_BUF B, plane B MIRRORING pipe A's framebuffer unscaled and centred | **yes**, behind an allow-list; never at boot |
 | 0.9.3 | console and desktop follow the new framebuffer (`vga_cols()`/`vga_rows()` already derive the grid); `gfx off` hands back the panel; a boot option once it is proved | yes |
 
 **Rules for this work:**
@@ -2953,7 +3026,7 @@ Left, and each has its reason:
 | `check_usb_buffers.py` | a transfer constant its own back-end would refuse |
 | `check_diskname_sync.py` | the suite carrying a copy instead of linking |
 | `check_machine_reset.py` | a reset or power-off port outside `kernel/machine.c` (by VALUE since 0.9.0) |
-| `check_gfx_readonly.py` | any write in `drivers/xedisp.c`, `shell/gfxcmd.c` or `drivers/edid.c`; in `drivers/xegmbus.c`, any write outside `gmbus_wr()` or a `gmbus_wr()` without its range guard (0.9.0, 0.9.1) |
+| `check_gfx_readonly.py` | any write in `drivers/xedisp.c`, `shell/gfxcmd.c` or `drivers/edid.c`; in `drivers/xegmbus.c`, any write outside `gmbus_wr()` or a `gmbus_wr()` without its range guard; in `drivers/xemode.c`, any write outside `xm_wr()`, an `xm_wr()` that writes before asking `xm_allowed()`, or an `xm_allowed()` that names an offset of pipe A's path (0.9.0-0.9.2) |
 | `check_harnesses.py` | an injection harness whose baseline will not build |
 | `check_kpoll_sites.py` | `kernel_poll()` outside two named files; a polling sleep in a driver; a client registered outside four |
 | `check_kpoll_guard.py` | an entry point that loses its `kpoll_enter()`/`kpoll_leave()` bracket, or returns before the leave; a second copy of the rescan sequence |
@@ -2962,9 +3035,12 @@ Left, and each has its reason:
 Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
-## Testing, as of 0.9.1
+## Testing, as of 0.9.2
 
-**6428 of 6428 checks across 62 suites** (0.9.1: `test_edid` 99 new,
+**6634 of 6634 checks across 63 suites** (0.9.2: `test_xemode` 195 new,
+`test_gfx` 199 -> 203, `test_edid` 101 -> 106;
+`tools/check_xemode_suite.py` 27/27; `harness/gfx_boot.py` 13/13).
+As of 0.9.1: **6428 of 6428 checks across 62 suites** (0.9.1: `test_edid` 99 new,
 `test_gfx` 174 -> 199 with the HP fixture). As of 0.9.0:
 **6304 of 6304 checks across 61 suites** (`make test`, run, not
 reasoned about); `test_fat16path` still skips without `BOOTDISK=`. New:

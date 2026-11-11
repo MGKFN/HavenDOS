@@ -140,6 +140,8 @@ typedef struct {
     int       is_edp, is_dp, is_hdmi, is_dsi, lspcon;
     int       gmbus_pin;      /* the GMBUS pin ddc_pin means, 0 none   */
     int       aux_port;       /* the port whose AUX channel, or NONE   */
+    int       hdmi_level;     /* 0.9.2: VBT HDMI vswing entry, -1 none */
+    int       lane_reversal;  /* 0.9.2: the port's lanes are reversed  */
 } gfx_child_t;
 
 typedef struct {

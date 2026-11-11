@@ -587,7 +587,8 @@ int main(void)
     ck("TC1: DP with AUX TC1", has("DP, AUX TC1"), nl);
     ck("TC3 is not wired", has("not wired"), nl);
     ck("DPLL0 on and locked", has("DPLL0 ON, locked"), nl);
-    ck("  ... at 269.7 MHz from its dividers (DP HBR)", has("DPLL0 ON, locked, 269.7 MHz"), nl);
+    ck("  ... at 270.0 MHz from its dividers (DP HBR, fraction doubled: WA)",
+       has("DPLL0 ON, locked, 270 MHz"), nl);
     ck("DPLL1 free", has("DPLL1 off, free"), nl);
     ck("DDI A clocked by DPLL0", has("DDI A clock: DPLL0"), nl);
     ck("DDI B clock gated", has("DDI B clock: gated off"), nl);
@@ -662,11 +663,11 @@ int main(void)
         fb_hi = 0x40u; fb_lo = 0; fb_w = 1024; fb_h = 768;
         vbt_len = build_vbt(vbtbuf, 253, 39, hpk, 2, 2, 0);
         put_opregion(2, 1, 0x7u, vbtbuf, vbt_len, 0, 0, 0);
-        /* the panel's DP link M/N was not read by 0.9.0: these are
-           what a 1080p eDP panel at 60 Hz on a 269.72 MHz link uses
-           (M/N = pixel clock / link clock); the refresh check below
-           is about the arithmetic, and is labelled so. */
-        R(0x60040, 0x00041DC0); R(0x60044, 0x00080000);
+        /* The panel's DP link M/N was not read by 0.9.0. 0.9.1 read
+           it on the HP: 269484/524288 (its `gfx` photo, 11 Nov). It
+           printed 59.93 Hz then, from the 269.7 MHz misreading; with
+           the link at 270 MHz the same M/N is 60.00 Hz. */
+        R(0x60040, 0x00041CACu); R(0x60044, 0x00080000u);
         run_all();
         ck("every register read was in a powered well", unclaimed == 0, unclaimed);
         ck("CDCLK 179.2 MHz (38.4 x 14 / 2 / 1.5)", has("CDCLK 179.2 MHz") &&
@@ -683,10 +684,14 @@ int main(void)
            has("-> DDI A DP SST, 8 bpc, x2"), nl);
         ck("  ... 1920x1080 active, 2080x1112 total",
            has("1920x1080 active, 2080x1112 total"), nl);
-        ck("NEW: DPLL1 at 269.7 MHz -- HBR, from cfg 00E001A5 00000088",
-           has("DPLL1 ON, locked, 269.7 MHz"), nl);
-        ck("  ... and the bit pattern decodes as i915 does: 269720 kHz",
-           gfx_combo_pll_khz(0x00E001A5u, 0x00000088u, 0x40000000u) == 269720u,
+        /* 0.9.2: 0.9.1 printed 269.7 here. The fraction field on a
+           38.4 MHz reference is programmed HALVED (WA #22010492432)
+           and must be doubled to read: 0x3800 is half of the 0x7000
+           in i915's own HBR table entry. 270 MHz is HBR exactly. */
+        ck("FIXED: DPLL1 at 270 MHz -- HBR, from cfg 00E001A5 00000088",
+           has("DPLL1 ON, locked, 270 MHz"), nl);
+        ck("  ... and the bit pattern decodes as i915 does: 270000 kHz",
+           gfx_combo_pll_khz(0x00E001A5u, 0x00000088u, 0x40000000u) == 270000u,
            (long)gfx_combo_pll_khz(0x00E001A5u, 0x00000088u, 0x40000000u));
         /* A Q ratio with its mode bit CLEAR must be ignored. Neither
            of the HP's PLLs has that combination (DPLL0: ratio 9, mode
@@ -694,11 +699,14 @@ int main(void)
            harness found the suite could not tell otherwise. */
         ck("  ... a Q ratio without its mode bit is ignored",
            gfx_combo_pll_khz(0x00E001A5u, 0x00000088u | (5u << 10), 0x40000000u)
-           == 269720u,
+           == 270000u,
            (long)gfx_combo_pll_khz(0x00E001A5u, 0x00000088u | (5u << 10), 0x40000000u));
         ck("DPLL0 off and free", has("DPLL0 off, free"), nl);
-        ck("  ... though its stale dividers decode (qdiv 9): 100 MHz",
-           gfx_combo_pll_khz(0x018001D4u, 0x00002644u, 0x40000000u) == 100000u,
+        /* Its stale fraction 0x6000 is NOT halved -- doubled it is past
+           15 bits -- so whatever wrote it skipped the workaround. It
+           decodes as written, and nobody uses it. */
+        ck("  ... though its stale dividers decode (qdiv 9): 100.1 MHz",
+           gfx_combo_pll_khz(0x018001D4u, 0x00002644u, 0x40000000u) == 100160u,
            (long)gfx_combo_pll_khz(0x018001D4u, 0x00002644u, 0x40000000u));
         ck("DDI A clocked by DPLL1", has("DDI A clock: DPLL1"), nl);
         ck("NEW: requests read from the DRIVER register, not 'none'",
@@ -719,8 +727,8 @@ int main(void)
            strstr(line_of("  DDI B"), "CONNECTED") != 0, nl);
         ck("the firmware's FPGA_DBG is not blamed on us", has("already set") &&
            !has("UNCLAIMED READ"), nl);
-        ck("the refresh arithmetic: M/N x 269720 kHz over 2080x1112 = 60.00 Hz",
-           has(", 60.00 Hz  (link M/N"), nl);
+        ck("the refresh: 269484/524288 x 270000 kHz over 2080x1112 = 60.00 Hz",
+           has("138.7 MHz, 60.00 Hz  (link M/N"), nl);
         ck("HDMI is wired to DDI B, and `gfx edid` uses pin 2",
            has("HDMI is wired to DDI B.") && has("GMBUS pin 2."), nl);
         ck("no line is wider than the screen", longest <= GFX_LINE_MAX, longest);
@@ -855,6 +863,33 @@ int main(void)
         gfx_vbt_parse(vbtbuf, vbt_len, &V);
         ck("a DVI-only connector is not called HDMI", V.nchild == 1 &&
            !V.child[0].is_hdmi, V.child[0].is_hdmi);
+    }
+    {
+        /* 0.9.2: the two fields the HDMI output takes from the VBT.
+           Byte 7 low 5 bits: hdmi_level_shifter_value (158+); flags1
+           bit 1: lane_reversal (184+). The neighbours are set too, so
+           a reader taking the wrong bits shows. */
+        kid_t k[1] = { { 0x60D2, 1, 2, 0x10, 0x02 | 0x04, 0x01 } };
+        uint8_t *ch;
+        vbt_len = build_vbt(vbtbuf, 250, 40, k, 1, 1, 0);
+        ch = vbtbuf + 0x30 + 22 + 11 + 3 + 5;
+        ch[7] = (uint8_t)(0xE0 | 3);          /* max data rate 7, level 3 */
+        gfx_vbt_parse(vbtbuf, vbt_len, &V);
+        ck("0.9.2: the VBT's HDMI vswing entry is read (3, not 0xE3)",
+           V.nchild == 1 && V.child[0].hdmi_level == 3, V.child[0].hdmi_level);
+        ck("  ... and lane reversal from flags1 bit 1", V.child[0].lane_reversal == 1,
+           V.child[0].lane_reversal);
+        vbt_len = build_vbt(vbtbuf, 150, 40, k, 1, 1, 0);
+        ch[7] = 3;
+        gfx_vbt_parse(vbtbuf, vbt_len, &V);
+        ck("  ... neither before the BDB version that defines them (150)",
+           V.child[0].hdmi_level == -1 && V.child[0].lane_reversal == 0,
+           V.child[0].hdmi_level);
+        k[0].f1 = 0x04;
+        vbt_len = build_vbt(vbtbuf, 250, 40, k, 1, 1, 0);
+        gfx_vbt_parse(vbtbuf, vbt_len, &V);
+        ck("  ... LSPCON (bit 2) alone is not a lane reversal",
+           V.child[0].lane_reversal == 0 && V.child[0].lspcon == 1, V.child[0].lane_reversal);
     }
     vbt_len = build_vbt(vbtbuf, 250, 40, HP_KIDS, 4, 4, 1);
     ck("a MIPI sequence v3 block is walked by its 32-bit size",

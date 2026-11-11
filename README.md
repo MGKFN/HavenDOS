@@ -6,7 +6,18 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.1 Beta "Janus"
+## Current version: 0.9.2 Beta "Janus"
+
+**0.9.2** lights the external monitor. `gfx on` programs the HP's
+second display path, from a PLL and the HDMI port up to a pipe and a
+plane, and points it at the picture the laptop already shows, so the
+monitor mirrors the panel at 1920x1080, 60 Hz. `gfx plan` lists every
+register write first, and `gfx on` asks before making any. One function
+writes, behind an allow-list that cannot name the panel's registers,
+and every write is read back. It also corrects a misreading in 0.9.1:
+the panel's link clock is 270 MHz, not 269.7, and the panel runs at
+60.00 Hz.
+[Changelog](changelogs/CHANGELOG-v0.9.2.md).
 
 **0.9.1** reads the external monitor. `gfx edid` asks it over the HDMI
 cable's DDC wires, through the display engine's own I2C controller,
@@ -90,7 +101,7 @@ Tested on an HP laptop with an Intel Alder Lake CPU, NVMe SSD and xHCI USB, and 
 | iPhone pairing, stages 1 and 2 | Working |
 | iPhone pairing, stage 3 | Pairs, and StartSession answers; the TLS session after it is refused by the phone (not needed for tethering) |
 | iPhone USB tethering | **Working** since 0.8.9.9: DHCP, DNS, ping, HTTP |
-| External monitor | `gfx` reads the display engine (confirmed on the HP); `gfx edid` reads the monitor (0.9.1, untested); driving it is 0.9.2 |
+| External monitor | `gfx` reads the display engine and `gfx edid` the monitor (both confirmed on the HP); `gfx on` mirrors the panel on it over HDMI (0.9.2, untested) |
 | Built-in trackpad (I2C-HID) | Not working in 0.8.9.5; 0.8.9.6 fixes two likely causes, untested |
 | MediaTek Wi-Fi | No driver |
 
@@ -104,11 +115,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.1.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.2.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.1.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.2.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

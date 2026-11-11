@@ -223,8 +223,28 @@ BUGS = [
      "i915 icl_wrpll_ref_clock(): the DPLL divides a 38.4 MHz "
      "reference by two itself. Not halving it doubles every port "
      "clock -- the HP's eDP link would read 539 MHz",
-     """    case 2: ref = 19200; break;            /* 38.4, halved by the PLL */""",
-     """    case 2: ref = 38400; break;            /* 38.4, halved by the PLL */"""),
+     """    case 2: ref = 19200; frac_x2 = 1; break;  /* 38.4, halved by the PLL */""",
+     """    case 2: ref = 38400; frac_x2 = 1; break;  /* 38.4, halved by the PLL */"""),
+
+    ("the VBT's HDMI vswing entry keeps the data-rate bits",
+     "byte 7 is hdmi_level_shifter_value in bits 4:0 and the max data "
+     "rate above it; unmasked, entry 3 reads as 227 and 0.9.2 falls back "
+     "to the default without saying why",
+     """        k->hdmi_level = (out->bdb_version >= 158) ? (int)(c[CH_LEVEL] & 0x1Fu) : -1;""",
+     """        k->hdmi_level = (out->bdb_version >= 158) ? (int)c[CH_LEVEL] : -1;"""),
+
+    ("lane reversal is read from the LSPCON bit",
+     "flags1 bit 1 is lane_reversal, bit 2 LSPCON; the wrong one reverses "
+     "DDI B's lanes on a board that never asked for it",
+     """        k->lane_reversal = (out->bdb_version >= 184) && (k->flags1 & 0x02u);""",
+     """        k->lane_reversal = (out->bdb_version >= 184) && (k->flags1 & 0x04u);"""),
+
+    ("the halved fraction is read as programmed (0.9.1's bug)",
+     "WA #22010492432 programs the DCO fraction at half its value on a "
+     "38.4 MHz reference. Read without doubling, the HP's HBR link is "
+     "269.7 MHz and the panel 59.93 Hz -- which is what 0.9.1 printed",
+     """    if(frac_x2) frac *= 2u;""",
+     """    (void)frac_x2;"""),
 
     ("the PLL's P divider of 3 is taken as 2",
      "DPLL_CFGCR1_PDIV is a one-hot field: 2 means 3. The HP's DPLL1 "

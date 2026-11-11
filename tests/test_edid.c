@@ -21,7 +21,12 @@
    Strict where the hardware is strict:
      - it sees EVERY write; one outside 0xC5100-0xC5120 is a failure of
        gmbus_wr()'s guard, and is counted, not ignored
-     - SW_RDY is consumed: GMBUS1 reads back without it
+     - GMBUS1 reads back AS WRITTEN, SW_RDY included -- which is what
+       the HP's controller did on 11 November (468000A1/468000A1). The
+       0.9.1 model consumed SW_RDY and asserted it; silicon said
+       otherwise, and the model follows the silicon. A knob
+       (m_g1_consume) still models the other behaviour, and the driver
+       must work with both, because it compares neither.
      - a target that does not answer raises SATOER, and stays latched
        until SW_CLR_INT
      - data arrives four bytes per GMBUS3 read; HW_RDY drops between
@@ -37,6 +42,7 @@
 
 /* ── the model GMBUS ──────────────────────────────────────────────── */
 static uint32_t m_g0, m_g1;
+static int      m_g1_consume;     /* 1: SW_RDY reads back clear       */
 static int      m_active, m_rdy, m_satoer, m_wait_phase;
 static uint32_t m_pos, m_left;
 static uint8_t  mon_edid[256];
@@ -54,7 +60,7 @@ static uint32_t w_off[512], w_val[512];
 
 static void model_reset(void)
 {
-    m_g0 = m_g1 = 0; m_active = m_rdy = m_satoer = m_wait_phase = 0;
+    m_g0 = m_g1 = 0; m_g1_consume = 0; m_active = m_rdy = m_satoer = m_wait_phase = 0;
     m_pos = m_left = 0;
     mon_pin = 2; mon_present = 1; mon_nak_first = 0; mon_nak_index128 = 0;
     mon_hang = 0; g0_sticky = 0; busy_polls = 0; busy_forever = 0;
@@ -95,7 +101,8 @@ static uint32_t model_rd(uint32_t base, uint32_t off)
     r_total++;
     switch(off){
     case 0xC5100u: return m_g0;
-    case 0xC5104u: return m_g1 & ~(1u << 30);      /* SW_RDY consumed */
+    case 0xC5104u:                                 /* as the HP: as written */
+        return m_g1_consume ? (m_g1 & ~(1u << 30)) : m_g1;
     case 0xC5108u: {
         uint32_t s = 0;
         if(busy_forever || busy_polls > 0){
@@ -456,9 +463,18 @@ int main(void)
         ck("block 1: the same at index 128", saw_idx128, 0);
         ck("each transfer ended with a STOP cycle", saw_stop, 0);
     }
-    ck("GMBUS1's read-back is logged without SW_RDY (consumed), not compared",
+    ck("GMBUS1 reads back as written, SW_RDY set, as on the HP (logged)",
        TR.nwlog > 1 && TR.wlog[1].off == 0xC5104u &&
-       !(TR.wlog[1].back & (1u << 30)), (long)TR.wlog[1].back);
+       TR.wlog[1].back == TR.wlog[1].val && (TR.wlog[1].back & (1u << 30)),
+       (long)TR.wlog[1].back);
+
+    head("a controller that DOES consume SW_RDY reads just as well");
+    model_reset(); dev_open(); build_mon(mon_edid, 1, 0); m_g1_consume = 1;
+    r = gmbus_read_edid(&D, 2, buf, &got, &TR);
+    ck("both blocks, no error: GMBUS1 is never compared",
+       r == GMBUS_OK && got == 256, (long)r);
+    ck("  ... and the log shows SW_RDY gone from the read-back",
+       TR.nwlog > 1 && !(TR.wlog[1].back & (1u << 30)), (long)TR.wlog[1].back);
 
     head("one block when the monitor announces no extension");
     model_reset(); dev_open(); build_mon(mon_edid, 0, 0);
@@ -570,7 +586,27 @@ int main(void)
     ck("the 144 Hz mode from block 1", has("144.00 Hz  333.07 MHz") && has("(block 1)"), nl);
     ck("sixteen raw lines for 256 bytes", has("0F0:") && has("000: 00 FF FF FF FF FF FF 00"), nl);
     ck("the write log with read-backs", has("C5100=00000002/00000002"), nl);
+    ck("0.9.2: names the mode `gfx on` lights, not 'the first one'",
+       has("`gfx on` lights 1920x1080 at 60.00 Hz, 148.5 MHz.") &&
+       !has("with the first one"), nl);
+    ck("  ... and no scrambling note when the preferred mode needs none",
+       !has("scrambling"), nl);
     ck("no line wider than the screen", longest <= GFX_LINE_MAX, longest);
+
+    /* The HP's LG: preferred 1080p144 at 346.5 MHz, over HDMI 1.4. */
+    {
+        edid_t lg = ED;
+        lg.modes[0] = ED.modes[1];            /* 144 Hz first ...       */
+        lg.modes[1] = ED.modes[0];            /* ... then 60, as the LG */
+        lg.modes[0].pclk_khz = 346500u; lg.modes[0].refresh_x100 = 14398u;
+        nl = 0; longest = 0;
+        gfx_report_edid(&TR, &lg, buf, got, cap);
+        ck("a 346.5 MHz preferred mode: `gfx on` still picks 1080p60",
+           has("`gfx on` lights 1920x1080 at 60.00 Hz, 148.5 MHz."), nl);
+        ck("  ... and says why the preferred one waits (HDMI 2.0 scrambling)",
+           has("over 340 MHz: it needs HDMI 2.0 scrambling."), nl);
+        ck("  ... every line still fits", longest <= GFX_LINE_MAX, longest);
+    }
     ck("none cut", gfx_test_cut() == 0, (long)gfx_test_cut());
 
     model_reset(); dev_open(); mon_present = 0;

@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 """check_gfx_readonly.py -- the display code writes only where it says.
 
+── 0.9.2: A SECOND WRITER, AND THE ONE THAT LIGHTS A SCREEN ──────────
+
+drivers/xemode.c programs pipe B, transcoder B, DDI B, combo PHY B and a
+free DPLL to light the HDMI monitor. It gets the same treatment as
+xegmbus.c, with a different guard:
+
+  - GFX_WR is used ONCE outside its own #define, inside xm_wr();
+  - xm_wr() calls xm_allowed() BEFORE its GFX_WR -- the allow-list is
+    asked first, not consulted afterwards;
+  - xm_allowed() names no register of pipe A's path: no offset in
+    transcoder A (0x60000-0x60FFF), pipe A (0x70000-0x70FFF), DDI A's
+    buffer (0x64000) or combo PHY A (0x162000-0x162FFF). A list that
+    cannot name them cannot allow them;
+  - nothing else in the file writes.
+
 ── 0.9.1: ONE FILE MAY WRITE, AND ONLY IN ONE PLACE ──────────────────
 
 drivers/xegmbus.c reads a monitor's EDID over GMBUS, which means writing
@@ -56,6 +71,13 @@ import csource
 
 FILES = ("drivers/xedisp.c", "shell/gfxcmd.c", "drivers/edid.c")
 WRITER = "drivers/xegmbus.c"
+# 0.9.2: (file, the one function that writes, a check on its body)
+WRITERS = (
+    ("drivers/xegmbus.c", "gmbus_wr"),
+    ("drivers/xemode.c", "xm_wr"),
+)
+PIPE_A = ((0x60000, 0x61000, "transcoder A"), (0x70000, 0x71000, "pipe A"),
+          (0x64000, 0x64004, "DDI A's buffer"), (0x162000, 0x163000, "combo PHY A"))
 
 RULES = [
     (re.compile(r"\bGFX_WR\b"), "a register write seam (GFX_WR)"),
@@ -83,23 +105,60 @@ def scan(path):
     return bad
 
 
-def scan_writer(path):
-    """drivers/xegmbus.c: GFX_WR once, in gmbus_wr(), behind the guard."""
+def func_span(code, name, need_static=True):
+    """(first, last) line index of a function's definition, or None."""
+    start = next((i for i, l in enumerate(code)
+                  if re.match(r"\s*(static\s+)?\w[\w\s\*]*\b%s\s*\(" % name, l)
+                  and (not need_static or "static" in l)
+                  and not l.rstrip().endswith(";")), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start, len(code)) if code[i] == "}"), None)
+    if end is None:
+        return None
+    return start, end
+
+
+def guard_problems(path, fn, code, lines, start, end):
+    """What the writing function must do before it writes."""
+    body = "\n".join(code[start:end + 1])
+    bad = []
+    if fn == "gmbus_wr":
+        if "GMBUS_REG_FIRST" not in body or "GMBUS_REG_LAST" not in body:
+            bad.append((start + 1, "gmbus_wr() lost its range guard", lines[start].strip()))
+    elif fn == "xm_wr":
+        ask = body.find("xm_allowed(")
+        wrt = body.find("GFX_WR")
+        if ask < 0:
+            bad.append((start + 1, "xm_wr() no longer asks xm_allowed()", lines[start].strip()))
+        elif wrt >= 0 and wrt < ask:
+            bad.append((start + 1, "xm_wr() writes before it asks xm_allowed()",
+                        lines[start].strip()))
+        span = func_span(code, "xm_allowed", need_static=False)
+        if span is None:
+            bad.append((0, "xm_allowed() is missing -- the allow-list", ""))
+        else:
+            for i in range(span[0], span[1] + 1):
+                for m in re.finditer(r"(?<![\w])0[xX]([0-9A-Fa-f]+)[uUlL]*", code[i]):
+                    v = int(m.group(1), 16)
+                    for lo, hi, what in PIPE_A:
+                        if lo <= v < hi:
+                            bad.append((i + 1, "xm_allowed() names %s (0x%X)" % (what, v),
+                                        lines[i].strip()))
+    return bad
+
+
+def scan_writer(path, fn="gmbus_wr"):
+    """A writer: GFX_WR once, inside `fn`, behind its guard."""
     text = open(path, encoding="utf-8", errors="replace").read()
     lines = text.splitlines()
     code = csource.code_lines(text)
     bad = []
-    # the function's body, by line numbers
-    start = next((i for i, l in enumerate(code)
-                  if re.search(r"\bgmbus_wr\s*\(", l) and "static" in l), None)
-    end = None
-    if start is not None:
-        end = next((i for i in range(start, len(code)) if code[i] == "}"), None)
-    if start is None or end is None:
-        return [(0, "gmbus_wr() is missing -- the only place a write may be", "")]
-    body = "\n".join(code[start:end + 1])
-    if "GMBUS_REG_FIRST" not in body or "GMBUS_REG_LAST" not in body:
-        bad.append((start + 1, "gmbus_wr() lost its range guard", lines[start].strip()))
+    span = func_span(code, fn)
+    if span is None:
+        return [(0, "%s() is missing -- the only place a write may be" % fn, "")]
+    start, end = span
+    bad += guard_problems(path, fn, code, lines, start, end)
     uses = 0
     in_def = False
     for i, line in enumerate(code):
@@ -110,7 +169,7 @@ def scan_writer(path):
             if start <= i <= end:
                 uses += 1
             else:
-                bad.append((i + 1, "GFX_WR outside gmbus_wr()", lines[i].strip()))
+                bad.append((i + 1, "GFX_WR outside %s()" % fn, lines[i].strip()))
         for rx, what in RULES:
             if what.startswith("a register write seam"):
                 continue                       # GFX_WR handled above
@@ -119,7 +178,7 @@ def scan_writer(path):
             if rx.search(probe):
                 bad.append((i + 1, what, lines[i].strip()))
     if uses != 1:
-        bad.append((start + 1, "gmbus_wr() uses GFX_WR %d times, not once" % uses,
+        bad.append((start + 1, "%s() uses GFX_WR %d times, not once" % (fn, uses),
                     lines[start].strip()))
     return bad
 
@@ -135,22 +194,24 @@ def main():
             return 2
         for num, what, src in scan(f):
             found.append((f, num, what, src))
-    if not os.path.exists(WRITER):
-        sys.stderr.write("check_gfx_readonly: %s is missing\n" % WRITER)
-        return 2
-    for num, what, src in scan_writer(WRITER):
-        found.append((WRITER, num, what, src))
+    for path, fn in WRITERS:
+        if not os.path.exists(path):
+            sys.stderr.write("check_gfx_readonly: %s is missing\n" % path)
+            return 2
+        for num, what, src in scan_writer(path, fn):
+            found.append((path, num, what, src))
     if found:
         print("check_gfx_readonly: the display code writes where it "
               "must not\n")
         for f, num, what, src in found:
             print("  %s:%d  %s\n      %s" % (f, num, what, src))
         print("\n  The panel is being scanned out by this engine while the")
-        print("  command runs. A write is 0.9.2's job, behind `gfx on`, with")
-        print("  a read-back -- not something to add to an inspector.")
+        print("  command runs. Writes belong in xm_wr() (behind xm_allowed())")
+        print("  or gmbus_wr() -- not in an inspector, and not anywhere else.")
         return 1
-    print("check_gfx_readonly: ok, %s never write; %s writes only in "
-          "gmbus_wr(), behind its range guard" % (", ".join(FILES), WRITER))
+    print("check_gfx_readonly: ok, %s never write; %s; xm_allowed() "
+          "names nothing of pipe A's" % (", ".join(FILES),
+          ", ".join("%s writes only in %s()" % (p, f) for p, f in WRITERS)))
     return 0
 
 

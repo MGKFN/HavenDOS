@@ -7,7 +7,7 @@
    EDID is 128-byte blocks a monitor answers with at I2C address 0x50
    on its DDC wires. Block 0 is the base: who made it, its name, and up
    to four 18-byte descriptors, the first of which is the PREFERRED
-   mode -- the one 0.9.2 will program into pipe B. An HDMI monitor
+   mode -- not the one 0.9.2 lights; see edid_pick(). An HDMI monitor
    usually adds a CTA-861 extension (block 1) carrying more detailed
    timings, which is where a high-refresh mode like 144 Hz lives.
 
@@ -64,3 +64,9 @@ int  edid_parse(const uint8_t *buf, uint32_t len, edid_t *out);
 /* One 18-byte detailed timing descriptor. Returns 1 if it is a timing
    (pixel clock nonzero), 0 if it is a text/range descriptor. */
 int  edid_dtd(const uint8_t *d, edid_mode_t *m);
+
+/* 0.9.2: the mode `gfx on` lights -- progressive, at or under max_khz,
+   at least min_w x min_h, nearest 60 Hz, then largest. -1 if none.
+   drivers/edid.c says why it is not simply the first. */
+#define EDID_TMDS_NOSCRAMBLE_KHZ 340000u
+int  edid_pick(const edid_t *e, uint32_t max_khz, uint32_t min_w, uint32_t min_h);

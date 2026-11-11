@@ -508,6 +508,36 @@ int main(void)
        used, because each has a different fix and "it only found the
        ESP" was all four wearing one face. The same applies here with
        five reasons, and four of them are things a phone really does. */
+    /* ── v0.8.9.9: THE MUX GOT THERE FIRST ───────────────────────────
+       On the HP the order was the other way round -- Ethernet at boot,
+       usbmux at `pair` -- and the mux took the Ethernet interface away.
+       Both orders go through usb_claim_interface() now. This one checks
+       the Ethernet side: with the mux already holding interface 1 of
+       the same configuration, the probe must not select it again, and
+       must find ITS OWN bulk pair rather than the first one on the
+       phone -- which is the mux's 0x81. */
+    head("the mux already holds interface 1: Ethernet joins, not replaces");
+    machine();
+    {
+        usb_dev_t *d = (usb_dev_t *)usb_device(0);
+        int n;
+        ck("usbmux claims index 3, interface 1",
+           d && usb_claim_interface(d, 3, 1, 0) == USB_OK, 0);
+        ph.set_cfg_value = -1;
+        n = usbnet_probe();
+        ck("the NIC is found", n == 1, n);
+        ck("WITHOUT a second SET_CONFIGURATION",
+           ph.set_cfg_value == -1, ph.set_cfg_value);
+        ck("its receive endpoint is Ethernet's, not the mux's 0x81",
+           g_n[0].ep_in == EP_IN, g_n[0].ep_in);
+        ck("and its send endpoint too", g_n[0].ep_out == EP_OUT,
+           g_n[0].ep_out);
+        ck("the mux's endpoint is still in the table",
+           d && usb_find_ep_if(d, 1, USB_EP_BULK, 1) &&
+           usb_find_ep_if(d, 1, USB_EP_BULK, 1)->addr == 0x81, 0);
+        ck("three endpoints in all", d && d->nep == 3, d ? d->nep : -1);
+    }
+
     head("a phone with no Ethernet interface anywhere");
     machine();
     ph.no_ethernet = 1;

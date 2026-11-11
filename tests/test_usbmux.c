@@ -757,8 +757,14 @@ int main(void)
            choose and the device only echoes it back. */
         ck("destination port 62078 == 0xF27E, big-endian",
            ph.reply_port == 0xF27E, ph.reply_port);
-        ck("source port 0x4854, big-endian", ph.exp_sport == 0x4854,
-           ph.exp_sport);
+        /* v0.8.9.9: a fresh port per connection, so the exact value
+           depends on how many connects came before. The big-endian
+           question is still answered: the high byte is 'H' (0x48),
+           and a little-endian write would put the low byte there. */
+        ck("source port is the one the driver chose, big-endian",
+           ph.exp_sport == usbmux_last_sport(), ph.exp_sport);
+        ck("...from the 'H' range", (ph.exp_sport >> 8) == 0x48 ||
+           (ph.exp_sport >> 8) == 0x49, ph.exp_sport);
         /* ── THE WINDOW ────────────────────────────────────────────
            In units of 256 bytes, and DERIVED from MUX_BUF rather than
            copied from usbmuxd's 512. Re-derived here from the three
@@ -921,7 +927,7 @@ int main(void)
         wr16(p + 14, 0x1234);
         memset(p + MUX_HDR_FULL, 0, 18);
         wr16(p + MUX_HDR_FULL + 0, 62078);     /* their source port */
-        wr16(p + MUX_HDR_FULL + 2, 0x4854);    /* ...and ours        */
+        wr16(p + MUX_HDR_FULL + 2, usbmux_last_sport()); /* ...and ours */
         p[MUX_HDR_FULL + 12] = 5 << 4;
         p[MUX_HDR_FULL + 13] = F_ACK;
         ph.in_len = MUX_HDR_FULL + 18;
@@ -1083,25 +1089,49 @@ int main(void)
         ck("and the connection dropped", !usbmux_connected(), 1);
     }
 
-    head("A PAYLOAD BIGGER THAN THE CALLER'S BUFFER IS REFUSED, not cut");
+    /* v0.8.9.9: this was "A PAYLOAD BIGGER THAN THE CALLER'S BUFFER IS
+       REFUSED", and that contract is what broke TLS on the HP -- see
+       usbmux_recv(). The worry it answered was a short read that left
+       the rest unacknowledged. The rest is now stashed and the WHOLE
+       packet acked, and these checks hold the driver to both halves. */
+    /* v0.8.9.9: the HP's "REFUSED the port" after a broken connection
+       was the phone still holding the old port pair. */
+    head("each connection comes from a fresh source port");
+    machine();
+    usbmux_open();
+    {
+        uint16_t a, b;
+        ck("it connects", usbmux_connect(MUX_PORT_LOCKDOWN) == USB_OK, 0);
+        a = ph.exp_sport;
+        usbmux_disconnect();
+        ck("and again", usbmux_connect(MUX_PORT_LOCKDOWN) == USB_OK, 0);
+        b = ph.exp_sport;
+        ck("the device saw two different ports", a != b, b);
+        ck("both from our range", (a >> 8) >= 0x48 && (b >> 8) <= 0x49, a);
+    }
+
+    head("A PAYLOAD BIGGER THAN THE CALLER'S BUFFER is served in pieces");
     machine();
     usbmux_open();
     {
         uint8_t buf[8];
         static char big[64];
-        int r;
+        int r, i;
         ck("it connects", usbmux_connect(MUX_PORT_LOCKDOWN) == USB_OK, 0);
-        memset(big, 'A', sizeof big);
+        for (i = 0; i < 40; i++) big[i] = (char)('a' + (i % 26));
         queue_tcp(F_ACK, ph.dev_seq, 1, big, 40);
         ph.dev_seq += 40;
         r = usbmux_recv(buf, (int)sizeof buf);
-        /* A short read would leave the rest of the device's byte
-           stream unacknowledged and the connection would wedge with no
-           error recorded anywhere -- which looks exactly like a device
-           that lost interest. */
-        ck("refused", r < 0, r);
-        ck("and nothing was acknowledged", ph.saw_ack == ph.dev_isn + 1,
-           (long)ph.saw_ack);
+        ck("the caller gets what fits", r == 8, r);
+        ck("the first eight bytes", memcmp(buf, big, 8) == 0, buf[0]);
+        ck("all forty were acknowledged, not eight",
+           ph.saw_ack == ph.dev_isn + 1 + 40, (long)ph.saw_ack);
+        ck("thirty-two are waiting", usbmux_pending(0, 0) == 32,
+           usbmux_pending(0, 0));
+        r = usbmux_recv(buf, (int)sizeof buf);
+        ck("the next read continues where it stopped",
+           r == 8 && memcmp(buf, big + 8, 8) == 0, r);
+        ck("still up", usbmux_connected(), 0);
     }
 
     head("a send longer than one packet is refused by name");
@@ -1491,7 +1521,7 @@ int main(void)
                usbmux_send_stream(big, 10, 0) == USB_ENODEV, 0);
         }
 
-        head("a caller with no room for the stashed bytes is refused");
+        head("a caller with a small buffer gets the stash in pieces, in order");
         machine();
         usbmux_open();
         usbmux_connect(MUX_PORT_LOCKDOWN);
@@ -1501,14 +1531,79 @@ int main(void)
             ph.dev_seq += 5;
             usbmux_send_stream(big, 5000, &sent);
             ck("five bytes stashed", usbmux_pending(0, 0) == 5, 0);
-            /* Refused rather than truncated, for the same reason the
-               live path refuses: a short read leaves the rest of the
-               stream unreadable and nothing says so. */
-            ck("a two-byte buffer is refused",
-               usbmux_recv(rx, 2) == USB_EPARAM, 0);
-            ck("and the bytes are still there",
-               usbmux_pending(0, 0) == 5, usbmux_pending(0, 0));
+            /* v0.8.9.9: served, not refused. The first two bytes now,
+               the rest kept for the next call -- a byte stream, which
+               is what net/tls.c's five-byte header read needs. */
+            ck("a two-byte buffer gets two bytes",
+               usbmux_recv(rx, 2) == 2, 0);
+            ck("the FIRST two", rx[0] == 'E' && rx[1] == 'A', rx[0]);
+            ck("three are still there",
+               usbmux_pending(0, 0) == 3, usbmux_pending(0, 0));
+            ck("the next two follow", usbmux_recv(rx, 2) == 2 &&
+               rx[0] == 'R' && rx[1] == 'L', rx[0]);
+            ck("then the last one", usbmux_recv(rx, 2) == 1 &&
+               rx[0] == 'Y', rx[0]);
+            ck("and the stash is empty", usbmux_pending(0, 0) == 0,
+               usbmux_pending(0, 0));
+            /* Put five back for the disconnect check below. */
+            queue_tcp(F_ACK, ph.dev_seq, ph.exp_host_seq, "EARLY", 5);
+            ph.dev_seq += 5;
+            usbmux_send_stream(big, 5000, &sent);
         }
+
+        /* ── THE 0.8.9.8 TLS HANDSHAKE, AT THE LAYER IT BROKE ────────
+           net/tls.c reads a record as five bytes of header and then
+           the body. The phone answers a ClientHello with its whole
+           flight in one mux packet. This driver refused that packet
+           to a five-byte reader with USB_EPARAM, and the handshake
+           died at "ClientHello sent" with no alert, on the HP. */
+        head("one big packet read five bytes at a time, the way TLS reads");
+        machine();
+        usbmux_open();
+        usbmux_connect(MUX_PORT_LOCKDOWN);
+        {
+            static uint8_t flight[1200], got[1200];
+            uint32_t acked_before;
+            int i, have = 0, calls = 0, bad = 0;
+            for (i = 0; i < (int)sizeof flight; i++)
+                flight[i] = (uint8_t)(i * 7 + 3);
+            flight[0] = 0x16; flight[1] = 3; flight[2] = 3;   /* a record */
+            queue_tcp(F_ACK, ph.dev_seq, ph.exp_host_seq,
+                      (const char *)flight, (int)sizeof flight);
+            ph.dev_seq += sizeof flight;
+            acked_before = ph.last_host_ack;
+            {
+                int r = usbmux_recv(got, 5);
+                ck("five bytes, not a refusal", r == 5, r);
+                have = r > 0 ? r : 0;
+            }
+            ck("the record header, intact",
+               got[0] == 0x16 && got[1] == 3 && got[2] == 3, got[0]);
+            ck("the WHOLE packet was acked at once, not five bytes of it",
+               ph.last_host_ack == acked_before + sizeof flight,
+               (long)(ph.last_host_ack - acked_before));
+            ck("the rest is waiting", usbmux_pending(0, 0) ==
+               (int)sizeof flight - 5, usbmux_pending(0, 0));
+            while (have < (int)sizeof flight && calls < 1000) {
+                int want = (int)sizeof flight - have;
+                int r;
+                if (want > 300) want = 300;
+                r = usbmux_recv(got + have, want);
+                calls++;
+                if (r < 0) { bad = 1; break; }
+                have += r;
+            }
+            ck("no read in between failed", !bad, bad);
+            ck("every byte arrived", have == (int)sizeof flight, have);
+            ck("in order", memcmp(got, flight, sizeof flight) == 0, 0);
+            ck("and it was counted as split", usbmux_split_reads() >= 1,
+               (long)usbmux_split_reads());
+            ck("the connection is still up", usbmux_connected(), 0);
+        }
+        /* The disconnect check below wants five bytes stashed. */
+        queue_tcp(F_ACK, ph.dev_seq, ph.exp_host_seq, "EARLY", 5);
+        ph.dev_seq += 5;
+        usbmux_send_stream(big, 5000, &sent);
 
         head("disconnecting drops the stash");
         ck("there are bytes to drop", usbmux_pending(0, 0) == 5, 0);

@@ -777,6 +777,19 @@ BUGS = [
     # Add the injection with the code that splits, in the release that
     # needs it. Recorded, not deleted, following v0.8.6.3's precedent:
     # an injection deleted without a word is one somebody writes again.
+
+    # v0.8.9.9 -- in usb/usbmux.c, judged HERE because this suite is the
+    # one that reads through the real TLS transport the way net/tls.c
+    # does. Every other TLS check in it uses a fake TLS layer, which is
+    # why 0.8.9.8 passed and the HP's handshake died at ClientHello.
+    ("v0.8.9.9: the mux refuses a reader smaller than the packet",
+     "net/tls.c reads five bytes of record header first; the phone's "
+     "whole handshake flight is one packet; the handshake fails with -1 "
+     "at 'ClientHello sent' and no alert",
+     """    if (r > max) {
+        if (r - max > (int)sizeof g_m.pend) return USB_EPARAM; /* cannot */""",
+     """    if (r > max) {
+        return USB_EPARAM;""", "usb/usbmux.c"),
 ]
 
 HARMLESS = (

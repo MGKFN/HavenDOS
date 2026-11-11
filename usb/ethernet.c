@@ -314,24 +314,24 @@ static int bring_up(int devidx, usbnet_t *n)
          (uint32_t)d->vendor, (uint32_t)d->product, (uint32_t)cfg,
          (uint32_t)s.ifnum);
 
-    r = usb_select_config(d, (uint8_t)cfg, (int)s.ifnum);
+    /* v0.8.9.9: CLAIMED, not selected. The phone's usbmux interface
+       lives in this same configuration, and selecting it again would
+       reset whatever the mux had -- or, the other way round, the mux
+       selecting it would take these endpoints away. Kyan's HP, 11
+       November: `pair` ran after the boot had brought this NIC up, and
+       from then on every frame was refused and DHCP never left the
+       laptop. usb_claim_interface() adds this interface beside the
+       other one. Alt 1 because alt 0 of it has no endpoints at all. */
+    r = usb_claim_interface(d, (uint8_t)cfg, s.ifnum, IPHETH_ALT);
     if (r < 0) {
-        klog(KLOG_WARN, "usbnet: SET_CONFIGURATION %d refused (%d)",
-             (uint32_t)cfg, (uint32_t)r);
+        klog(KLOG_WARN, "usbnet: cfg %d if %u alt %u refused (%d)",
+             (uint32_t)cfg, (uint32_t)s.ifnum, (uint32_t)IPHETH_ALT,
+             (uint32_t)r);
         return r;
     }
 
-    /* Alt 0 of this interface has no endpoints at all, which is why
-       alternate-setting support is in this release. */
-    r = usb_set_interface(d, s.ifnum, IPHETH_ALT);
-    if (r < 0) {
-        klog(KLOG_WARN, "usbnet: SET_INTERFACE %u alt %u refused (%d)",
-             (uint32_t)s.ifnum, (uint32_t)IPHETH_ALT, (uint32_t)r);
-        return r;
-    }
-
-    in  = usb_find_ep(d, USB_EP_BULK, 1);
-    out = usb_find_ep(d, USB_EP_BULK, 0);
+    in  = usb_find_ep_if(d, s.ifnum, USB_EP_BULK, 1);
+    out = usb_find_ep_if(d, s.ifnum, USB_EP_BULK, 0);
     if (!in || !out) {
         klog(KLOG_WARN, "usbnet: alt %u has no bulk pair (in %d out %d)",
              (uint32_t)IPHETH_ALT, in ? 1 : 0, out ? 1 : 0);

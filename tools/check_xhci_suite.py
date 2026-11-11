@@ -776,6 +776,59 @@ BUGS = [
      "decide what its own table says in the meantime",
      """    if (d->config == 0) return USB_ENODEV;""",
      """    ;"""),
+
+    # ══ v0.8.9.9: two interfaces on one phone ═════════════════════════
+    (CORE, "a second claim on the same configuration selects it again",
+     "the HP's bug: `pair` re-selected configuration index 3 for usbmux, "
+     "SET_CONFIGURATION reset the Ethernet interface to alt 0, and every "
+     "frame DHCP sent was refused -- 0 asked, 0 offered, 0 acknowledged",
+     """    if (d->config == 0 || d->cfgidx != cfgidx) {
+        r = do_set_config(h, d, cfgidx, (int)ifnum);""",
+     """    if (1) {
+        r = do_set_config(h, d, cfgidx, (int)ifnum);"""),
+
+    (CORE, "the other interface's endpoints are not carried over",
+     "the table holds only the newest interface, so the controller is "
+     "told to drop the first driver's pipes -- the same symptom by a "
+     "different road",
+     """        if (d->ep[i].iface == ifnum) continue;""",
+     """        continue;"""),
+
+    (CORE, "the carried-over endpoints are not marked keep",
+     "the controller re-adds a running pipe, re-laying its ring under an "
+     "outstanding receive and resetting a sequence the device did not "
+     "reset -- the next packet is taken as a retransmission and dropped",
+     """        next.ep[next.nep].keep = 1;""",
+     """        next.ep[next.nep].keep = 0;"""),
+
+    (CORE, "SET_INTERFACE is skipped for a non-zero alternate",
+     "Ethernet's alt 1 is where its endpoints are; without the request "
+     "the device stays on alt 0, which has none",
+     """    if (alt != 0) {
+        r = usb_control(d, USB_DIR_OUT | USB_TYPE_STANDARD |""",
+     """    if (0) {
+        r = usb_control(d, USB_DIR_OUT | USB_TYPE_STANDARD |"""),
+
+    (CORE, "the keep marks are left on after the claim",
+     "the NEXT configure -- a SET_INTERFACE, a re-claim -- would skip "
+     "endpoints that really do need re-adding",
+     """    for (i = 0; i < d->nep; i++) d->ep[i].keep = 0;
+    return USB_OK;
+}""",
+     """    return USB_OK;
+}"""),
+
+    (CORE, "endpoints are not tagged with their interface",
+     "usb_find_ep_if() finds nothing, so neither driver on the phone can "
+     "find its own bulk pair",
+     """                e->iface    = d->ifnum;   /* v0.8.9.9: whose it is */""",
+     """                e->iface    = 0;"""),
+
+    (SRC, "x_configure re-adds endpoints marked keep",
+     "the running pipe of the OTHER driver is re-initialised behind its "
+     "back: its ring re-laid, its outstanding receive thrown away",
+     """        if (e->keep && ring_slot_for_dci(x, slot, dci) >= 0) continue;""",
+     """        ;"""),
 ]
 
 

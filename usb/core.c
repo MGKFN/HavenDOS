@@ -193,6 +193,8 @@ int usb_walk_config_alt(usb_dev_t *d, const uint8_t *buf, uint32_t len,
                 e->mps      = (uint16_t)((uint32_t)buf[i + 4] |
                                          ((uint32_t)buf[i + 5] << 8));
                 e->interval = buf[i + 6];
+                e->iface    = d->ifnum;   /* v0.8.9.9: whose it is */
+                e->keep     = 0;
                 /* A zero-length packet size is a device that cannot
                    carry anything. Refusing it here means a class driver
                    never divides by it. */
@@ -218,6 +220,22 @@ const usb_ep_t *usb_find_ep(const usb_dev_t *d, int attr, int in)
     if (!d) return 0;
     for (i = 0; i < d->nep; i++) {
         const usb_ep_t *e = &d->ep[i];
+        if ((e->attr & 3) != (attr & 3)) continue;
+        if (in && !(e->addr & 0x80))     continue;
+        if (!in && (e->addr & 0x80))     continue;
+        return e;
+    }
+    return 0;
+}
+
+const usb_ep_t *usb_find_ep_if(const usb_dev_t *d, int iface, int attr,
+                               int in)
+{
+    int i;
+    if (!d) return 0;
+    for (i = 0; i < d->nep; i++) {
+        const usb_ep_t *e = &d->ep[i];
+        if ((int)e->iface != iface)      continue;
         if ((e->attr & 3) != (attr & 3)) continue;
         if (in && !(e->addr & 0x80))     continue;
         if (!in && (e->addr & 0x80))     continue;
@@ -588,6 +606,106 @@ int usb_set_interface(usb_dev_t *d, uint8_t ifnum, uint8_t alt)
             return r;
         }
     }
+    return USB_OK;
+}
+
+/* ── v0.8.9.9: two interfaces on one device ─────────────────────────
+   include/usb.h has the contract. The case it exists for, on Kyan's HP,
+   11 November: the phone was brought up as a NIC at boot (configuration
+   index 3, interface 2, alt 1), then `pair` opened usbmux -- which
+   called usb_select_config() on the SAME configuration for interface 1.
+   SET_CONFIGURATION put interface 2 back on alt 0, which has no
+   endpoints, and the core's table was rebuilt with interface 1's two
+   endpoints and nothing else, so x_configure() dropped the Ethernet
+   pair at the controller too. The NIC stayed registered, pointing at
+   endpoints that no longer existed, and every frame it was given
+   failed: `ifconfig dhcp` reported 0 asked, 0 offered, 0 acknowledged,
+   because the DISCOVER never left the laptop.
+
+   Neither driver was wrong about its own interface. The core simply
+   could not hold two. */
+int usb_claim_interface(usb_dev_t *d, uint8_t cfgidx, uint8_t ifnum,
+                        uint8_t alt)
+{
+    usb_hc_t *h = hc_of_mut(d);
+    usb_dev_t one, next;
+    int       r, i;
+
+    if (!d) return USB_EPARAM;
+    if (!h)  return USB_ENODEV;
+    if (d->nconfigs == 0)   return USB_ENODEV;
+    if (cfgidx >= d->nconfigs) return USB_EPARAM;
+
+    /* Not in this configuration: select it. Every interface is reset by
+       SET_CONFIGURATION, so there is nothing held to keep -- this is
+       the old path exactly. */
+    if (d->config == 0 || d->cfgidx != cfgidx) {
+        r = do_set_config(h, d, cfgidx, (int)ifnum);
+        if (r != USB_OK) return r;
+        if (alt == 0) return USB_OK;
+        return usb_set_interface(d, ifnum, alt);
+    }
+
+    /* Already in it. Walk the new interface into a scratch copy -- the
+       walker resets the endpoint table, which is the thing that must
+       NOT happen to the real one. */
+    r = fetch_config(d, cfgidx);
+    if (r < 0) return r;
+    one = *d;
+    r = usb_parse_config_alt(&one, g_cfgbuf, (uint32_t)r, (int)ifnum,
+                             (int)alt);
+    if (r != USB_OK) return r;
+    if (one.ifnum != ifnum || one.altsetting != alt) return USB_EXFER;
+
+    /* Everything already held for OTHER interfaces stays, marked keep;
+       anything held for this interface is replaced by the new setting's
+       endpoints. */
+    next = *d;
+    next.nep = 0;
+    for (i = 0; i < d->nep; i++) {
+        if (d->ep[i].iface == ifnum) continue;
+        next.ep[next.nep] = d->ep[i];
+        next.ep[next.nep].keep = 1;
+        next.nep++;
+    }
+    for (i = 0; i < one.nep; i++) {
+        if (next.nep >= USB_MAX_EP) return USB_EPARAM;
+        next.ep[next.nep] = one.ep[i];
+        next.ep[next.nep].keep = 0;
+        next.nep++;
+    }
+    next.ifnum       = one.ifnum;
+    next.altsetting  = one.altsetting;
+    next.if_class    = one.if_class;
+    next.if_subclass = one.if_subclass;
+    next.if_protocol = one.if_protocol;
+
+    /* SET_INTERFACE only for a non-zero alternate. After
+       SET_CONFIGURATION every interface is on alt 0 already, and a
+       device is allowed to STALL SET_INTERFACE on an interface that has
+       only one setting -- which the mux interface is. */
+    if (alt != 0) {
+        r = usb_control(d, USB_DIR_OUT | USB_TYPE_STANDARD |
+                        USB_RECIP_INTERFACE, USB_REQ_SET_INTERFACE,
+                        alt, ifnum, 0, 0);
+        if (r < 0) return r;
+    }
+
+    *d = next;
+    if (h->ops->configure) {
+        r = h->ops->configure(h, d);
+        if (r != USB_OK) {
+            /* The device has the interface and the controller does not.
+               Keep only what was already running, which is true. */
+            int k = 0;
+            for (i = 0; i < d->nep; i++)
+                if (d->ep[i].keep) d->ep[k++] = d->ep[i];
+            d->nep = (uint8_t)k;
+            for (i = 0; i < d->nep; i++) d->ep[i].keep = 0;
+            return r;
+        }
+    }
+    for (i = 0; i < d->nep; i++) d->ep[i].keep = 0;
     return USB_OK;
 }
 

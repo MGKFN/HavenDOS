@@ -454,7 +454,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_txhci tests/test_xhci.c drivers/pci_bar.c \
 	           && \
-	  python3 tools/run_suite.py --name test_xhci --min 310 -- /tmp/hd_txhci
+	  python3 tools/run_suite.py --name test_xhci --min 334 -- /tmp/hd_txhci
 	@echo "── test_update ────────────────────────────"
 	@echo "  where an update comes from, and whether it is what it claims to be"
 	@# fs/gpt.c is linked rather than included: it declares memcpy and
@@ -663,19 +663,19 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -no-pie -DNET_NO_HW -Iinclude \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tun tests/test_usbnet.c && \
-	  python3 tools/run_suite.py --name test_usbnet --min 118 -- /tmp/hd_tun
+	  python3 tools/run_suite.py --name test_usbnet --min 125 -- /tmp/hd_tun
 	@echo "── test_usbmux ────────────────────────────"
 	@echo "  the Apple Mobile Device channel, against a device that speaks it"
 	@$(TESTCC) -no-pie -Iinclude \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tmux tests/test_usbmux.c && \
-	  python3 tools/run_suite.py --name test_usbmux --min 354 -- /tmp/hd_tmux
+	  python3 tools/run_suite.py --name test_usbmux --min 378 -- /tmp/hd_tmux
 	@echo "── test_lockdown ──────────────────────────"
 	@echo "  lockdownd stage 1: QueryType over the real mux and its TCP"
 	@$(TESTCC) -no-pie -Iinclude \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tldn tests/test_lockdown.c && \
-	  python3 tools/run_suite.py --name test_lockdown --min 360 -- /tmp/hd_tldn
+	  python3 tools/run_suite.py --name test_lockdown --min 365 -- /tmp/hd_tldn
 	@echo "── test_dhcp ──────────────────────────────"
 	@echo "  DHCP through the real IP and UDP layers, against a simulated server"
 	@# v0.8.9.8. DHCP had never worked: the broadcast was ARPed for, UDP

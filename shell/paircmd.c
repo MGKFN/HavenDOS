@@ -302,6 +302,13 @@ static int session_open(void)
         if (g_tls_last_alert_desc >= 0)
             vga_printf("  the device sent alert %d.\n",
                        g_tls_last_alert_desc);
+        /* v0.8.9.9: what the channel underneath said. 0.8.9.8's photo
+           showed "reached: ClientHello sent" and nothing else, and the
+           real cause was one layer down -- the mux refusing to hand a
+           big packet to a five-byte read. Say what the mux knows. */
+        vga_printf("  mux: %s; %s.\n",
+                   usbmux_connected() ? "still connected" : "connection gone",
+                   usbmux_why());
         vga_puts("  `tlsinfo` has the rest of it.\n");
         white();
         return 0;

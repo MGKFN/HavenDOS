@@ -89,11 +89,15 @@ BUGS = [
     ("a duplicate reaches the caller before being refused",
      "the copy happens first and the refusal second, so the caller's "
      "buffer holds the stale bytes whatever is returned",
+     # v0.8.9.9: re-anchored -- the split-read block now sits between
+     # the accept and the whole-packet copy.
      """    if (!mux_rx_accept(seq, r)) return 0;
 
-    memcpy(buf, mux_tcp_payload(), (uint32_t)r);""",
-     """    memcpy(buf, mux_tcp_payload(), (uint32_t)r);
-    if (!mux_rx_accept(seq, r)) return 0;"""),
+    /* ── v0.8.9.9: A BYTE STREAM""",
+     """    memcpy(buf, mux_tcp_payload(), (uint32_t)(r < max ? r : max));
+    if (!mux_rx_accept(seq, r)) return 0;
+
+    /* ── v0.8.9.9: A BYTE STREAM"""),
 
 
     # ── the header, which is the whole guess ──────────────────────────
@@ -620,12 +624,42 @@ BUGS = [
      """        g_m.tx_tcp_ack = seq + (uint32_t)r;""",
      """        g_m.tx_tcp_ack = seq;"""),
 
-    ("a payload bigger than the caller's buffer is truncated",
-     "a short read leaves the rest of the device's byte stream "
-     "unacknowledged and the connection wedges with no error recorded "
-     "anywhere, which looks exactly like a device that lost interest",
-     """    if (r > max) {""",
-     """    if (0 && r > max) {"""),
+    ("v0.8.9.9: a packet bigger than the reader is refused again",
+     "the 0.8.9.8 bug itself: net/tls.c reads a five-byte record "
+     "header, the phone's whole handshake flight arrives in one packet, "
+     "and the handshake dies at 'ClientHello sent' with no alert",
+     """    if (r > max) {
+        if (r - max > (int)sizeof g_m.pend) return USB_EPARAM; /* cannot */""",
+     """    if (r > max) {
+        return USB_EPARAM;"""),
+
+    ("v0.8.9.9: the rest of a split packet is thrown away",
+     "it was accepted and acked, so the device never sends it again "
+     "and the TLS record it belonged to is short for ever",
+     """        g_m.pend_len = r - max;""",
+     """        g_m.pend_len = 0;"""),
+
+    ("v0.8.9.9: a split packet is not acknowledged",
+     "the device holds the whole packet as unacked, its window fills, "
+     "and the conversation stops after one reply",
+     """        g_m.split_reads++;
+        if (mux_tcp_send(MUX_TH_ACK_F, 0, 0) < 0)""",
+     """        g_m.split_reads++;
+        if (0)"""),
+
+    ("v0.8.9.9: a partly-served stash serves its first bytes again",
+     "the stream repeats itself: a record header read twice and the "
+     "TLS layer parses the middle of a certificate as a length",
+     """        if (g_m.pend_len > 0)
+            memmove(g_m.pend, g_m.pend + r, (uint32_t)g_m.pend_len);""",
+     """        ;"""),
+
+    ("v0.8.9.9: every connection uses the same source port",
+     "the phone still holds the last connection on that port pair and "
+     "answers the next SYN with RST -- 'The device REFUSED the port' on "
+     "the HP, on the one port an iPhone always listens on",
+     """(uint16_t)(MUX_SPORT + (g_sport_seq++ & 0xFFu));""",
+     """(uint16_t)(MUX_SPORT);"""),
 
     ("a send longer than one packet is passed down unchecked",
      "mux_tcp_send() bounds the same thing and returns the same "

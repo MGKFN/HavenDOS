@@ -194,8 +194,16 @@ BUGS = [
      "which HAS NO ENDPOINTS. That is the detail the whole release "
      "turns on, and this is what the driver would look like if "
      "alternate-setting support had not been written",
-     """    r = usb_set_interface(d, s.ifnum, IPHETH_ALT);""",
-     """    r = usb_set_interface(d, s.ifnum, 0);"""),
+     # v0.8.9.9: re-anchored -- the driver claims the interface now,
+     # beside usbmux, instead of selecting the configuration over it.
+     """    r = usb_claim_interface(d, (uint8_t)cfg, s.ifnum, IPHETH_ALT);""",
+     """    r = usb_claim_interface(d, (uint8_t)cfg, s.ifnum, 0);"""),
+
+    ("v0.8.9.9: the driver finds the FIRST bulk pair, not its own",
+     "with usbmux claimed beside it, the first bulk pair on the phone "
+     "is the mux's -- frames would go down the pairing channel",
+     """    in  = usb_find_ep_if(d, s.ifnum, USB_EP_BULK, 1);""",
+     """    in  = usb_find_ep(d, USB_EP_BULK, 1);"""),
 
     ("only the first configuration is surveyed",
      "the phone boots into index 0, which is PTP. Tethering is in "

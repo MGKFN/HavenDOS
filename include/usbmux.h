@@ -313,6 +313,12 @@ int usbmux_send_stream(const void *data, int len, int *sent_out);
    and how often a segment went out past the device's window. */
 int usbmux_pending(uint32_t *hits, uint32_t *win_short);
 
+/* v0.8.9.9. The source port the last connect used -- a fresh one each
+   time, see MUX_SPORT in usb/usbmux.c -- and how many packets have been
+   handed to a caller in more than one piece. */
+uint16_t usbmux_last_sport(void);
+uint32_t usbmux_split_reads(void);
+
 /* Tear the connection down: RST, the way usbmuxd closes one. Leaves
    the interface claimed, so a second connection costs no handshake. */
 void usbmux_disconnect(void);

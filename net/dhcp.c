@@ -182,6 +182,14 @@ static int wait_reply(int want, uint32_t ms, uint32_t *yip, uint32_t *mask,
 }
 
 static uint32_t g_dhcp_offers, g_dhcp_acks, g_dhcp_naks, g_dhcp_sent;
+/* v0.8.9.9: a DISCOVER the stack would not put on the wire is not a
+   DISCOVER nobody answered. Kyan's HP showed "0 asked" with nothing to
+   say why; the reason was the NIC refusing every frame. Counted and
+   kept, so the screen can say which. */
+static uint32_t g_dhcp_send_fail;
+static int      g_dhcp_send_err;
+uint32_t dhcp_stat_send_fail(void){ return g_dhcp_send_fail; }
+int      dhcp_last_send_err(void) { return g_dhcp_send_err;  }
 uint32_t dhcp_stat_sent(void)  { return g_dhcp_sent;   }
 uint32_t dhcp_stat_offers(void){ return g_dhcp_offers; }
 uint32_t dhcp_stat_acks(void)  { return g_dhcp_acks;   }
@@ -209,8 +217,11 @@ int dhcp_request(void)
         g_xid++;                     /* a fresh transaction each time */
         plen = build_discover(pkt);
         udp_recv_clear();
-        if(udp_send(bcast, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, pkt, plen) < 0)
-            continue;
+        {
+            int sr = udp_send(bcast, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
+                              pkt, plen);
+            if(sr < 0){ g_dhcp_send_fail++; g_dhcp_send_err = sr; continue; }
+        }
         g_dhcp_sent++;
         if(wait_reply(DHCPOFFER, DHCP_WAIT_MS, &offered_ip, &mask, &gw,
                       &dns, &srv) != DHCPOFFER)

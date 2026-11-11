@@ -1771,6 +1771,20 @@ static int x_configure(usb_hc_t *h, usb_dev_t *d)
         uint8_t *iec;
 
         if (dci < 2 || dci > 31) continue;
+
+        /* ── v0.8.9.9: A RUNNING ENDPOINT OF ANOTHER INTERFACE ───────
+           usb_claim_interface() adds an interface beside one already
+           in use and marks the old one's endpoints `keep`. They are in
+           `want` above, so they are not dropped; here they are not
+           re-added either. Re-adding would re-lay the ring -- throwing
+           away an outstanding receive -- and reset the controller's
+           sequence state for a pipe whose device side was NOT reset
+           (no SET_CONFIGURATION, no SET_INTERFACE reached it), so the
+           next packet would be taken as a retransmission and dropped.
+           An endpoint the slot does not actually hold yet is added as
+           usual, keep or not. */
+        if (e->keep && ring_slot_for_dci(x, slot, dci) >= 0) continue;
+
         ri = ring_alloc(x, hcno, slot, dci);
         if (ri < 0) continue;       /* more endpoints than rings: skip */
 

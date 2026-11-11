@@ -96,6 +96,29 @@ static uint16_t be16(uint16_t v)
    port cannot be told from a stale packet. */
 #define MUX_SPORT      0x4854   /* 'HT' -- arbitrary, ours, and unmistakable */
 
+/* ── v0.8.9.9: ONE PORT PER CONNECTION, NOT ONE PORT FOR EVER ────────
+   The comment above is right that one connection means one port. It
+   was read as "so one port", and every connection this kernel ever
+   made came from 0x4854.
+
+   The phone keys a connection by its port pair. When one dies on our
+   side without the phone agreeing that it is dead -- a reply this
+   driver would not take, which is what 0.8.9.8's TLS handshake did --
+   the phone still holds 0x4854 -> 62078. The next SYN from 0x4854 is
+   then a SYN for a connection it already has, and it answers RST.
+   Kyan's HP, 11 November: `lockdown` straight after the failed
+   handshake, "The device REFUSED the port", on the one port an iPhone
+   always listens on.
+
+   usbmuxd hands out a fresh source port to every connection, and so
+   does this now: MUX_SPORT, then MUX_SPORT+1, wrapping inside 256 so
+   the high byte still says 'H' in a capture. Kept OUTSIDE g_m, which
+   usbmux_open() and usbmux_close() clear -- a counter that restarts
+   on every `usb rescan` hands out the stale port again. */
+static uint16_t g_sport_seq;
+static uint16_t g_sport_last;
+uint16_t usbmux_last_sport(void) { return g_sport_last; }
+
 /* usbmux_handshake() and the connect handshake both poll rather than
    wait: a driver must not depend on the bottom half v0.8.8 added,
    which runs only at idle points. One constant
@@ -148,6 +171,7 @@ typedef struct {
        protocol already knows how to keep them. */
     uint8_t  pend[MUX_MAX_PAYLOAD];
     int      pend_len;
+    uint32_t split_reads;    /* v0.8.9.9: packets served in pieces    */
     uint32_t pend_hits;     /* times the stash saved a packet         */
     uint32_t win_short;     /* times we sent past the advertised window */
 
@@ -285,15 +309,21 @@ int usbmux_open(void)
              (uint32_t)cfg, (uint32_t)s.ifnum,
              s.with_eth ? ", with Ethernet" : "");
 
-        r = usb_select_config(d, (uint8_t)cfg, (int)s.ifnum);
+        /* v0.8.9.9: CLAIMED beside the Ethernet interface, not
+           selected over it. usb_select_config() here reset the phone's
+           Ethernet interface to alt 0 and dropped its endpoints at the
+           controller, while the NIC stayed registered -- so after
+           `pair`, DHCP's DISCOVER never left the laptop. See
+           usb_claim_interface() in usb/core.c. */
+        r = usb_claim_interface(d, (uint8_t)cfg, s.ifnum, 0);
         if (r < 0) {
-            klog(KLOG_WARN, "usbmux: SET_CONFIGURATION %d refused (%d)",
-                 (uint32_t)cfg, (uint32_t)r);
+            klog(KLOG_WARN, "usbmux: cfg %d if %u refused (%d)",
+                 (uint32_t)cfg, (uint32_t)s.ifnum, (uint32_t)r);
             return r;
         }
 
-        in  = usb_find_ep(d, USB_EP_BULK, 1);
-        out = usb_find_ep(d, USB_EP_BULK, 0);
+        in  = usb_find_ep_if(d, s.ifnum, USB_EP_BULK, 1);
+        out = usb_find_ep_if(d, s.ifnum, USB_EP_BULK, 0);
         if (!in || !out) {
             klog(KLOG_WARN, "usbmux: no bulk pair on interface %u "
                  "(in %d out %d)", (uint32_t)s.ifnum, in ? 1 : 0,
@@ -901,7 +931,8 @@ int usbmux_connect(uint16_t dport)
        during exactly this kind of wait. The injection is recorded
        there, not deleted. */
     g_m.conn       = 1;
-    g_m.sport      = MUX_SPORT;
+    g_m.sport      = (uint16_t)(MUX_SPORT + (g_sport_seq++ & 0xFFu));
+    g_sport_last   = g_m.sport;
     g_m.dport      = dport;
     g_m.tx_tcp_seq = 0;
     g_m.tx_tcp_ack = 0;
@@ -1325,6 +1356,8 @@ int usbmux_pending(uint32_t *hits, uint32_t *win_short)
     return g_m.pend_len;
 }
 
+uint32_t usbmux_split_reads(void) { return g_m.split_reads; }
+
 int usbmux_recv(void *buf, int max)
 {
     uint8_t  flags = 0;
@@ -1341,15 +1374,15 @@ int usbmux_recv(void *buf, int max)
        when they were taken, so nothing further is owed to the device
        here. */
     if (g_m.pend_len > 0) {
-        if (g_m.pend_len > max) {
-            klog(KLOG_WARN, "usbmux: %d stashed bytes and the caller "
-                 "has room for %d", (uint32_t)g_m.pend_len,
-                 (uint32_t)max);
-            return USB_EPARAM;
-        }
-        r = g_m.pend_len;
+        /* v0.8.9.9: as much as the caller has room for, and the rest
+           stays, in order, for the next call. See the note on the live
+           path below for why refusing here was the bug. */
+        r = g_m.pend_len < max ? g_m.pend_len : max;
+        if (r == 0) return 0;
         memcpy(buf, g_m.pend, (uint32_t)r);
-        g_m.pend_len = 0;
+        g_m.pend_len -= r;
+        if (g_m.pend_len > 0)
+            memmove(g_m.pend, g_m.pend + r, (uint32_t)g_m.pend_len);
         return r;
     }
 
@@ -1403,18 +1436,51 @@ int usbmux_recv(void *buf, int max)
 
     if (r == 0) return 0;                   /* a bare ACK is not data */
 
-    if (r > max) {
-        /* Refused, not truncated: a short read here would leave the
-           rest of the device's byte stream unacknowledged and the
-           connection would wedge with no error anywhere. */
-        klog(KLOG_WARN, "usbmux: %d bytes arrived and the caller has "
-             "room for %d", (uint32_t)r, (uint32_t)max);
-        return USB_EPARAM;
-    }
-
     /* Before the copy: a duplicate must not reach the caller at all.
        See mux_rx_accept(). */
     if (!mux_rx_accept(seq, r)) return 0;
+
+    /* ── v0.8.9.9: A BYTE STREAM SERVES WHAT IT IS ASKED FOR ─────────
+     * This used to REFUSE a packet bigger than the caller's buffer,
+     * with USB_EPARAM, on the argument that a short read leaves the
+     * rest unacknowledged. That argument holds only if the rest is
+     * thrown away. It is not: it goes in the stash, the whole packet
+     * is accepted and ACKED below, and the next call returns it first.
+     *
+     * Refusing was fatal in exactly one place, and that place was the
+     * point of the whole pairing project. net/tls.c reads a record the
+     * way every TLS stack does -- FIVE bytes of header, then the body
+     * -- so the first read of the handshake asked usbmux_recv() for 5
+     * bytes. The iPhone answered the ClientHello with its whole flight
+     * in one mux packet, ServerHello through ServerHelloDone, about a
+     * kilobyte. 1000 > 5, USB_EPARAM, the transport called the
+     * connection dead, and the handshake failed with -1 at "ClientHello
+     * sent" and no alert. Kyan's HP, 11 November, `tlsinfo`:
+     *
+     *     Reached stage   ClientHello sent (1/12)
+     *     Server chose    (no ServerHello seen)
+     *     Last alert      none
+     *
+     * Nothing was wrong with the ClientHello. The answer arrived and
+     * this function would not hand it over. The packet was never ACKED
+     * either, which left the phone holding a connection with unacked
+     * data -- and the next SYN from the same port was refused with an
+     * RST, which is the `lockdown` photo taken a minute later.
+     *
+     * tests/test_lockdown.c's TLS checks could not see it: they replace
+     * net/tls.c with a fake that reads whole packets. test_usbmux now
+     * reads one packet five bytes at a time. */
+    if (r > max) {
+        if (r - max > (int)sizeof g_m.pend) return USB_EPARAM; /* cannot */
+        memcpy(buf, mux_tcp_payload(), (uint32_t)max);
+        memcpy(g_m.pend, mux_tcp_payload() + max, (uint32_t)(r - max));
+        g_m.pend_len = r - max;
+        g_m.split_reads++;
+        if (mux_tcp_send(MUX_TH_ACK_F, 0, 0) < 0)
+            klog(KLOG_WARN, "usbmux: could not ACK %d bytes -- the "
+                 "device will stop sending", (uint32_t)r);
+        return max;
+    }
 
     memcpy(buf, mux_tcp_payload(), (uint32_t)r);
 

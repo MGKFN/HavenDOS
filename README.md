@@ -6,16 +6,21 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.8.9.8 Beta "Helios"
+## Current version: 0.8.9.9 Beta "Helios"
+
+**0.8.9.9** fixes the three faults in the 0.8.9.8 photos from the HP.
+Pairing took the iPhone's Ethernet interface away: the USB core could
+hold only one interface per device, so DHCP's request never left the
+laptop. The mux refused to hand the TLS layer a big packet in pieces, so
+the handshake died at its first read. And every connection reused one
+source port, so the phone refused the next one. The phone now carries
+pairing and tethering at the same time.
+[Changelog](changelogs/CHANGELOG-v0.8.9.9.md).
 
 **0.8.9.8** makes DHCP work, for the first time on any network. It had
 never worked; in QEMU nobody could tell, because the fallback address is
-QEMU's own. After 0.8.9.7 the iPhone shows the Personal Hotspot
-indicator, which iOS only does for a host it trusts, so pairing appears
-to work and the phone is tethering. This release lets HavenDOS ask that
-network for an address.
+QEMU's own.
 [Changelog](changelogs/CHANGELOG-v0.8.9.8.md).
-
 
 **0.8.9.7** fixes the iPhone pairing transport. Messages that were
 exactly a multiple of 512 bytes were never terminated, so the phone
@@ -78,11 +83,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.8.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.9.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.8.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.9.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

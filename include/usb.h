@@ -116,6 +116,17 @@ typedef struct {
     uint8_t  attr;       /* bmAttributes & 3: bulk, interrupt, isoc      */
     uint8_t  interval;   /* bInterval, frames or 2^(n-1) microframes     */
     uint16_t mps;        /* wMaxPacketSize                               */
+    /* ── v0.8.9.9: WHOSE ENDPOINT ───────────────────────────────────
+       An iPhone is ONE device with TWO drivers on it: usbmux on
+       interface 1 and Apple Ethernet on interface 2, both in
+       configuration index 3. Until this release the core held one
+       interface per device, so whichever driver came second selected
+       the configuration again and the first lost its endpoints -- on
+       the HP, pairing took the Ethernet interface away and every frame
+       DHCP tried to send was refused before it reached the phone.
+       See usb_claim_interface(). */
+    uint8_t  iface;      /* bInterfaceNumber this endpoint belongs to    */
+    uint8_t  keep;       /* configure(): already live, leave it alone    */
 } usb_ep_t;
 
 typedef struct usb_dev {
@@ -429,6 +440,11 @@ int  usb_clear_halt(const usb_dev_t *d, uint8_t ep, int in);
    if there is none, so a class driver that needs one can refuse early
    rather than part-way through a transfer. */
 const usb_ep_t *usb_find_ep(const usb_dev_t *d, int attr, int in);
+/* v0.8.9.9: the same, restricted to one interface. A device with two
+   claimed interfaces has two bulk pairs, and the first match of the
+   plain search belongs to whichever was parsed first. */
+const usb_ep_t *usb_find_ep_if(const usb_dev_t *d, int iface, int attr,
+                               int in);
 
 /* ── the descriptor walk, exposed because it is worth testing alone ───
  *
@@ -548,3 +564,21 @@ int usb_select_config(usb_dev_t *d, uint8_t idx, int want_if);
  * create for a survey, and it is worse here: the endpoints would be
  * wrong rather than merely the bookkeeping. */
 int usb_set_interface(usb_dev_t *d, uint8_t ifnum, uint8_t alt);
+
+/* ── v0.8.9.9: usb_claim_interface ──────────────────────────────────
+   Put interface `ifnum` at alternate `alt` of configuration index
+   `cfgidx` into use WITHOUT disturbing any other interface already in
+   use on the device.
+
+   If the device is not in that configuration yet, it is selected --
+   SET_CONFIGURATION, which resets every interface, so there is nothing
+   else to keep. If it already IS in that configuration, the
+   configuration is left alone: the new interface's endpoints are added
+   beside the ones held, SET_INTERFACE is sent only for a non-zero
+   alternate, and the controller is told to add the new endpoints and
+   leave the running ones as they are (usb_ep_t.keep).
+
+   This is how usbmux and Apple Ethernet share one iPhone. Returns
+   USB_OK or a negative USB_E*. */
+int usb_claim_interface(usb_dev_t *d, uint8_t cfgidx, uint8_t ifnum,
+                        uint8_t alt);

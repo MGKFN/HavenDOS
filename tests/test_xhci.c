@@ -321,6 +321,8 @@ static uint32_t g_legctl_last;         /* what was left in USBLEGCTLSTS   */
    that waits from one that does not. */
 static int      g_bios_delay;
 static int     g_set_config_value = -1;
+static int     g_set_config_count;     /* v0.8.9.9: how many were sent  */
+static uint32_t g_last_add;            /* v0.8.9.9: last Configure's A  */
 static int     g_set_protocol_seen;
 
 /* ── register helpers for the simulator itself ─────────────────────── */
@@ -351,6 +353,8 @@ static void apply_input_ctx(int slot, uint32_t in, int addressing)
     uint32_t add = m32(in + 4);            /* add-flags dword 1         */
     uint32_t dev = g_slot_ctx[slot];
     int dci;
+
+    if(!addressing) g_last_add = add;
 
     if(!dev) return;
     if(add & 1u){                           /* A0: slot context          */
@@ -427,6 +431,7 @@ static int device_control(uint8_t rtype, uint8_t req, uint16_t value,
     }
     if(!(rtype & 0x80u) && req == 9){                /* SET_CONFIGURATION */
         g_set_config_value = (int)value;
+        g_set_config_count++;
         return 1;
     }
     /* SET_INTERFACE. The recipient must be the INTERFACE -- bits 4:0 of
@@ -1883,6 +1888,101 @@ int main(void)
                    usb_select_config(&bare, 0, -1) == USB_ENODEV, 0);
             }
         }
+        }
+    }
+
+    /* ── v0.8.9.9: TWO DRIVERS ON ONE PHONE ───────────────────────────
+       Kyan's HP, 11 November: the phone came up as a NIC at boot, then
+       `pair` opened usbmux, which selected configuration index 3 again
+       for interface 1. That reset interface 2 to alt 0 and dropped the
+       Ethernet pair at the controller -- and `ifconfig dhcp` reported
+       0 asked, because the DISCOVER could not leave. In this fixture
+       the phone's both-interfaces configuration is index 2. */
+    head("two interfaces on one phone: Ethernet first, then usbmux");
+    {
+        usb_dev_t *d;
+        int slot, cmds, sets, sifs;
+        sim_reset(32, 2, 1);
+        g_multicfg = 1;
+        usb_init();
+        d = (usb_dev_t *)usb_device(0);
+        if(!d){ ck("a phone", 0, 0); } else {
+            slot = (int)d->slot;
+            ck("Ethernet is claimed: index 2, interface 2, alt 1",
+               usb_claim_interface(d, 2, 2, 1) == USB_OK, 0);
+            ck("its bulk in is 0x83",
+               usb_find_ep_if(d, 2, USB_EP_BULK, 1) &&
+               usb_find_ep_if(d, 2, USB_EP_BULK, 1)->addr == 0x83, 0);
+            ck("the controller holds DCIs 7 and 8",
+               g_ep_set[slot][7] && g_ep_set[slot][8], 0);
+
+            cmds = g_config_slots; sets = g_set_config_count;
+            sifs = g_set_ifs;
+            g_last_add = 0;
+            ck("usbmux is claimed beside it: interface 1, alt 0",
+               usb_claim_interface(d, 2, 1, 0) == USB_OK, 0);
+            ck("SET_CONFIGURATION was NOT sent again -- that is the bug",
+               g_set_config_count == sets, g_set_config_count - sets);
+            ck("no SET_INTERFACE for alt 0",
+               g_set_ifs == sifs, g_set_ifs - sifs);
+            ck("one Configure Endpoint, to add the mux pair",
+               g_config_slots == cmds + 1, g_config_slots - cmds);
+            ck("it ADDED DCIs 5 and 6, the mux's",
+               (g_last_add & (1u << 5)) && (g_last_add & (1u << 6)),
+               (long)g_last_add);
+            ck("and did NOT re-add 7 and 8 -- a running pipe is left alone",
+               !(g_last_add & ((1u << 7) | (1u << 8))), (long)g_last_add);
+            ck("the Ethernet pair is STILL configured",
+               g_ep_set[slot][7] && g_ep_set[slot][8], 0);
+            ck("and so is the mux pair",
+               g_ep_set[slot][5] && g_ep_set[slot][6], 0);
+            ck("four endpoints in the table", d->nep == 4, d->nep);
+            ck("asked by interface, each driver finds its own",
+               usb_find_ep_if(d, 1, USB_EP_BULK, 1) &&
+               usb_find_ep_if(d, 1, USB_EP_BULK, 1)->addr == 0x82 &&
+               usb_find_ep_if(d, 2, USB_EP_BULK, 0) &&
+               usb_find_ep_if(d, 2, USB_EP_BULK, 0)->addr == 0x04, 0);
+            ck("no endpoint is left marked keep",
+               !d->ep[0].keep && !d->ep[1].keep && !d->ep[2].keep &&
+               !d->ep[3].keep, 0);
+            ck("claiming the mux AGAIN changes nothing it should not",
+               usb_claim_interface(d, 2, 1, 0) == USB_OK &&
+               d->nep == 4 && g_ep_set[slot][7] && g_ep_set[slot][5], d->nep);
+        }
+    }
+
+    head("two interfaces on one phone: usbmux first, then Ethernet");
+    {
+        usb_dev_t *d;
+        int slot, sets, sifs;
+        sim_reset(32, 2, 1);
+        g_multicfg = 1;
+        usb_init();
+        d = (usb_dev_t *)usb_device(0);
+        if(!d){ ck("a phone", 0, 0); } else {
+            slot = (int)d->slot;
+            ck("usbmux is claimed", usb_claim_interface(d, 2, 1, 0) == USB_OK, 0);
+            ck("the mux pair is configured",
+               g_ep_set[slot][5] && g_ep_set[slot][6], 0);
+            sets = g_set_config_count; sifs = g_set_ifs;
+            g_last_add = 0;
+            ck("Ethernet is claimed beside it",
+               usb_claim_interface(d, 2, 2, 1) == USB_OK, 0);
+            ck("without SET_CONFIGURATION",
+               g_set_config_count == sets, g_set_config_count - sets);
+            ck("with exactly one SET_INTERFACE, alt 1 on interface 2",
+               g_set_ifs == sifs + 1 && g_set_if_alt == 1 &&
+               g_set_if_num == 2, g_set_ifs - sifs);
+            ck("the mux pair was not re-added",
+               !(g_last_add & ((1u << 5) | (1u << 6))), (long)g_last_add);
+            ck("all four are live",
+               g_ep_set[slot][5] && g_ep_set[slot][6] &&
+               g_ep_set[slot][7] && g_ep_set[slot][8], 0);
+            ck("a DIFFERENT configuration still resets everything",
+               usb_claim_interface(d, 1, 0, 0) == USB_OK &&
+               g_set_config_count == sets + 1, g_set_config_count - sets);
+            ck("and leaves no phone endpoint behind",
+               !g_ep_set[slot][5] && !g_ep_set[slot][7], 0);
         }
     }
 

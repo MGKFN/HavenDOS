@@ -2500,6 +2500,48 @@ int main(void)
            above, on a healthy channel. */
     }
 
+    /* ── v0.8.9.9: THE TRANSPORT, READ THE WAY net/tls.c READS ────────
+       Every TLS check above runs against a FAKE TLS layer, which reads
+       whatever a packet holds in one call -- and that is why none of
+       them could see 0.8.9.8's handshake die on the HP. The real
+       net/tls.c asks the transport for FIVE bytes (a record header),
+       then for the body. The phone answers a ClientHello with about a
+       kilobyte in one packet. This drives the real ld_tr_recv() over
+       the real usbmux.c exactly so: 5, then the rest. */
+    head("the TLS transport hands a big packet over five bytes first");
+    {
+        tls_client_cert_t cc;
+        const tls_transport_t *tr;
+        static uint8_t flight[900], got[900];
+        int i, r, have = 0, guard = 0;
+        memset(&cc, 0, sizeof cc);
+        machine();
+        lockdown_connect(); ld.session = 1;
+        lockdown_start_session("A-B", "C-D");
+        lockdown_enable_ssl(&cc, 1u);
+        tr = ft.tr;
+        for (i = 0; i < (int)sizeof flight; i++) flight[i] = (uint8_t)(i ^ 0x5A);
+        flight[0] = 22; flight[1] = 3; flight[2] = 3;   /* handshake, TLS 1.2 */
+        flight[3] = (uint8_t)((sizeof flight - 5) >> 8);
+        flight[4] = (uint8_t)((sizeof flight - 5) & 0xFF);
+        queue_tcp(F_ACK, ph.dev_seq, ph.exp_host_seq, flight, (int)sizeof flight);
+        ph.dev_seq += sizeof flight;
+        r = tr ? tr->recv(0, got, 5, 500) : -99;
+        ck("five bytes of record header, not a dead connection", r == 5, r);
+        ck("the header is the record's", got[0] == 22 && got[3] ==
+           (uint8_t)((sizeof flight - 5) >> 8), got[0]);
+        have = r > 0 ? r : 0;
+        while (tr && have < (int)sizeof flight && guard++ < 100) {
+            r = tr->recv(0, got + have, (uint16_t)(sizeof flight - have), 500);
+            if (r < 0) break;
+            have += r;
+        }
+        ck("then the body, all of it", have == (int)sizeof flight, have);
+        ck("byte for byte", memcmp(got, flight, sizeof flight) == 0, 0);
+        ck("and the channel is still up", g_ld.connected && usbmux_connected(),
+           g_ld.connected);
+    }
+
     printf("\n%d/%d passed\n", total - fails, total);
     return fails ? 1 : 0;
 }

@@ -1236,6 +1236,11 @@ extern uint32_t net_get_dns(void);
 extern void     net_set_dns(uint32_t);
 extern int      dhcp_request(void);
 
+/* v0.8.9.9: declared ahead -- `ifconfig dhcp` reports these now too. */
+#include "../include/netdev.h"
+extern uint32_t dhcp_stat_sent(void), dhcp_stat_offers(void),
+                dhcp_stat_acks(void), dhcp_stat_naks(void);
+static void net_explain_send(void);
 static void cmd_ifconfig(const char *a1, const char *a2){
     if(!net_ready()){
         out_str("No NIC detected.\n"); return;
@@ -1273,6 +1278,13 @@ static void cmd_ifconfig(const char *a1, const char *a2){
             out_str("\n");
         } else {
             out_str("DHCP failed - still on the built-in fallback address.\n");
+            /* v0.8.9.9: how far it got, every time, not only after a
+               failed ping. */
+            out_str("  asked "); out_int((int)dhcp_stat_sent());
+            out_str(", offered "); out_int((int)dhcp_stat_offers());
+            out_str(", acknowledged "); out_int((int)dhcp_stat_acks());
+            out_str(".\n");
+            net_explain_send();
             out_str("Nothing will route until a server answers, or you\n");
             out_str("set an address by hand with 'ifconfig set'.\n");
         }
@@ -1323,6 +1335,30 @@ static void cmd_ifconfig(const char *a1, const char *a2){
    an address on the phone's network at all. Say which case it is. */
 extern uint32_t dhcp_stat_sent(void), dhcp_stat_offers(void),
                 dhcp_stat_acks(void), dhcp_stat_naks(void);
+/* v0.8.9.9: why the DISCOVER never left, in words. Printed when DHCP
+   asked nobody -- the HP's "0 asked" screen, which had nothing after
+   it. The NIC is named, its link state given, and the error the stack
+   got from it. */
+extern uint32_t dhcp_stat_send_fail(void);
+extern int      dhcp_last_send_err(void);
+static void net_explain_send(void)
+{
+    int a = netdev_active();
+    if(dhcp_stat_send_fail() == 0) return;
+    out_str("  The request never left this machine: the network card\n"
+            "  refused it ");
+    out_int((int)dhcp_stat_send_fail());
+    out_str(dhcp_stat_send_fail() == 1 ? " time" : " times");
+    out_str(" (error "); out_int(dhcp_last_send_err()); out_str(").\n");
+    if(a < 0){
+        out_str("  There is no active network card at all.\n");
+        return;
+    }
+    out_str("  Card: "); out_str(netdev_bus_name(a));
+    out_str(netdev_link_up(a) ? ", link up" : ", link DOWN");
+    out_str(". 'usb eth' shows its counters.\n");
+}
+
 static void net_explain(void)
 {
     char ip[20], gw[20];
@@ -1336,7 +1372,9 @@ static void net_explain(void)
         out_str(" offered, "); out_int((int)dhcp_stat_acks());
         out_str(" acknowledged");
         if(dhcp_stat_naks()){ out_str(", "); out_int((int)dhcp_stat_naks()); out_str(" refused"); }
-        out_str(".\n  'ifconfig dhcp' asks again.\n");
+        out_str(".\n");
+        net_explain_send();
+        out_str("  'ifconfig dhcp' asks again.\n");
     } else {
         out_str("  This machine is "); out_str(ip);
         out_str(", gateway "); out_str(gw);

@@ -557,7 +557,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_txm tests/test_xemode.c && \
-	  python3 tools/run_suite.py --name test_xemode --min 195 -- /tmp/hd_txm
+	  python3 tools/run_suite.py --name test_xemode --min 199 -- /tmp/hd_txm
 	@echo "── test_rsa ───────────────────────────────"
 	@echo "  Miller-Rabin and RSA keygen, against CPython and openssl"
 	@# net/rsa.c arrived with a suite and a harness and was never added
@@ -694,6 +694,14 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tun tests/test_usbnet.c && \
 	  python3 tools/run_suite.py --name test_usbnet --min 125 -- /tmp/hd_tun
+	@echo "── test_usbhid ────────────────────────────"
+	@echo "  USB keyboards and mice, on every interface of a device"
+	@# v0.9.2.1: a wireless receiver's mouse is on interface 1. Links
+	@# the REAL usb/core.c (survey, usb_claim_interface) and usb/hid.c.
+	@$(TESTCC) -no-pie -Iinclude -Itests \
+	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
+	           -o /tmp/hd_tuh tests/test_usbhid.c && \
+	  python3 tools/run_suite.py --name test_usbhid --min 30 -- /tmp/hd_tuh
 	@echo "── test_usbmux ────────────────────────────"
 	@echo "  the Apple Mobile Device channel, against a device that speaks it"
 	@$(TESTCC) -no-pie -Iinclude \

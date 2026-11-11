@@ -137,6 +137,18 @@ static const uint32_t k_dbuf[4] = { 0x45008u, 0x44FE8u, 0x44300u, 0x44304u };
 #define R_B_MISC    0x71030u   /* PIPE_MISC                            */
 #define R_B_CHICKEN 0x71038u   /* PIPE_CHICKEN                         */
 #define R_B_DBOX    0x7103Cu
+/* v0.9.2.1: the FIELDS of PIPE_MBUS_DBOX_CTL (skl_watermark_regs.h:
+   A credit 3:0, I credit 7:5, B credit 12:8, BW credit 15:14, regulate
+   16, B2B delay 19:17, B2B max 24:20). Bits 31:25 are not in i915's
+   header, and on the HP they are READ-ONLY AND DIFFERENT PER PIPE:
+   pipe A reads A9038C04, and pipe B, written A9038C04, read back
+   B1038C04 -- bits 28:27 are 01 on A and 10 on B, which looks like
+   the pipe's own index. 0.9.2 copied A's whole word, held all 32 bits
+   and stopped at step 28. Now only the fields are copied and held. */
+#define   DBOX_FIELDS       0x01FFDFEFu
+/* and of PLANE_WM: enable 31, ignore-lines 30, auto-min-alloc 29,
+   lines 26:14, blocks 12:0 -- the same caution, for the same reason */
+#define   WM_FIELDS         0xE7FFDFFFu
 #define R_B_FRM     0x71040u   /* PIPE_FRMCOUNT_G4X                    */
 #define R_B_CTL     0x71180u
 #define   PLANE_EN          BIT(31)
@@ -531,19 +543,20 @@ int xm_plan_on(const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
     rmw(p, R_B_CHICKEN, 0, BIT(30) | BIT(15) | BIT(7), BIT(30) | BIT(15) | BIT(7),
         "PIPE_CHICKEN");
     /* MBUS credits and watermarks: pipe A's, for a plane this size */
-    wr(p, R_B_DBOX, s->a_dbox, 0xFFFFFFFFu, "MBUS credits (as A)");
+    rmw(p, R_B_DBOX, DBOX_FIELDS, s->a_dbox & DBOX_FIELDS, DBOX_FIELDS,
+        "MBUS credits (as A)");
     wr(p, R_B_BUF, p->ddb_start | (p->ddb_end << 16), 0x1FFF1FFFu, "buffer blocks");
     for(i = 0; i < 8; i++){
         uint32_t v = s->a_wm[i];
         if((v & BIT(31)) && (v & 0x1FFFu) > alloc){ v &= ~BIT(31); p->wm_dropped++; }
-        wr(p, R_B_WM(i), v, 0xFFFFFFFFu, i < 6 ? "watermark (as A)" :
-                                          i == 6 ? "SAGV watermark (as A)"
-                                                 : "SAGV trans wm (as A)");
+        rmw(p, R_B_WM(i), WM_FIELDS, v & WM_FIELDS, WM_FIELDS,
+            i < 6 ? "watermark (as A)" : i == 6 ? "SAGV watermark (as A)"
+                                                : "SAGV trans wm (as A)");
     }
     {
         uint32_t v = s->a_wm_trans;
         if((v & BIT(31)) && (v & 0x1FFFu) > alloc){ v &= ~BIT(31); p->wm_dropped++; }
-        wr(p, R_B_WMTRANS, v, 0xFFFFFFFFu, "transition wm (as A)");
+        rmw(p, R_B_WMTRANS, WM_FIELDS, v & WM_FIELDS, WM_FIELDS, "transition wm (as A)");
     }
 
     /* ── the transcoder (intel_ddi_enable) ──────────────────────── */
@@ -823,6 +836,10 @@ static void refusal_help(const xm_state_t *s, const xm_plan_t *p)
         Xs(&l, "  DPLL0 "); Xh(&l, s->dpll_en[0], 8); Xs(&l, "  DPLL1 ");
         Xh(&l, s->dpll_en[1], 8); Xs(&l, "  DPCLKA "); Xh(&l, s->dpclka, 8);
         XE(&l, GFX_T_TEXT);
+        /* v0.9.2.1: the HP, 11 Nov -- a `gfx on` that stopped part-way
+           leaves DPLL0 running, and the next one finds no free PLL. */
+        xsay(GFX_T_TEXT, "  If an earlier `gfx on` stopped part-way, `gfx off` releases");
+        xsay(GFX_T_TEXT, "  the PLL it left running; then `gfx on` again.");
         break;
     case XM_EPHY:
         Xs(&l, "  PHY_MISC B "); Xh(&l, s->phy_misc_b, 8); Xs(&l, "  PORT_COMP_DW0 B ");

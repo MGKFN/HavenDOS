@@ -65,10 +65,13 @@ extern void mouse_usb_forget_all(void);
 #define HID_REQ_SET_IDLE     0x0A
 #define HID_REQ_SET_PROTOCOL 0x0B
 
-#define HID_MAX 4
+/* v0.9.2.1: 8, not 4. A wireless receiver alone is a keyboard AND a
+   mouse now that every interface of it is driven (usb_hid_init). */
+#define HID_MAX 8
 
 typedef struct {
     const usb_dev_t *dev;
+    uint8_t  ifnum;     /* which interface of the device (v0.9.2.1)   */
     uint8_t  ep;        /* interrupt IN endpoint address              */
     uint16_t mps;
     uint8_t  proto;     /* HID_PROTO_*                                */
@@ -189,10 +192,113 @@ static void mouse_report(const uint8_t *r, int len)
     mouse_feed((uint8_t)(dy & 0xFF));
 }
 
-/* ── discovery ─────────────────────────────────────────────────────── */
+/* ── discovery ───────────────────────────────────────────────────────
+
+   ── v0.9.2.1: EVERY INTERFACE, NOT THE FIRST ─────────────────────────
+
+   The core configures a device on its FIRST interface (usb/core.c,
+   want_if -1), and until this release that interface was the only one
+   this driver looked at. A plain wired mouse or keyboard has one
+   interface and never noticed.
+
+   A wireless receiver has several. The common layout -- Logitech's,
+   and most gaming receivers' -- is a boot keyboard on interface 0, a
+   boot mouse on interface 1 and a vendor HID interface after them, and
+   a gaming keyboard often puts its N-key-rollover report on a second,
+   non-boot interface. Kyan's HP, 11 November: the mouse's receiver did
+   nothing at all. Its first interface is not the mouse.
+
+   So every configured device whose selected interface is HID is
+   SURVEYED (usb_survey_config: reads the descriptor, selects nothing),
+   and each boot keyboard or boot mouse interface in it is driven --
+   claimed beside the others with usb_claim_interface() if the core did
+   not already select it, the same call that lets usbmux and Apple
+   Ethernet share one iPhone. An interface already claimed by an earlier
+   pass keeps its endpoints: a rescan must not reconfigure a keyboard
+   somebody is typing on. */
+typedef struct {
+    int n;
+    struct { uint8_t num, sub, proto; } f[HID_MAX];
+} hid_survey_t;
+
+static void hid_survey_cb(void *ctx, uint8_t num, uint8_t alt, uint8_t nep,
+                          uint8_t cls, uint8_t sub, uint8_t proto)
+{
+    hid_survey_t *s = (hid_survey_t *)ctx;
+    (void)nep;
+    if (alt != 0 || cls != 3) return;          /* HID, default setting */
+    if (s->n >= HID_MAX) return;
+    s->f[s->n].num = num; s->f[s->n].sub = sub; s->f[s->n].proto = proto;
+    s->n++;
+}
+
+/* Bring up ONE interface of a device. 1 if it is now driven. */
+static int hid_bind(usb_dev_t *d, uint8_t num, uint8_t sub, uint8_t proto)
+{
+    const usb_ep_t *e;
+    hid_t *h;
+
+    if (g_nhid >= HID_MAX) return 0;
+    if (sub != HID_SUBCLASS_BOOT) {
+        klog(KLOG_WARN, "USB HID %4x:%4x interface %u is not boot protocol; "
+                        "this kernel has no report parser for it",
+             (uint32_t)d->vendor, (uint32_t)d->product, (uint32_t)num);
+        return 0;
+    }
+    if (proto != HID_PROTO_KEYBOARD && proto != HID_PROTO_MOUSE) return 0;
+
+    e = usb_find_ep_if(d, num, USB_EP_INTR, 1);
+    if (!e) {
+        /* Not held yet: claim it beside what the device already has. */
+        int r = usb_claim_interface(d, d->cfgidx, num, 0);
+        if (r < 0) {
+            klog(KLOG_WARN, "USB HID %4x:%4x interface %u could not be "
+                            "claimed (%d)", (uint32_t)d->vendor,
+                 (uint32_t)d->product, (uint32_t)num, (uint32_t)r);
+            return 0;
+        }
+        e = usb_find_ep_if(d, num, USB_EP_INTR, 1);
+    }
+    if (!e) {
+        klog(KLOG_WARN, "USB HID %4x:%4x interface %u has no interrupt IN "
+                        "endpoint", (uint32_t)d->vendor, (uint32_t)d->product,
+             (uint32_t)num);
+        return 0;
+    }
+
+    /* Boot protocol, and report only on change. SET_IDLE is allowed
+       to STALL -- plenty of devices do -- and that is not a failure,
+       so its result is deliberately not checked. SET_PROTOCOL is.
+       Both go to THIS interface: wIndex is the interface number. */
+    usb_control(d, USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+                HID_REQ_SET_IDLE, 0, num, 0, 0);
+    if (usb_control(d, USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+                    HID_REQ_SET_PROTOCOL, 0, num, 0, 0) < 0) {
+        klog(KLOG_WARN, "USB HID %4x:%4x interface %u refused boot protocol",
+             (uint32_t)d->vendor, (uint32_t)d->product, (uint32_t)num);
+        return 0;
+    }
+
+    h = &g_hid[g_nhid++];
+    memset(h, 0, sizeof *h);
+    h->dev   = d;
+    h->ifnum = num;
+    h->ep    = e->addr;
+    h->mps   = e->mps;
+    h->proto = proto;
+
+    if (h->proto == HID_PROTO_MOUSE) mouse_usb_attach();
+
+    klog(KLOG_OK, "USB %s %4x:%4x interface %u on endpoint %2x, %u-byte reports",
+         h->proto == HID_PROTO_KEYBOARD ? "keyboard" : "mouse",
+         (uint32_t)d->vendor, (uint32_t)d->product, (uint32_t)num,
+         (uint32_t)h->ep, (uint32_t)h->mps);
+    return 1;
+}
+
 int usb_hid_init(void)
 {
-    int i;
+    int i, k;
     g_nhid = 0;
     /* Before the walk, not after: this function is re-run by
        `usb rescan` and by the hot-plug client, and a pointer count
@@ -202,53 +308,21 @@ int usb_hid_init(void)
     mouse_usb_forget_all();
 
     for (i = 0; i < usb_device_count() && g_nhid < HID_MAX; i++) {
-        const usb_dev_t *d = usb_device(i);
-        const usb_ep_t  *e;
-        hid_t *h;
+        usb_dev_t *d = (usb_dev_t *)usb_device(i);
+        hid_survey_t sv;
 
         if (!d || !d->valid || !d->config) continue;
         if (d->if_class != 3) continue;                  /* not HID     */
-        if (d->if_subclass != HID_SUBCLASS_BOOT) {
-            klog(KLOG_WARN, "USB HID %4x:%4x is not boot protocol; "
-                            "this kernel has no report parser",
-                 (uint32_t)d->vendor, (uint32_t)d->product);
+
+        memset(&sv, 0, sizeof sv);
+        if (usb_survey_config(d, d->cfgidx, hid_survey_cb, &sv) < 0 || !sv.n) {
+            /* The survey failed: drive the one interface the core chose,
+               which is all this driver ever did before 0.9.2.1. */
+            hid_bind(d, d->ifnum, d->if_subclass, d->if_protocol);
             continue;
         }
-        if (d->if_protocol != HID_PROTO_KEYBOARD &&
-            d->if_protocol != HID_PROTO_MOUSE) continue;
-
-        e = usb_find_ep(d, USB_EP_INTR, 1);
-        if (!e) {
-            klog(KLOG_WARN, "USB HID %4x:%4x has no interrupt IN endpoint",
-                 (uint32_t)d->vendor, (uint32_t)d->product);
-            continue;
-        }
-
-        /* Boot protocol, and report only on change. SET_IDLE is allowed
-           to STALL -- plenty of devices do -- and that is not a failure,
-           so its result is deliberately not checked. SET_PROTOCOL is. */
-        usb_control(d, USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-                    HID_REQ_SET_IDLE, 0, d->ifnum, 0, 0);
-        if (usb_control(d, USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-                        HID_REQ_SET_PROTOCOL, 0, d->ifnum, 0, 0) < 0) {
-            klog(KLOG_WARN, "USB HID %4x:%4x refused boot protocol",
-                 (uint32_t)d->vendor, (uint32_t)d->product);
-            continue;
-        }
-
-        h = &g_hid[g_nhid++];
-        memset(h, 0, sizeof *h);
-        h->dev   = d;
-        h->ep    = e->addr;
-        h->mps   = e->mps;
-        h->proto = d->if_protocol;
-
-        if (h->proto == HID_PROTO_MOUSE) mouse_usb_attach();
-
-        klog(KLOG_OK, "USB %s %4x:%4x on endpoint %2x, %u-byte reports",
-             h->proto == HID_PROTO_KEYBOARD ? "keyboard" : "mouse",
-             (uint32_t)d->vendor, (uint32_t)d->product,
-             (uint32_t)h->ep, (uint32_t)h->mps);
+        for (k = 0; k < sv.n && g_nhid < HID_MAX; k++)
+            hid_bind(d, sv.f[k].num, sv.f[k].sub, sv.f[k].proto);
     }
     return g_nhid;
 }

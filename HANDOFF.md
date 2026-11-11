@@ -1,49 +1,79 @@
-# HavenDOS — handoff, 11 November 2026 (night)
+# HavenDOS — handoff, 11 November 2026 (late night)
 
-Current release: **v0.9.2** (channel Beta, codename "Janus"), the third
-step of the display-engine driver: `gfx on` lights the HDMI monitor,
-mirroring the panel. Paste this file into a new chat to pick up where
-this left off.
+Current release: **v0.9.2.1** (channel Beta, codename "Janus"), a patch
+to 0.9.2 (`gfx on` lights the HDMI monitor, mirroring the panel) with
+the two things the HP found. Paste this file into a new chat to pick up
+where this left off.
 
-## START HERE: 0.9.2 HAS NOT RUN ON THE HP
+## START HERE: WHAT 0.9.2 DID ON THE HP, AND WHAT 0.9.2.1 CHANGES
+
+**0.9.2 on the HP (11 Nov, photos).** The panel was untouched.
+- `gfx` shows DPLL1 at **270 MHz** and the panel at **60.00 Hz**. The PLL
+  fix holds.
+- `gfx on` made **25 writes, all read back**:
+  - DDI B IO well on;
+  - DBUF S3/S4 on;
+  - **DPLL0 locked at 148.5 MHz** (001001D0 / 00000E84);
+  - DPCLKA B select and ungate;
+  - TRANS_CLK_SEL B;
+  - PIPESRC;
+  - every timing register;
+  - TRANSCONF (still off);
+  - line time;
+  - PIPE_CHICKEN.
+- It **stopped at step 28, MBUS credits**: 07103C was written A9038C04
+  and read back B1038C04.
+  - Bits 31:25 of PIPE_MBUS_DBOX_CTL are read-only and differ per pipe:
+    A = A9…, B = B1…; bits 28:27 are 01 on A and 10 on B.
+  - **0.9.2.1 copies and holds only the fields (mask 01FFDFEF).**
+  - It does the same for the watermarks (mask E7FFDFFF).
+- `gfx off` was clean: 4 writes.
+- The monitor showed nothing, which was expected: it stopped before
+  TRANSCONF and DDI_BUF.
+- Photographed after another attempt, DPLL0 read ON, locked, 148.5 MHz
+  (writer and reader agree). A stopped `gfx on` leaves DPLL0 running, and
+  the next `gfx on` refuses with ENOPLL. That refusal now says `gfx off`
+  releases it.
+
+**Also reported: the external USB keyboard and the mouse's wireless
+receiver don't work.** Kyan said "keyboard gets light" — the keyboard
+powers up.
+- `usb/hid.c` only ever drove a device's FIRST interface. A receiver's
+  mouse is usually on interface 1.
+- 0.9.2.1 surveys every HID device and drives every boot keyboard and
+  boot mouse interface, claiming extra ones with `usb_claim_interface()`.
+- `tests/test_usbhid.c` (30) fails 14 checks against the 0.9.2 driver.
+- **A plain wired keyboard that does nothing is NOT explained by this.**
+  Ask for `usb -vv`, `usb cfg <addr>` and `dmesg` (the USB HID lines),
+  and whether these devices ever worked on an earlier HavenDOS.
+  - An external USB mouse *did* work on 0.8.9.6, sluggishly.
+  - Candidates if it is still dead:
+    - the keyboard enumerates but its interface 0 is not boot protocol
+      (subclass 0) — that needs the report parser;
+    - the enumeration fails (cf. port 12 `no answer (-4)` in October);
+    - a low/full-speed interrupt endpoint interval problem on the HP's
+      xHCI.
 
 Built and tested here:
-- `make test`: 6634/6634 across 63 suites.
-- `check_xemode_suite.py` 27/27, `check_gfx_suite.py` 41/41,
-  `check_edid_suite.py` 24/24.
-- QEMU boot: 13/13.
+- `make test`: 6668/6668 across 64 suites.
+- Injection harnesses: `check_xemode_suite.py` 28/28,
+  `check_usbhid_suite.py` 7/7, `check_gfx_suite.py` 41/41,
+  `check_pointer_suite.py` 11/11.
+- QEMU: `gfx_boot.py` 13/13, `hid_boot.py` 3/3.
 
-QEMU has no Iris Xe, so **`gfx on` has only ever run against a model
-engine.** First thing the next chat needs: Kyan's photos of
-`docs/GFX-ON-HARDWARE-TEST.md`.
-1. `gfx`: DPLL1 should now read **270 MHz** and the panel **60.00 Hz**
-   (the 0.9.1 PLL misreading is fixed).
-2. `gfx plan`, every page.
-3. `gfx on`, `y`, then photograph BOTH screens.
-4. `gfx`.
-5. `gfx off`, then `gfx on` again.
-
-How to read `gfx on`:
-- **`Lit.` + `scanning out.` and the HavenDOS screen on the monitor**:
-  done. 0.9.3 is HDMI mode (AVI infoframe), the pipe scaler (fill the
-  monitor), and 120 Hz (285.5 MHz, no scrambling). 144 Hz needs SCDC.
-- **`Lit.` but the monitor says "no signal"**: the PHY/PLL path. Check
-  the write log's PHY lane values against i915
-  `icl_ddi_combo_vswing_program`, and DPLL0 = 001001D0 / 00000E84.
-  Suspect the TX_DW5 group write first: it is read back from lane 0.
-- **Signal but black**: the plane, DDB or watermarks. The plane copies
-  pipe A's CTL/STRIDE/SIZE/SURF; the DDB is blocks 2048-4031 (S3+S4); the
-  WMs are copied from pipe A.
-- **`NOT MOVING.`**: the transcoder isn't running. Check TRANS_CLK_SEL B
-  (20000000) and DPCLKA (B ungated on DPLL0).
-- **`Stopped: ...`**: the screen names the step, the register, and what
-  was wanted vs read. `gfx off` first, then photograph.
-- **`Refused: ...`**: a precondition failed before any write. The line
-  under it gives the register; check it against the 0.9.0 table below.
-  Example: DBUF S3/S4 power state, MBUS_CTL, PLANE_BUF_CFG A.
-- **THE PANEL CHANGED AT ALL**: the most important possible finding.
-  Nothing on pipe A is on the allow-list, so it would mean a shared
-  register that's really two registers, or a power interaction.
+**Next photos:** `docs/GFX-ON-HARDWARE-TEST.md` (steps 1-6). How to read
+`gfx on`:
+- **`Lit.` + `scanning out.` + a picture:** done. 0.9.3 is HDMI mode (AVI
+  infoframe), the pipe scaler to fill the monitor, and 120 Hz.
+- **`Lit.` but the monitor says "no signal":** the PHY or PLL. Check the
+  PHY lane writes in the log against i915 `icl_ddi_combo_vswing_program`.
+  The VBT gave **vswing entry 0** (450 mV): i915 would use that too, but
+  it is the weakest; try entry 6 if the PHY looks right.
+- **Signal but black:** the plane, DDB or watermarks.
+- **`NOT MOVING.`:** the transcoder clock.
+- **`Stopped:` on another register with read-only bits:** the same
+  treatment as DBOX. Check i915's field definitions and hold only those.
+- **ANY change on the panel:** the most important finding possible.
 
 ## WHAT 0.9.1 FOUND ON THE HP (11 Nov, photos)
 
@@ -63,7 +93,7 @@ The full write-up is the project doc
   fixture with the serial (`0xFF` descriptor) scrubbed and the checksum
   recomputed.
 
-## 0.9.2, IN ONE SCREEN
+## 0.9.2 (and .1), IN ONE SCREEN
 
 - `drivers/xemode.c` and `include/xemode.h`: the writer. Its parts:
   - `xm_read()`: gated reads;
@@ -3035,9 +3065,12 @@ Left, and each has its reason:
 Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
-## Testing, as of 0.9.2
+## Testing, as of 0.9.2.1
 
-**6634 of 6634 checks across 63 suites** (0.9.2: `test_xemode` 195 new,
+**6668 of 6668 checks across 64 suites** (0.9.2.1: `test_usbhid` 30 new,
+`test_xemode` 195 -> 199; `check_usbhid_suite.py` 7/7,
+`check_xemode_suite.py` 28/28; `harness/hid_boot.py` 3/3).
+As of 0.9.2: **6634 of 6634 checks across 63 suites** (0.9.2: `test_xemode` 195 new,
 `test_gfx` 199 -> 203, `test_edid` 101 -> 106;
 `tools/check_xemode_suite.py` 27/27; `harness/gfx_boot.py` 13/13).
 As of 0.9.1: **6428 of 6428 checks across 62 suites** (0.9.1: `test_edid` 99 new,

@@ -6,7 +6,19 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.2 Beta "Janus"
+## Current version: 0.9.2.1 Beta "Janus"
+
+**0.9.2.1** fixes the two things 0.9.2 ran into on the HP.
+- **`gfx on` stopped at step 28.** One register (the pipe's memory-bus
+  credits) carries read-only bits that differ per pipe. `gfx on` now
+  copies and checks only its real fields. Before the stop, 25 writes had
+  landed exactly, the PLL had locked at 148.5 MHz, and the panel was
+  untouched.
+- **External USB keyboards and mice now work on every interface.** They
+  used to work only on a device's first interface, so a wireless
+  receiver's mouse, which usually sits on its second, did nothing.
+
+[Changelog](changelogs/CHANGELOG-v0.9.2.1.md).
 
 **0.9.2** lights the external monitor. `gfx on` programs the HP's
 second display path, from a PLL and the HDMI port up to a pipe and a
@@ -115,11 +127,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.2.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.2.1.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.2.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.2.1.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

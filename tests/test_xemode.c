@@ -143,6 +143,9 @@ static void model_wr(uint32_t base, uint32_t off, uint32_t v)
     w = owner(off);
     if(w >= 0 && !pw_on(w)){ unclaimed++; return; }
     if(knob_stuck_reg && off == knob_stuck_reg) return;
+    /* PIPE_MBUS_DBOX_CTL B: bits 31:25 are read-only and pipe B's own.
+       The HP, 0.9.2: written A9038C04, read back B1038C04. */
+    if(off == 0x7103Cu) v = (v & 0x01FFFFFFu) | 0xB0000000u;
     if(is_grp(off)){
         uint32_t ln, d = off - 0x6C600u;
         for(ln = 0; ln < 4; ln++) regs[(0x6C800u + 0x100u * ln + d) / 4] = v;
@@ -246,10 +249,13 @@ static void hp(void)
     R(0x4438C, 7u << 26);                             /* MBUS not joined, no pipe */
     R(0x7027C, 0x07BF0000u);                          /* A plane 1: blocks 0-1983 */
     R(0x7017C, 0x07FF07C0u);                          /* A cursor: 1984-2047     */
-    R(0x70240, WM(2, 17)); R(0x70244, WM(3, 25)); R(0x70248, WM(4, 33));
-    R(0x7024C, WM(5, 41)); R(0x70250, WM(9, 73)); R(0x70254, WM(12, 97));
-    R(0x70258, WM(2, 17)); R(0x7025C, WM(2, 20)); R(0x70268, WM(0, 28));
-    R(0x7003C, 0x01038804u);                          /* pipe_mbus_dbox_ctl, ADL-P */
+    /* REAL (0.9.2's `gfx plan` on the HP, which printed them as copied
+       from pipe A): level 0 and the SAGV level enabled, the rest not. */
+    R(0x70240, 0x80004011u); R(0x70244, 0x00004011u); R(0x70248, 0x00004011u);
+    R(0x7024C, 0x00004011u); R(0x70250, 0x00004011u); R(0x70254, 0x00004011u);
+    R(0x70258, 0x8000C031u); R(0x7025C, 0x00004007u); R(0x70268, 0x00004007u);
+    R(0x7003C, 0xA9038C04u);                          /* REAL: pipe A's DBOX     */
+    R(0x7103C, 0xB0000000u);                          /* REAL: B's read-only top */
     R(0x701CC, 0x00002000u);                          /* PLANE_COLOR_CTL A       */
     R(0x6007C, 0);                                    /* context latency A       */
     R(0x64C04, 0);                                    /* PHY B powered           */
@@ -358,6 +364,13 @@ static int op_index(const xm_plan_t *p, uint32_t off, uint32_t val)
     int i;
     for(i = 0; i < p->nops; i++)
         if(p->ops[i].off == off && p->ops[i].op == XM_OP_WR && p->ops[i].val == val) return i;
+    return -1;
+}
+static int op_rmw(const xm_plan_t *p, uint32_t off, uint32_t set)
+{
+    int i;
+    for(i = 0; i < p->nops; i++)
+        if(p->ops[i].off == off && p->ops[i].op == XM_OP_RMW && p->ops[i].set == set) return i;
     return -1;
 }
 static int pipe_a_unchanged(void)
@@ -487,8 +500,14 @@ int main(void)
        op_index(&P, 0x71190, 0x02FF03FFu) >= 0 && op_index(&P, 0x7119C, 0) >= 0, 0);
     ck("PLANE_SURF is the LAST operation (it arms the plane)",
        P.ops[P.nops - 1].off == 0x7119Cu, (long)P.ops[P.nops - 1].off);
-    ck("watermarks are pipe A's, none dropped", op_index(&P, 0x71240, WM(2, 17)) >= 0 &&
-       op_index(&P, 0x71254, WM(12, 97)) >= 0 && P.wm_dropped == 0, P.wm_dropped);
+    ck("watermarks are pipe A's fields, none dropped",
+       op_rmw(&P, 0x71240, 0x80004011u) >= 0 && op_rmw(&P, 0x71258, 0x8000C031u) >= 0 &&
+       op_rmw(&P, 0x71268, 0x00004007u) >= 0 && P.wm_dropped == 0, P.wm_dropped);
+    {
+        int k = op_rmw(&P, 0x7103C, 0x01038C04u);
+        ck("FIXED: MBUS credits copy only the FIELDS of A's A9038C04, and hold only them",
+           k >= 0 && P.ops[k].clr == 0x01FFDFEFu && P.ops[k].hold == 0x01FFDFEFu, k);
+    }
     ck("vswing entry 6 (the default) and no lane reversal", P.level == 6 && !P.reversal, P.level);
     ck("the plan fits its array", P.nops > 60 && P.nops < XM_MAX_OPS, P.nops);
 
@@ -532,6 +551,8 @@ int main(void)
     ck("DDI B enabled and out of idle", (regs[0x64100 / 4] & 0x80000080u) == 0x80000000u,
        (long)regs[0x64100 / 4]);
     ck("plane B on", regs[0x71180 / 4] == 0x94000008u, (long)regs[0x71180 / 4]);
+    ck("DBOX B is B1038C04: A's credits under B's own read-only bits -- what the HP read",
+       regs[0x7103C / 4] == 0xB1038C04u, (long)regs[0x7103C / 4]);
     {
         int ok = 1;
         for(k = 0; k < 4; k++){
@@ -657,6 +678,13 @@ int main(void)
         ck("only a 346.5 MHz mode: ENOMODE", r == XM_ENOMODE, r);
         monitor(&SVGA, 0, 0); r = plan_hp();
         ck("only 800x600: EFIT -- the 1024x768 plane does not fit", r == XM_EFIT, r);
+        hp(); lg(); R(0x46010, 0xCC000000u); R(0x164280, 0x01E07001u);
+        r = plan_hp(); nl = 0; longest = 0; xm_report_plan(&S, &P, 1, cap);
+        ck("a PLL left running by a stopped `gfx on`: the screen says `gfx off` frees it",
+           r == XM_ENOPLL && has("`gfx off` releases") && longest <= GFX_LINE_MAX, r);
+        dev_ok(); xm_read(&D, &S);
+        ck("  ... and `gfx off` does: it plans DPLL0's release", xm_plan_off(&S, &P) == XM_OK &&
+           P.dpll == 0, P.dpll);
         hp(); lg(); R(0x45404, 0x0000FC0C);
         ck("the core off: ECORE", plan_hp() == XM_ECORE, P.why);
     }
@@ -684,7 +712,7 @@ int main(void)
     hp(); lg(); R(0x70250, WM(40, 3000));
     r = plan_hp();
     ck("a pipe A watermark bigger than B's buffer is written DISABLED",
-       r == XM_OK && P.wm_dropped == 1 && op_index(&P, 0x71250, WM(40, 3000) & ~(1u << 31)) >= 0,
+       r == XM_OK && P.wm_dropped == 1 && op_rmw(&P, 0x71250, WM(40, 3000) & ~(1u << 31)) >= 0,
        P.wm_dropped);
     hp(); lg(); R(0x44300, 0xC0000000u); R(0x44304, 0xC0000000u); R(0x45454, 0xF);
     r = plan_hp();

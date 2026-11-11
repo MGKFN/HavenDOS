@@ -1,4 +1,13 @@
-# 0.9.2 hardware test: light the HDMI monitor
+# 0.9.2.1 hardware test: light the HDMI monitor
+
+> **0.9.2 ON THE HP, 11 November:** the panel was untouched. 25 writes
+> read back exactly, and DPLL0 locked at 148.5 MHz. It stopped at step 28,
+> `MBUS credits (as A)`: register 07103C was written A9038C04 and read
+> back B1038C04. Bits 31:25 of that register are read-only and specific
+> to each pipe. 0.9.2.1 copies only the credit fields. The external USB
+> keyboard and mouse receiver didn't work; 0.9.2.1 drives every
+> interface of a USB keyboard or mouse, not only the first. Step 6 below
+> is new.
 
 **Ten minutes. The HP, the LG 24GN65R on its HDMI input, the cable in.**
 
@@ -41,7 +50,7 @@ write, without writing it. (The EDID read is the only write.) Check:
   LG's 1080p60. Its preferred 144 Hz mode needs HDMI 2.0 scrambling,
   which isn't in yet.
 - `DPLL0  148.5 MHz  cfg 001001D0 00000E84  (port A stays on DPLL1)`.
-- About 77 numbered operations. Photograph them all. They are the
+- About 73 numbered operations. Photograph them all. They are the
   exact list `gfx on` will run.
 
 **If it says `Refused:`**, photograph that page and stop there. The line
@@ -89,10 +98,27 @@ and buffer slices on, which is harmless). Photograph the result. Then
 `gfx on` and `y` again, to show it can be lit twice in one boot.
 
 If `gfx on` stopped part-way in step 3, run `gfx off` before anything
-else and photograph that too.
+else and photograph that too. A stopped `gfx on` can leave DPLL0
+running, and the next one then refuses with "both combo PLLs are in
+use" until `gfx off` releases it.
+
+## 6. The USB keyboard and mouse receiver (photos)
+
+Plug in the external keyboard and the mouse's receiver **before
+booting**. Then:
+
+1. Try both. Say which works: keys, pointer movement, clicks.
+2. Run `usb -vv` and photograph every page. Then run `usb cfg <addr>`
+   for the keyboard and for the receiver, which lists every interface;
+   the address is in the `usb` list.
+3. Run `dmesg` and photograph the pages with `USB keyboard`,
+   `USB mouse` or `USB HID` lines. 0.9.2.1 names the interface each was
+   bound on, or why it was refused.
+4. If either one still does nothing, unplug it, plug it back in, run
+   `usb rescan`, and try again.
 
 ## What to send
 
-Photos of steps 1-5, with the monitor's photo next to the laptop's for
+Photos of steps 1-6, with the monitor's photo next to the laptop's for
 step 3. Say in words whether the **panel** flickered or changed at any
 point.

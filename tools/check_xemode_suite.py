@@ -190,8 +190,16 @@ BUGS = [
     ("an oversized watermark is copied enabled",
      "a level asking for more blocks than B's buffer has stalls the plane",
      """        if((v & BIT(31)) && (v & 0x1FFFu) > alloc){ v &= ~BIT(31); p->wm_dropped++; }
-        wr(p, R_B_WM(i), v,""",
-     """        wr(p, R_B_WM(i), v,"""),
+        rmw(p, R_B_WM(i), WM_FIELDS, v & WM_FIELDS, WM_FIELDS,""",
+     """        rmw(p, R_B_WM(i), WM_FIELDS, v & WM_FIELDS, WM_FIELDS,"""),
+
+    ("MBUS credits copy and hold the whole word again (0.9.2's stop)",
+     "bits 31:25 of PIPE_MBUS_DBOX_CTL are read-only and pipe B's own: "
+     "the HP read B1038C04 back for A9038C04 and `gfx on` stopped at "
+     "step 28",
+     """    rmw(p, R_B_DBOX, DBOX_FIELDS, s->a_dbox & DBOX_FIELDS, DBOX_FIELDS,
+        "MBUS credits (as A)");""",
+     """    wr(p, R_B_DBOX, s->a_dbox, 0xFFFFFFFFu, "MBUS credits (as A)");"""),
 
     ("the plane is not centred",
      "1024x768 in the top-left corner of a 1920x1080 frame",

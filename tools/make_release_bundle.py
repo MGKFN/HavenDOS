@@ -205,12 +205,11 @@ laptop's.
 ## What this release wants from the laptop
 
 **`docs/GFX-ON-HARDWARE-TEST.md`.** Ten minutes, the LG monitor on
-and set to HDMI. `gfx plan` lists every register write `gfx on` would
-make; `gfx on` asks y/N and then lights the monitor, mirroring the
-laptop's screen at 1920x1080, 60 Hz. It is the first command that
-changes what a screen shows, and the panel's own registers are not on
-the list it may write. Photograph BOTH screens at `gfx on`, and say
-whether the panel changed at all.
+and set to HDMI, and the USB keyboard and mouse receiver plugged in
+before booting. 0.9.2 stopped at step 28 on a register with read-only
+bits; 0.9.2.1 copies only that register's fields. Run `gfx on` again
+and photograph BOTH screens. Then photograph `usb -vv`, `usb cfg` and
+`dmesg` for the keyboard and receiver, and say which of them works.
 
 The older plans are still in `docs/` and still unanswered:
 `TRACKPAD-AND-PAIR-HARDWARE-TEST.md` for `i2chid` and the Notepad

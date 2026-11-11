@@ -65,14 +65,16 @@
    ver_cmp() compares component by component, so 0.9.0 is newer than
    0.8.9.9 at the second component and nothing after it is looked at.
    Zero here means "no patch" and VER_NUM omits it. */
-#define HAVENDOS_VER_BUILD  0
+/* v0.9.2.1: a patch to 0.9.2 -- what its first run on the HP found.
+   0.9.2.1 compares newer than 0.9.2 under ver_cmp(). */
+#define HAVENDOS_VER_BUILD  1
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.2"
+#define HAVENDOS_VER_NUM    "0.9.2.1"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"

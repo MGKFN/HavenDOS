@@ -114,7 +114,7 @@ def main():
            "No display engine to read through" in scr, scr[-700:])
 
         print("\n  `gfx plan`, `gfx on`, `gfx off` (0.9.2) refuse without an engine")
-        for c in ("plan", "on", "off"):
+        for c in ("plan", "on", "off", "b", "color"):
             scr = run("gfx " + c)
             ck(f"`gfx {c}` says there is no display engine, and asks nothing",
                "No display engine: no Intel display controller" in scr and
@@ -122,9 +122,10 @@ def main():
 
         print("\n  an argument it does not know prints the usage")
         scr = run("gfx bogus")
-        ck("the usage names all seven forms",
+        ck("the usage names all nine forms",
            "gfx regs" in scr and "gfx vbt" in scr and "gfx edid" in scr and
            "gfx plan" in scr and "gfx on" in scr and "gfx off" in scr and
+           "gfx b " in scr and "gfx color" in scr and
            "change what a screen shows" in scr,
            scr[-900:])
 

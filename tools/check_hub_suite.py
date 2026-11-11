@@ -300,6 +300,20 @@ HUB_BUGS = [
      "been dealt with",
      """        if (ch & PORT_CONNECTION) port_clear(h, p, FEAT_C_PORT_CONNECTION);""",
      """        (void)ch;"""),
+
+    # ── v0.9.2.2 ─────────────────────────────────────────────────────
+    ("the controller is never told a hub is a hub (0.9.2.1 and before)",
+     "Kyan's HP, 11 November: a keyboard behind a hub lit up and typed "
+     "nothing. A low/full speed device behind a high speed hub needs "
+     "split transactions, which xHCI runs only for a slot marked Hub",
+     """    r0 = usb_hub_info(h, nports, ttt, h->dev_protocol == 2);""",
+     """    r0 = USB_OK; (void)ttt;"""),
+
+    ("the think time is read from the wrong bits",
+     "wHubCharacteristics 6:5; bits 1:0 are power switching, and taking "
+     "them gives every self-powered hub a think time it does not have",
+     """            if (i == 0 && r >= 5) *think_time = (d[3] >> 5) & 3;""",
+     """            if (i == 0 && r >= 5) *think_time = d[3] & 3;"""),
 ]
 
 HARMLESS_CORE = (

@@ -2737,6 +2737,55 @@ int main(void)
            usb_device(0) ? usb_device(0)->slot : -1);
     }
 
+    /* ── v0.9.2.2: a hub is told it is a hub ─────────────────────────
+       Kyan's HP, 11 November: a keyboard behind a USB hub lit up and
+       typed nothing. No hub's slot context ever had its Hub flag, port
+       count or TT think time, so the controller had no reason to run
+       split transactions for the low/full speed keyboard behind it. */
+    head("a hub's slot context says it is a hub (v0.9.2.2)");
+    {
+        usb_dev_t *d;
+        int slot, cfgs, r;
+        uint32_t sc, d0b, d1b, d2b, d0, d1, d2;
+        sim_reset(32, 2, 1);
+        usb_init();
+        d = (usb_dev_t *)usb_device(0);
+        if(!d){
+            ck("a device to mark", 0, 0);
+        } else {
+            slot = (int)d->slot;
+            sc = g_slot_ctx[slot];
+            d0b = m32(sc); d1b = m32(sc + 4); d2b = m32(sc + 8);
+            ck("before: no Hub flag, no port count",
+               !(d0b & (1u << 26)) && !(d1b >> 24), (long)d0b);
+            cfgs = g_config_slots;
+            d->speed = USB_SPEED_HIGH;          /* as a USB 2.0 hub is */
+            r = usb_hub_info(d, 4, 2, 1);
+            d0 = m32(sc); d1 = m32(sc + 4); d2 = m32(sc + 8);
+            ck("usb_hub_info is accepted", r == USB_OK, r);
+            ck("  ... as ONE Configure Endpoint", g_config_slots == cfgs + 1,
+               g_config_slots - cfgs);
+            ck("  ... whose only add flag is A0: no endpoint touched",
+               g_last_add == 1u, (long)g_last_add);
+            ck("  ... Hub flag (dword 0 bit 26) and Multi-TT (bit 25) set",
+               (d0 & (1u << 26)) && (d0 & (1u << 25)), (long)d0);
+            ck("  ... route, speed and Context Entries unchanged",
+               (d0 & ~((1u << 26) | (1u << 25))) == d0b, (long)d0);
+            ck("  ... Number of Ports 4 (dword 1 31:24), root port kept",
+               (d1 >> 24) == 4u && (d1 & 0x00FFFFFFu) == (d1b & 0x00FFFFFFu), (long)d1);
+            ck("  ... TT think time 2 (dword 2 17:16)",
+               ((d2 >> 16) & 3u) == 2u && (d2 & ~(3u << 16)) == (d2b & ~(3u << 16)),
+               (long)d2);
+            d->speed = USB_SPEED_FULL;
+            r = usb_hub_info(d, 4, 2, 1);
+            d0 = m32(sc); d2 = m32(sc + 8);
+            ck("a FULL-speed hub: Hub flag, but no MTT and no think time",
+               r == USB_OK && (d0 & (1u << 26)) && !(d0 & (1u << 25)) &&
+               !((d2 >> 16) & 3u), (long)d0);
+            ck("no port count is refused", usb_hub_info(d, 0, 0, 0) == USB_EPARAM, 0);
+        }
+    }
+
     printf("\n%d/%d passed\n", total - fails, total);
     return fails ? 1 : 0;
 }

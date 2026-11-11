@@ -211,6 +211,20 @@ BUGS = [
      """    p->linetime = (ht * 8000u + p->mode.pclk_khz - 1u) / p->mode.pclk_khz;""",
      """    p->linetime = (ht * 8000u) / p->mode.pclk_khz;"""),
 
+    # ── v0.9.2.2: the background-colour diagnostic ─────────────────
+    ("`gfx color` writes to a pipe that is not running",
+     "a colour on a dark pipe proves nothing, and the refusal is what "
+     "tells the person to run `gfx on` first",
+     """    if(!s->pipe_b_powered || !(s->b_conf & TRANSCONF_EN)) return refuse(p, XM_ENOTLIT);""",
+     """    (void)s->b_conf;"""),
+
+    ("the colour's gamma/CSC bits are let through",
+     "bits 31:30 send the background through pipe B's gamma and CSC, "
+     "which nothing has programmed -- the colour on the monitor would "
+     "not be the one asked for",
+     """    wr(p, R_B_BOTTOM, rgb & 0x3FFFFFFFu, 0x3FFFFFFFu, "background colour");""",
+     """    wr(p, R_B_BOTTOM, rgb, 0x3FFFFFFFu, "background colour");"""),
+
     # ── the mode ──────────────────────────────────────────────────
     ("the preferred mode is lit, scrambling or not",
      "the LG's 1080p144 is 346.5 MHz: over 340 without SCDC is no picture",

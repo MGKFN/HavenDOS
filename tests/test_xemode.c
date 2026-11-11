@@ -811,6 +811,37 @@ int main(void)
     ck("every write landed but the frame counter is still: said in red",
        r == XM_OK && has("NOT MOVING."), nl);
 
+    /* ── v0.9.2.2: the background colour, and pipe B live ─────── */
+    head("`gfx color` and `gfx b`: the diagnostics for a black monitor");
+    hp(); lg(); plan_hp(); xm_apply(&D, &P, &RES);
+    memcpy(before, regs, SPAN); w_total = 0; w_forbidden = 0;
+    dev_ok(); xm_read(&D, &S);
+    r = xm_plan_color(&S, XM_RGB_BLUE, &P);
+    ck("lit: the colour is one write, to PIPE_BOTTOM_COLOR B",
+       r == XM_OK && P.nops == 1 && P.ops[0].off == 0x71034u && P.ops[0].val == 0x3FFu, r);
+    r = xm_apply(&D, &P, &RES);
+    ck("  ... applied, read back, nothing on pipe A's side",
+       r == XM_OK && regs[0x71034 / 4] == 0x3FFu && w_total == 1 && w_forbidden == 0 &&
+       pipe_a_unchanged(), r);
+    nl = 0; longest = 0;
+    xm_report_result(&P, &RES, cap);
+    ck("  ... and the screen says how to read the monitor",
+       has("colour, black box inside") && has("still black") && longest <= GFX_LINE_MAX, nl);
+    ck("white is all thirty bits, and no gamma/CSC bit is ever set",
+       xm_plan_color(&S, 0xFFFFFFFFu, &P) == XM_OK && P.ops[0].val == 0x3FFFFFFFu, 0);
+    nl = 0; longest = 0;
+    xm_report_live(&D, cap);
+    ck("`gfx b`: the frame counter moves while it runs", has(": running"), nl);
+    ck("  ... SURFLIVE and BOTTOM are shown", has("SURFLIVE") && has("BOTTOM     000003FF"), nl);
+    ck("  ... in lines that fit", longest <= GFX_LINE_MAX, longest);
+    ck("  ... and reading wrote nothing", w_total == 1, w_total);
+    if(fails) dump();
+    hp(); dev_ok(); xm_read(&D, &S);
+    ck("not lit: `gfx color` refuses, naming `gfx on`",
+       xm_plan_color(&S, XM_RGB_BLUE, &P) == XM_ENOTLIT && P.nops == 0, P.why);
+    nl = 0; xm_report_live(&D, cap);
+    ck("  ... and `gfx b` says the pipe is stopped", has(": STOPPED"), nl);
+
     /* ── off, when B's PLL is the panel's ──────────────────────── */
     head("`gfx off` never stops the panel's PLL");
     hp(); R(0x164280, 0x01E07005u);              /* B selects DPLL1 (A's), ungated */

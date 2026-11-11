@@ -339,6 +339,20 @@ int usb_control(const usb_dev_t *d, uint8_t rtype, uint8_t req,
     return r;
 }
 
+/* v0.9.2.2: see usb_hc_ops_t::hub_info. A back-end without the op has
+   nothing to be told (UHCI: a hub is transparent), which is success. */
+int usb_hub_info(const usb_dev_t *hub, int nports, int think_time, int multi_tt)
+{
+    usb_hc_t *h = hc_of(hub);
+    int r;
+    if (!h) return USB_ENODEV;
+    if (!h->ops->hub_info) return USB_OK;
+    kpoll_enter();
+    r = h->ops->hub_info(h, hub, nports, think_time, multi_tt);
+    kpoll_leave();
+    return r;
+}
+
 int usb_bulk(const usb_dev_t *d, uint8_t ep, int in, void *data, int len,
              int mps)
 {

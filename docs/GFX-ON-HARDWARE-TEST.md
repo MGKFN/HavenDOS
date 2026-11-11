@@ -1,4 +1,11 @@
-# 0.9.2.1 hardware test: light the HDMI monitor
+# 0.9.2.2 hardware test: light the HDMI monitor
+
+> **0.9.2.1 ON THE HP, 11 November: THE MONITOR TOOK THE SIGNAL.**
+> `Lit. 69 writes, every one read back`, the frame counter was moving and
+> there was no underrun. The LG woke up and showed a lit black screen, but
+> not the picture. Steps 7 and 8 are for this release. The keyboard
+> problem was the hub: a slow keyboard behind a hub needs the controller
+> to know the hub IS a hub, and it was never told. 0.9.2.2 tells it.
 
 > **0.9.2 ON THE HP, 11 November:** the panel was untouched. 25 writes
 > read back exactly, and DPLL0 locked at 148.5 MHz. It stopped at step 28,
@@ -117,8 +124,35 @@ booting**. Then:
 4. If either one still does nothing, unplug it, plug it back in, run
    `usb rescan`, and try again.
 
+## 7. Why the monitor is black: `gfx color blue` (photos of BOTH screens)
+
+After `gfx on` has said `Lit.`:
+
+1. Type `gfx color blue`.
+2. Photograph the **monitor**. It tells us which of these is true:
+   - **All blue:** the plane isn't being shown at all.
+   - **Blue, with a black 1024x768 box in the middle:** the plane is
+     there, but the pixels it fetches are black.
+   - **Still black:** pixels aren't reaching the monitor at all, even
+     though the timing is.
+   - **The HavenDOS screen with blue around it:** it works.
+3. Photograph the **laptop**, every page. `gfx color` also prints
+   pipe B's live registers. `SURFLIVE` is the line that matters most.
+4. `gfx color off` puts the background back to black. `gfx b` prints the
+   same registers again at any time.
+
+## 8. The keyboard on its hub
+
+Plug the hub, with the keyboard on it, in **before booting**.
+1. Does the keyboard type?
+2. If it doesn't, photograph `usb -vv` and the `dmesg` lines that
+   mention `USB hub`.
+
+A device plugged into the hub after boot needs `usb rescan` before it
+works.
+
 ## What to send
 
-Photos of steps 1-6, with the monitor's photo next to the laptop's for
+Photos of steps 1-8 (7 and 8 above all), with the monitor's photo next to the laptop's for
 step 3. Say in words whether the **panel** flickered or changed at any
 point.

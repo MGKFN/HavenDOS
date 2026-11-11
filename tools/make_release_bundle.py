@@ -204,12 +204,12 @@ laptop's.
 
 ## What this release wants from the laptop
 
-**`docs/GFX-ON-HARDWARE-TEST.md`.** Ten minutes, the LG monitor on
-and set to HDMI, and the USB keyboard and mouse receiver plugged in
-before booting. 0.9.2 stopped at step 28 on a register with read-only
-bits; 0.9.2.1 copies only that register's fields. Run `gfx on` again
-and photograph BOTH screens. Then photograph `usb -vv`, `usb cfg` and
-`dmesg` for the keyboard and receiver, and say which of them works.
+**`docs/GFX-ON-HARDWARE-TEST.md`, steps 7 and 8.** On 0.9.2.1 the LG
+took the signal and showed black. Run `gfx on`, then `gfx color blue`,
+and photograph the monitor and every page on the laptop: the colour on
+the monitor says whether the plane is missing, fetching black, or the
+pixels are not getting through. Then the keyboard on its hub, plugged
+in before boot: does it type?
 
 The older plans are still in `docs/` and still unanswered:
 `TRACKPAD-AND-PAIR-HARDWARE-TEST.md` for `i2chid` and the Notepad

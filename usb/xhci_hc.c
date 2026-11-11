@@ -1295,6 +1295,64 @@ static int x_attach_common(usb_hc_t *h, int rootport, uint32_t route,
     return USB_OK;
 }
 
+/* ── a hub is a hub: the slot context says so, v0.9.2.2 ──────────────
+ *
+ * The slot context of a hub has four fields a function's does not:
+ *
+ *   dword 0 bit 26   Hub        "this device is a USB hub"
+ *   dword 0 bit 25   MTT        a high-speed hub with one TT per port
+ *   dword 1 31:24    Number of Ports
+ *   dword 2 17:16    TT Think Time, for a high-speed hub
+ *
+ * Until this release none was ever written. A high-speed device behind a
+ * hub did not care, which is why a USB stick behind one was fine. A LOW
+ * or FULL speed device does: its slot names the hub's slot as its
+ * transaction translator (x_attach_common, dword 2), and the controller
+ * schedules split transactions through it only for a slot it knows is a
+ * hub. Kyan's HP, 11 November: a keyboard on a hub lit up, and typed
+ * nothing.
+ *
+ * Linux, xhci_update_hub_device(): copy the slot context out of the
+ * device context, set the four fields, and give it back with a Configure
+ * Endpoint whose only add flag is A0 -- no endpoint is touched. That is
+ * what this does. Context Entries, route string, speed and root port
+ * come from the device context unchanged, so the hub's own endpoints, if
+ * it has any configured, keep theirs. */
+static int x_hub_info(usb_hc_t *h, const usb_dev_t *d, int nports,
+                      int think_time, int multi_tt)
+{
+    int      hcno = h->index;
+    xhci_t  *x = &g_x[hcno];
+    int      slot = (int)d->slot;
+    uint8_t *isc, *dsc;
+    uint32_t d0, d1, d2;
+
+    if (!x->valid) return USB_ENODEV;
+    if (slot <= 0 || slot > x->maxslots || !x->slot_used[slot]) return USB_EPARAM;
+    if (nports < 1 || nports > 255) return USB_EPARAM;
+
+    memset(g_inctx[hcno], 0, sizeof g_inctx[hcno]);
+    ctx_set32(in_ctrl_ctx(x, hcno), 0, 0);       /* drop nothing          */
+    ctx_set32(in_ctrl_ctx(x, hcno), 1, 1u);      /* add A0: the slot only */
+
+    isc = in_slot_ctx(x, hcno);
+    dsc = slot_ctx(x, hcno, slot);
+    d0 = ctx_get32(dsc, 0) & ~((1u << 26) | (1u << 25));
+    d0 |= (1u << 26);
+    /* MTT only means anything for a high-speed hub. */
+    if (multi_tt && d->speed == USB_SPEED_HIGH) d0 |= (1u << 25);
+    d1 = (ctx_get32(dsc, 1) & 0x00FFFFFFu) | ((uint32_t)nports << 24);
+    d2 = ctx_get32(dsc, 2) & ~(3u << 16);
+    if (d->speed == USB_SPEED_HIGH) d2 |= ((uint32_t)think_time & 3u) << 16;
+    ctx_set32(isc, 0, d0);
+    ctx_set32(isc, 1, d1);
+    ctx_set32(isc, 2, d2);
+    ctx_set32(isc, 3, ctx_get32(dsc, 3));
+
+    return cmd_run(x, hcno, pa(g_inctx[hcno]), 0, 0,
+                   TRB_TYPE(TRB_CONFIG_EP) | ((uint32_t)slot << 24), 0);
+}
+
 /* A device on a root port: reset it, and take its speed from PORTSC. */
 static int x_attach(usb_hc_t *h, int port, usb_dev_t *out)
 {
@@ -1888,6 +1946,7 @@ static const usb_hc_ops_t XHCI_OPS = {
     .reset_toggle   = x_reset_toggle,
     .intr_poll      = x_intr_poll,
     .configure      = x_configure,
+    .hub_info       = x_hub_info,
 };
 
 /* ── discovery ─────────────────────────────────────────────────────── */

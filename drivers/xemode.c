@@ -134,6 +134,10 @@ static const uint32_t k_dbuf[4] = { 0x45008u, 0x44FE8u, 0x44300u, 0x44304u };
 #define   TRANSCONF_STATE   BIT(30)
 #define R_B_ARB     0x71028u   /* PIPE_ARB_CTL                         */
 #define   PIPE_ARB_PROG_SLOTS BIT(13)
+#define R_B_BOTTOM  0x71034u   /* SKL_BOTTOM_COLOR (PIPE_BOTTOM_COLOR)  */
+#define R_B_DSL     0x71000u   /* PIPEDSL: the scanline being sent      */
+#define R_B_SURFLIVE 0x711ACu  /* PLANE_SURFLIVE: what is scanned NOW   */
+#define R_B_IIR     0x44418u   /* GEN8_DE_PIPE_IIR(PIPE_B)              */
 #define R_B_MISC    0x71030u   /* PIPE_MISC                            */
 #define R_B_CHICKEN 0x71038u   /* PIPE_CHICKEN                         */
 #define R_B_DBOX    0x7103Cu
@@ -217,6 +221,7 @@ const char *xm_why_name(int why)
     case XM_EREADBACK: return "a register did not keep what was written";
     case XM_ETIMEOUT:  return "a status bit never came";
     case XM_EOFF:      return "pipe B is not lit; there is nothing to turn off";
+    case XM_ENOTLIT:   return "pipe B is not running -- `gfx on` first";
     default:           return "unknown";
     }
 }
@@ -660,6 +665,19 @@ int xm_plan_off(const xm_state_t *s, xm_plan_t *p)
     return XM_OK;
 }
 
+int xm_plan_color(const xm_state_t *s, uint32_t rgb, xm_plan_t *p)
+{
+    memset(p, 0, sizeof *p);
+    p->on = 2; p->dpll = -1; p->level = -1;
+    if(!s || !s->read) return refuse(p, XM_ENODEV);
+    if(!(s->pw_drv & PW_STATE(PW_1))) return refuse(p, XM_ECORE);
+    if(!s->pipe_b_powered || !(s->b_conf & TRANSCONF_EN)) return refuse(p, XM_ENOTLIT);
+    /* bits 31:30 are gamma/CSC for the colour itself: left clear, so it
+       reaches the port exactly as written */
+    wr(p, R_B_BOTTOM, rgb & 0x3FFFFFFFu, 0x3FFFFFFFu, "background colour");
+    return XM_OK;
+}
+
 /* ════ 3. WRITING ══════════════════════════════════════════════════ */
 
 /* May `off` go from `old` to `val`? The whole of the answer is here.
@@ -768,7 +786,7 @@ int xm_apply(const gfx_dev_t *dev, const xm_plan_t *p, xm_result_t *res)
 
     /* Is pipe B actually scanning? Its frame counter, 50 ms apart --
        three frames at 60 Hz -- and the underrun flag. */
-    if(p->on){
+    if(p->on == 1){
         res->frm0 = GFX_RD(dev->mmio, R_B_FRM);
         XM_SLEEP_MS(50);
         res->frm1 = GFX_RD(dev->mmio, R_B_FRM);
@@ -894,7 +912,8 @@ void xm_report_plan(const xm_state_t *s, const xm_plan_t *p, int full,
 {
     xl_t l; int i;
     x_emit = emit; X0(&l);
-    xsay(GFX_T_HEAD, p->on ? "The external monitor: the plan -- nothing is written yet"
+    xsay(GFX_T_HEAD, p->on == 2 ? "Pipe B's background colour: the plan"
+                   : p->on ? "The external monitor: the plan -- nothing is written yet"
                            : "Turning the external monitor off: the plan");
     if(p->why){
         Xs(&l, "  Refused: "); Xs(&l, xm_why_name(p->why)); Xc(&l, '.');
@@ -903,7 +922,7 @@ void xm_report_plan(const xm_state_t *s, const xm_plan_t *p, int full,
         xsay(GFX_T_TEXT, "  Nothing was written.");
         return;
     }
-    if(p->on){
+    if(p->on == 1){
         const edid_mode_t *m = &p->mode;
         uint32_t ht = (uint32_t)m->hactive + m->hblank, vt = (uint32_t)m->vactive + m->vblank;
         Xs(&l, "  mode   "); Xu(&l, m->hactive); Xc(&l, 'x'); Xu(&l, m->vactive);
@@ -945,6 +964,7 @@ void xm_report_plan(const xm_state_t *s, const xm_plan_t *p, int full,
     XE(&l, GFX_T_HEAD);
     xsay(GFX_T_TEXT, "  grp = all four PHY lanes; -clear +set):");
     for(i = 0; i < p->nops; i++) op_line(i, &p->ops[i]);
+    if(p->on == 2) return;
     xsay(GFX_T_TEXT, p->on ? "  Nothing outside pipe B, transcoder B, DDI B and PHY B changes,"
                            : "  Power wells and buffer slices are left on: harmless, and");
     xsay(GFX_T_TEXT, p->on ? "  except B's own bits of shared registers. Pipe A is not touched."
@@ -955,6 +975,14 @@ void xm_report_result(const xm_plan_t *p, const xm_result_t *res, gfx_emit_t emi
 {
     xl_t l; int i;
     x_emit = emit; X0(&l);
+    if(res->why == XM_OK && p->on == 2){
+        xsay(GFX_T_GOOD, "Pipe B's background colour is set. On the monitor:");
+        xsay(GFX_T_TEXT, "  all that colour          -> the plane is not being shown");
+        xsay(GFX_T_TEXT, "  colour, black box inside -> the plane is there, fetching black");
+        xsay(GFX_T_TEXT, "  still black              -> pixels are not reaching the monitor");
+        xsay(GFX_T_TEXT, "  the picture, colour round it -> it works; `gfx color off`");
+        return;
+    }
     if(res->why == XM_OK){
         Xs(&l, p->on ? "Lit. " : "Off. "); Xu(&l, res->writes);
         Xs(&l, " writes, every one read back as it should.");
@@ -984,7 +1012,7 @@ void xm_report_result(const xm_plan_t *p, const xm_result_t *res, gfx_emit_t emi
         }
         Xs(&l, "  "); Xu(&l, res->writes); Xs(&l, " writes were made before it stopped.");
         XE(&l, GFX_T_TEXT);
-        if(p->on) xsay(GFX_T_TEXT, "  `gfx off` undoes what was done; then photograph this.");
+        if(p->on == 1) xsay(GFX_T_TEXT, "  `gfx off` undoes what was done; then photograph this.");
     }
     if(res->nwlog){
         xsay(GFX_T_HEAD, "Every write (register=written/read back)");
@@ -995,4 +1023,63 @@ void xm_report_result(const xm_plan_t *p, const xm_result_t *res, gfx_emit_t emi
             if(i % 3 == 2 || i == res->nwlog - 1) XE(&l, GFX_T_DIM);
         }
     }
+}
+
+/* ── pipe B, live (v0.9.2.2) ─────────────────────────────────────────
+   On the HP on 11 November `gfx on` reported every write read back, the
+   frame counter moving and no underrun -- and the monitor, locked on
+   to the signal, showed black. These are the registers that tell the
+   cases apart. PLANE_SURFLIVE is the one that matters most: PLANE_SURF
+   is what was ARMED, SURFLIVE is what the plane is actually scanning. */
+static void Xreg(xl_t *l, const char *name, uint32_t v)
+{
+    int start = l->n;
+    Xs(l, "  "); Xs(l, name); Xcol(l, start + 13);
+    Xh(l, v, 8);
+}
+
+void xm_report_live(const gfx_dev_t *dev, gfx_emit_t emit)
+{
+    static const struct { const char *name; uint32_t off; } R[] = {
+        { "TRANSCONF",  R_B_CONF },    { "DDI_FUNC",   R_B_FUNC },
+        { "DDI_BUF",    R_DDI_BUF_B }, { "PIPESRC",    R_B_SRC },
+        { "PLANE_CTL",  R_B_CTL },     { "PLANE_SURF", R_B_SURF },
+        { "SURFLIVE",   R_B_SURFLIVE },{ "PLANE_POS",  R_B_POS },
+        { "PLANE_SIZE", R_B_SIZE },    { "STRIDE",     R_B_STRIDE },
+        { "COLOR_CTL",  R_B_COLOR },   { "BUF_CFG",    R_B_BUF },
+        { "WM0",        R_B_WM(0) },   { "MBUS_DBOX",  R_B_DBOX },
+        { "ARB_CTL",    R_B_ARB },     { "BOTTOM",     R_B_BOTTOM },
+        { "GAMMA_MODE", R_B_GAMMA },   { "CSC_MODE",   R_B_CSC },
+        { "DBUF_S3",    0x44300u },    { "DBUF_S4",    0x44304u },
+        { "MBUS_CTL",   R_MBUS_CTL },  { "PIPE_ISR",   R_B_ISR },
+        { "PIPE_IIR",   R_B_IIR },     { "DPCLKA",     R_DPCLKA },
+    };
+    xl_t l;
+    uint32_t pw, dsl0, dsl1, f0, f1;
+    unsigned i;
+    x_emit = emit; X0(&l);
+    xsay(GFX_T_HEAD, "Pipe B, live -- read only");
+    if(!dev || dev->why != GFX_OK || !dev->mmio){
+        xsay(GFX_T_BAD, "  No display engine was opened."); return;
+    }
+    pw = GFX_RD(dev->mmio, R_PWR_DRV);
+    if(!(pw & PW_STATE(PW_1)) || !(pw & PW_STATE(PW_B))){
+        xsay(GFX_T_WARN, "  PW_1 or PW_B is off: pipe B's registers cannot be read.");
+        return;
+    }
+    dsl0 = GFX_RD(dev->mmio, R_B_DSL) & 0x1FFFu;
+    f0 = GFX_RD(dev->mmio, R_B_FRM);
+    XM_SLEEP_MS(20);
+    dsl1 = GFX_RD(dev->mmio, R_B_DSL) & 0x1FFFu;
+    f1 = GFX_RD(dev->mmio, R_B_FRM);
+    Xs(&l, "  scanline "); Xu(&l, dsl0); Xs(&l, " -> "); Xu(&l, dsl1);
+    Xs(&l, ", frame "); Xu(&l, f0); Xs(&l, " -> "); Xu(&l, f1); Xs(&l, " in 20 ms");
+    Xs(&l, f1 != f0 ? ": running" : ": STOPPED");
+    XE(&l, f1 != f0 ? GFX_T_GOOD : GFX_T_BAD);
+    for(i = 0; i < sizeof R / sizeof R[0]; i++){
+        Xreg(&l, R[i].name, GFX_RD(dev->mmio, R[i].off));
+        if(i % 3 == 2 || i == sizeof R / sizeof R[0] - 1) XE(&l, GFX_T_TEXT);
+        else Xs(&l, " ");
+    }
+    xsay(GFX_T_TEXT, "  SURFLIVE is what the plane scans now; PLANE_SURF only what was armed.");
 }

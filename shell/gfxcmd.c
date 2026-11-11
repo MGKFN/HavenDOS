@@ -162,6 +162,33 @@ static void cmd_mode(const char *what)
     xm_report_result(&g_plan, &g_res, emit);
 }
 
+/* gfx color <red|green|blue|white|off>, v0.9.2.2: pipe B's background,
+   the diagnostic for a monitor that locks on and shows black. Then the
+   live readout, so one photograph has both. */
+static void cmd_color(const char *name)
+{
+    uint32_t rgb;
+    if(!name || !*name) name = "blue";
+    if(!strcmp(name, "blue"))       rgb = XM_RGB_BLUE;
+    else if(!strcmp(name, "red"))   rgb = XM_RGB_RED;
+    else if(!strcmp(name, "green")) rgb = XM_RGB_GREEN;
+    else if(!strcmp(name, "white")) rgb = XM_RGB_WHITE;
+    else if(!strcmp(name, "off") || !strcmp(name, "black")) rgb = 0;
+    else { vga_puts("Usage: gfx color [blue|red|green|white|off]\n"); return; }
+    if(g_dev.why != GFX_OK){
+        vga_puts("No display engine: ");
+        vga_puts(gfx_why_name(g_dev.why));
+        vga_puts(".\n");
+        return;
+    }
+    xm_read(&g_dev, &g_xs);
+    xm_plan_color(&g_xs, rgb, &g_plan);
+    if(g_plan.why){ xm_report_plan(&g_xs, &g_plan, 1, emit); return; }
+    xm_apply(&g_dev, &g_plan, &g_res);
+    xm_report_result(&g_plan, &g_res, emit);
+    xm_report_live(&g_dev, emit);
+}
+
 void cmd_gfx(const char *arg, const char *arg2)
 {
     g_stop = 0;
@@ -169,7 +196,7 @@ void cmd_gfx(const char *arg, const char *arg2)
 
     if(arg && *arg && strcmp(arg, "regs") && strcmp(arg, "vbt") &&
        strcmp(arg, "edid") && strcmp(arg, "plan") && strcmp(arg, "on") &&
-       strcmp(arg, "off")){
+       strcmp(arg, "off") && strcmp(arg, "color") && strcmp(arg, "b")){
         vga_puts("usage: gfx         the display engine, as the firmware left it\n");
         vga_puts("       gfx regs    every register read, offset and value\n");
         vga_puts("       gfx vbt     what the Video BIOS Table says is wired\n");
@@ -177,6 +204,8 @@ void cmd_gfx(const char *arg, const char *arg2)
         vga_puts("       gfx plan    what `gfx on` would write, or why it refuses\n");
         vga_puts("       gfx on      light the HDMI monitor (asks first)\n");
         vga_puts("       gfx off     turn it off again\n");
+        vga_puts("       gfx b       pipe B as it runs, read only\n");
+        vga_puts("       gfx color [blue|red|green|white|off]  pipe B's background\n");
         vga_puts("Only `gfx on` and `gfx off` change what a screen shows.\n");
         return;
     }
@@ -192,6 +221,14 @@ void cmd_gfx(const char *arg, const char *arg2)
 
     if(arg && (!strcmp(arg, "plan") || !strcmp(arg, "on") || !strcmp(arg, "off")))
         cmd_mode(arg);
+    else if(arg && !strcmp(arg, "color")) cmd_color(arg2);
+    else if(arg && !strcmp(arg, "b")){
+        if(g_dev.why != GFX_OK){
+            vga_puts("No display engine: ");
+            vga_puts(gfx_why_name(g_dev.why));
+            vga_puts(".\n");
+        } else xm_report_live(&g_dev, emit);
+    }
     else if(arg && !strcmp(arg, "edid")) cmd_edid(arg2);
     else if(arg && !strcmp(arg, "regs")) gfx_report_regs(&g_dev, &g_regs, emit);
     else if(arg && !strcmp(arg, "vbt")) gfx_report_vbt(&g_vbt, emit);

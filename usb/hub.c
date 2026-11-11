@@ -142,19 +142,25 @@ static int port_status(const usb_dev_t *h, int port,
  * and the stall is not logged as a fault. Getting this wrong would make
  * every USB 3 hub report zero ports, which looks exactly like a hub with
  * nothing plugged into it. */
-static int hub_nports(const usb_dev_t *h)
+/* v0.9.2.2: also hands back the TT think time, wHubCharacteristics
+   bits 6:5 (USB 2.0 11.23.2.1), which a USB 2.0 hub's descriptor carries
+   and a SuperSpeed hub's does not -- it has no translator. */
+static int hub_nports(const usb_dev_t *h, int *think_time)
 {
     uint8_t d[8];
     int r, i;
     static const uint8_t types[2] = { HUB_DESC_TYPE, HUB_DESC_TYPE_SS };
 
+    *think_time = 0;
     for (i = 0; i < 2; i++) {
         memset(d, 0, sizeof d);
         r = usb_control(h, USB_DIR_IN | USB_TYPE_CLASS | USB_RECIP_DEVICE,
                         USB_REQ_GET_DESCRIPTOR,
                         (uint16_t)(types[i] << 8), 0, d, 8);
-        if (r >= 3 && d[2] > 0 && d[2] <= 127)
+        if (r >= 3 && d[2] > 0 && d[2] <= 127) {
+            if (i == 0 && r >= 5) *think_time = (d[3] >> 5) & 3;
             return (int)d[2];
+        }
     }
     return 0;
 }
@@ -217,15 +223,30 @@ static int port_reset_wait(const usb_dev_t *h, int port, uint16_t *status)
 static int scan_one(int hubidx)
 {
     const usb_dev_t *h = usb_device(hubidx);
-    int nports, p, got = 0;
+    int nports, p, got = 0, ttt, r0;
 
     if (!h) return 0;
 
-    nports = hub_nports(h);
+    nports = hub_nports(h, &ttt);
     if (nports <= 0) {
         klog(KLOG_WARN, "USB hub addr %u: no port count", (uint32_t)h->addr);
         return 0;
     }
+
+    /* v0.9.2.2: tell the controller this device IS a hub before any
+       port behind it is touched -- the order Linux uses
+       (xhci_update_hub_device in hub_configure). Without it a low or
+       full speed device behind a high speed hub gets no split
+       transactions: a keyboard that lights up and types nothing.
+       bDeviceProtocol 2 is a high-speed hub with one TT per port. A
+       refusal is logged and the walk goes on: a high-speed device
+       behind the hub never needed this. */
+    r0 = usb_hub_info(h, nports, ttt, h->dev_protocol == 2);
+    if (r0 != USB_OK)
+        klog(KLOG_WARN, "USB hub addr %u: the controller would not take "
+                        "it as a hub (%d); low and full speed devices "
+                        "behind it may not answer",
+             (uint32_t)h->addr, (uint32_t)r0);
     if (nports > HUB_MAX_PORTS) nports = HUB_MAX_PORTS;
 
     klog(KLOG_INFO, "USB hub addr %u tier %u: %u port(s)",

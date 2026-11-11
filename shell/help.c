@@ -128,6 +128,8 @@ static const char *cat_sys[]={
     "gfx plan        what `gfx on` would write, or why it refuses",
     "gfx on          light the HDMI monitor: it mirrors the panel (0.9.2)",
     "gfx off         turn the HDMI monitor off again",
+    "gfx b           pipe B as it runs: scanline, plane, surface (read only)",
+    "gfx color <c>   pipe B's background: blue/red/green/white/off",
     "lockdown        ask lockdownd what it is -- pairing stages 1 and 2",
     "pair            pair with a plugged-in iPhone, then open a session",
     "pair session    open an encrypted session from the stored record",

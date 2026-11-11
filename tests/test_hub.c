@@ -255,6 +255,12 @@ static int hc_control(usb_hc_t *h, const usb_dev_t *d, uint8_t rtype,
         if(len < 3 || !b) return USB_EXFER;
         memset(b, 0, len);
         b[0] = 9; b[1] = (uint8_t)want; b[2] = (uint8_t)SIM[me].nports;
+        /* wHubCharacteristics: TT think time 2 (bits 6:5) on a 2.0 hub,
+           with the bits around it set so a reader taking the wrong ones
+           shows -- power switching (1:0) = 1, compound (2) = 1. The
+           first version used think time 1, which equals the power bits:
+           the harness caught a reader taking bits 1:0 passing. */
+        if(want == 0x29){ b[3] = (uint8_t)((2u << 5) | 0x05u); b[4] = 0x80; }
         return (len < 9) ? len : 9;
     }
 
@@ -323,6 +329,20 @@ static int hc_bulk(usb_hc_t *h, const usb_dev_t *d, uint8_t ep, int in,
 }
 static int hc_configure(usb_hc_t *h, usb_dev_t *d){ (void)h;(void)d; return USB_OK; }
 
+/* v0.9.2.2: what the hub driver told the controller about a hub, and
+   when -- the port powers/resets counted so far, which must be none. */
+static int g_hubinfo_calls, g_hubinfo_nports, g_hubinfo_ttt, g_hubinfo_mtt;
+static int g_hubinfo_resets_before, g_hubinfo_powers_before, g_hubinfo_refuse;
+static int hc_hub_info(usb_hc_t *h, const usb_dev_t *d, int nports, int ttt, int mtt)
+{
+    (void)h; (void)d;
+    g_hubinfo_calls++;
+    g_hubinfo_nports = nports; g_hubinfo_ttt = ttt; g_hubinfo_mtt = mtt;
+    g_hubinfo_resets_before = g_port_resets;
+    g_hubinfo_powers_before = g_port_powers;
+    return g_hubinfo_refuse ? USB_ECMD : USB_OK;
+}
+
 static const usb_hc_ops_t OPS_WITH_PATH = {
     .name           = "xHCI",
     .port_count     = hc_port_count,
@@ -332,6 +352,7 @@ static const usb_hc_ops_t OPS_WITH_PATH = {
     .control        = hc_control,
     .bulk           = hc_bulk,
     .configure      = hc_configure,
+    .hub_info       = hc_hub_info,
 };
 /* A back-end that cannot address a device through a hub -- which is
    UHCI's position in the kernel until drivers/uhci.c can be asked to
@@ -381,6 +402,9 @@ static void sim_clear(void)
     g_too_early = 0;
     g_cur = -1;
     g_sleeps = 0;
+    g_hubinfo_calls = g_hubinfo_nports = g_hubinfo_ttt = g_hubinfo_mtt = 0;
+    g_hubinfo_resets_before = g_hubinfo_powers_before = -1;
+    g_hubinfo_refuse = 0;
 }
 
 static int add_root_hub(int rootport, int nports, uint8_t speed)
@@ -708,6 +732,42 @@ int main(void)
     ck("the reset was attempted", g_port_resets == 1, g_port_resets);
     ck("and attach_path was not called on a port that is not enabled",
        g_natt == 0, g_natt);
+
+    head("v0.9.2.2: the controller is told a hub IS a hub, before its ports");
+    /* Kyan's HP, 11 November: a keyboard behind a hub lit up and typed
+       nothing. The hub's slot never said it was a hub, so the low/full
+       speed keyboard behind it got no split transactions. */
+    sim_clear();
+    { int h = add_root_hub(0, 4, USB_SPEED_HIGH);
+      add_child(h, 2, USB_SPEED_LOW, 0, 0); }
+    go(&OPS_WITH_PATH);
+    ck("hub_info was called once, for the one hub", g_hubinfo_calls == 1, g_hubinfo_calls);
+    ck("  ... with its 4 ports and TT think time 2 (bits 6:5 only)",
+       g_hubinfo_nports == 4 && g_hubinfo_ttt == 2, g_hubinfo_ttt);
+    ck("  ... before any port was powered or reset",
+       g_hubinfo_powers_before == 0 && g_hubinfo_resets_before == 0,
+       g_hubinfo_powers_before);
+    ck("  ... and the keyboard behind it is still found", usb_device_count() == 2,
+       usb_device_count());
+    sim_clear();
+    { int h = add_root_hub(0, 4, USB_SPEED_HIGH);
+      add_child(h, 2, USB_SPEED_HIGH, 0, 0); }
+    g_hubinfo_refuse = 1;
+    go(&OPS_WITH_PATH);
+    ck("a controller that refuses it: the walk goes on (a 2.0 stick is fine)",
+       g_hubinfo_calls == 1 && usb_device_count() == 2, usb_device_count());
+    sim_clear();
+    { int h = add_root_hub(0, 4, USB_SPEED_SUPER);
+      SIM[h].ss_descriptor = 1; }
+    go(&OPS_WITH_PATH);
+    ck("a SuperSpeed hub has no translator: think time 0",
+       g_hubinfo_calls == 1 && g_hubinfo_ttt == 0, g_hubinfo_ttt);
+    sim_clear();
+    { int h = add_root_hub(0, 2, USB_SPEED_HIGH);
+      add_child(h, 0, USB_SPEED_HIGH, 0, 0); }
+    go(&OPS_NO_PATH);
+    ck("a back-end without the op (UHCI) is not asked", g_hubinfo_calls == 0,
+       g_hubinfo_calls);
 
     head("a SuperSpeed hub answers 0x2A and stalls 0x29");
     /* Asking only for the 2.0 descriptor makes every USB 3 hub report

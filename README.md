@@ -6,7 +6,15 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.2.1 Beta "Janus"
+## Current version: 0.9.2.2 Beta "Janus"
+
+**0.9.2.2.** On 0.9.2.1 the LG monitor **locked on to HavenDOS's signal**:
+1920x1080 at 60 Hz on its HDMI input, from a display path HavenDOS set
+up itself. It showed black instead of the picture. Two tools find out
+why: `gfx color` sets pipe B's background colour, and `gfx b` shows
+pipe B as it runs. Also in this release, USB hubs are now marked as hubs
+on the controller, so a keyboard or mouse behind one can answer.
+[Changelog](changelogs/CHANGELOG-v0.9.2.2.md).
 
 **0.9.2.1** fixes the two things 0.9.2 ran into on the HP.
 - **`gfx on` stopped at step 28.** One register (the pipe's memory-bus
@@ -127,11 +135,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.2.1.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.2.2.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.2.1.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.2.2.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

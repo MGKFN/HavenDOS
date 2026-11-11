@@ -1,79 +1,73 @@
-# HavenDOS — handoff, 11 November 2026 (late night)
+# HavenDOS — handoff, 11 November 2026 (midnight)
 
-Current release: **v0.9.2.1** (channel Beta, codename "Janus"), a patch
-to 0.9.2 (`gfx on` lights the HDMI monitor, mirroring the panel) with
-the two things the HP found. Paste this file into a new chat to pick up
-where this left off.
+Current release: **v0.9.2.2** (channel Beta, codename "Janus"). Paste
+this file into a new chat to pick up where this left off.
 
-## START HERE: WHAT 0.9.2 DID ON THE HP, AND WHAT 0.9.2.1 CHANGES
+## START HERE: THE MONITOR TOOK THE SIGNAL. THE PICTURE IS MISSING.
 
-**0.9.2 on the HP (11 Nov, photos).** The panel was untouched.
-- `gfx` shows DPLL1 at **270 MHz** and the panel at **60.00 Hz**. The PLL
-  fix holds.
-- `gfx on` made **25 writes, all read back**:
-  - DDI B IO well on;
-  - DBUF S3/S4 on;
-  - **DPLL0 locked at 148.5 MHz** (001001D0 / 00000E84);
-  - DPCLKA B select and ungate;
-  - TRANS_CLK_SEL B;
-  - PIPESRC;
-  - every timing register;
-  - TRANSCONF (still off);
-  - line time;
-  - PIPE_CHICKEN.
-- It **stopped at step 28, MBUS credits**: 07103C was written A9038C04
-  and read back B1038C04.
-  - Bits 31:25 of PIPE_MBUS_DBOX_CTL are read-only and differ per pipe:
-    A = A9…, B = B1…; bits 28:27 are 01 on A and 10 on B.
-  - **0.9.2.1 copies and holds only the fields (mask 01FFDFEF).**
-  - It does the same for the watermarks (mask E7FFDFFF).
-- `gfx off` was clean: 4 writes.
-- The monitor showed nothing, which was expected: it stopped before
-  TRANSCONF and DDI_BUF.
-- Photographed after another attempt, DPLL0 read ON, locked, 148.5 MHz
-  (writer and reader agree). A stopped `gfx on` leaves DPLL0 running, and
-  the next `gfx on` refuses with ENOPLL. That refusal now says `gfx off`
-  releases it.
+**0.9.2.1 on the HP (11 Nov, photos).**
+- `gfx on` reported `Lit. 69 writes, every one read back`, with the
+  frame counter going `1 -> 4 in 50 ms` and no underrun.
+- **The LG came out of standby, lit and black.** So the whole signal
+  path works on silicon: DPLL0, DDI B, PHY levels (VBT entry 0),
+  transcoder B at 1080p60 in DVI mode, DDI_BUF out of idle. The monitor
+  accepts the link and the timing.
+- **But no picture.** The plane should show the 1024x768 console centred
+  in the frame. A contrast-enhanced photo of the monitor shows no
+  structure at all, only backlight glow.
+- All plane writes read back: PLANE_CTL 94000008, STRIDE 40,
+  POS 009C01C0, SIZE 02FF03FF, SURF 0, COLOR_CTL 2000, BUF_CFG 0FBF0800,
+  WM copied from A, DBOX B1038C04 (fields only).
+- DBUF S3/S4 were already on (no request written). PIPE_ARB_CTL B went
+  0A0F -> 2A0F.
 
-**Also reported: the external USB keyboard and the mouse's wireless
-receiver don't work.** Kyan said "keyboard gets light" — the keyboard
-powers up.
-- `usb/hid.c` only ever drove a device's FIRST interface. A receiver's
-  mouse is usually on interface 1.
-- 0.9.2.1 surveys every HID device and drives every boot keyboard and
-  boot mouse interface, claiming extra ones with `usb_claim_interface()`.
-- `tests/test_usbhid.c` (30) fails 14 checks against the 0.9.2 driver.
-- **A plain wired keyboard that does nothing is NOT explained by this.**
-  Ask for `usb -vv`, `usb cfg <addr>` and `dmesg` (the USB HID lines),
-  and whether these devices ever worked on an earlier HavenDOS.
-  - An external USB mouse *did* work on 0.8.9.6, sluggishly.
-  - Candidates if it is still dead:
-    - the keyboard enumerates but its interface 0 is not boot protocol
-      (subclass 0) — that needs the report parser;
-    - the enumeration fails (cf. port 12 `no answer (-4)` in October);
-    - a low/full-speed interrupt endpoint interval problem on the HP's
-      xHCI.
+**0.9.2.2 adds the diagnostics, with no guessed fix:**
+- **`gfx color [blue|red|green|white|off]`** writes PIPE_BOTTOM_COLOR B
+  (0x71034; 10 bits a channel; bits 31:30 kept clear). Read the monitor:
+  - all colour = the plane is not shown;
+  - colour with a black box = the plane is there but fetching black;
+  - still black = pixels don't reach the port.
+- **`gfx b`** prints pipe B live (read only): scanline, frame counter,
+  PLANE_SURF vs **PLANE_SURFLIVE (0x711AC)**, buffer, WM0, DBOX, ARB,
+  BOTTOM, gamma/CSC, DBUF S3/S4, MBUS_CTL, ISR/IIR, DPCLKA.
 
-Built and tested here:
-- `make test`: 6668/6668 across 64 suites.
-- Injection harnesses: `check_xemode_suite.py` 28/28,
-  `check_usbhid_suite.py` 7/7, `check_gfx_suite.py` 41/41,
-  `check_pointer_suite.py` 11/11.
-- QEMU: `gfx_boot.py` 13/13, `hid_boot.py` 3/3.
+**Suspects, to rank once the photos come back:**
+- **The plane isn't shown at all.** Possible causes:
+  - display 13's ARB slots: PIPE_ARB_USE_PROG_SLOTS is set and the
+    PLANE_CTL ARB_SLOTS field (30:28) is copied as 1 from pipe A; check
+    i915's `adlp_plane_ctl_arb_slots`;
+  - the plane may not latch: compare SURFLIVE to SURF;
+  - DDB/WM: check i915 `skl_ddb_*` for ADL-P.
+- **It's fetching black.** GGTT 0 as seen by pipe B; the DBUF/MBUS path
+  from slices 3/4.
+- **Pixels don't reach the port.** PIPE_MISC, gamma/CSC, the DVI-mode
+  data path.
 
-**Next photos:** `docs/GFX-ON-HARDWARE-TEST.md` (steps 1-6). How to read
-`gfx on`:
-- **`Lit.` + `scanning out.` + a picture:** done. 0.9.3 is HDMI mode (AVI
-  infoframe), the pipe scaler to fill the monitor, and 120 Hz.
-- **`Lit.` but the monitor says "no signal":** the PHY or PLL. Check the
-  PHY lane writes in the log against i915 `icl_ddi_combo_vswing_program`.
-  The VBT gave **vswing entry 0** (450 mV): i915 would use that too, but
-  it is the weakest; try entry 6 if the PHY looks right.
-- **Signal but black:** the plane, DDB or watermarks.
-- **`NOT MOVING.`:** the transcoder clock.
-- **`Stopped:` on another register with read-only bits:** the same
-  treatment as DBOX. Check i915's field definitions and hold only those.
-- **ANY change on the panel:** the most important finding possible.
+**USB: the keyboard was on a hub.** Kyan needs the hub for ports. On
+xHCI no hub's slot context ever had the Hub flag, port count, MTT or TT
+think time. Without it the controller doesn't run split transactions
+for low/full-speed devices behind a high-speed hub. **0.9.2.2:**
+`usb/hub.c` reads the think time (wHubCharacteristics 6:5) and calls
+`usb_hub_info()` before touching any port; `x_hub_info()` sends a
+Configure Endpoint with A0 only and Hub/MTT/ports/think time, as Linux's
+`xhci_update_hub_device()` does. Not yet confirmed on the HP. A device
+plugged into a hub after boot still needs `usb rescan`.
+
+**Tested here:**
+- `make test`: 6695/6695 across 64 suites.
+- Injection harnesses: `check_xemode_suite` 30/30, `check_hub_suite`
+  18/18, `check_xhci_suite` 93/93, `check_usbhid_suite` 7/7.
+- QEMU: `gfx_boot` 15/15, `hid_boot` 3/3.
+
+**Next photos:** `docs/GFX-ON-HARDWARE-TEST.md` steps 7-8: `gfx on`,
+`gfx color blue`, both screens; then the keyboard on its hub.
+
+## 0.9.2.1 (earlier the same night)
+
+`gfx on` stopped at step 28. PIPE_MBUS_DBOX_CTL's bits 31:25 are
+read-only and differ per pipe, so 0.9.2.1 copies and holds only the
+fields. Also, USB HID now drives every boot interface of a device; a
+receiver's mouse is on interface 1.
 
 ## WHAT 0.9.1 FOUND ON THE HP (11 Nov, photos)
 
@@ -3065,9 +3059,12 @@ Left, and each has its reason:
 Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
-## Testing, as of 0.9.2.1
+## Testing, as of 0.9.2.2
 
-**6668 of 6668 checks across 64 suites** (0.9.2.1: `test_usbhid` 30 new,
+**6695 of 6695 checks across 64 suites** (0.9.2.2: `test_xemode` 209,
+`test_hub` 99, `test_xhci` 344; `check_hub_suite.py` 18/18,
+`check_xhci_suite.py` 93/93, `check_xemode_suite.py` 30/30).
+As of 0.9.2.1: **6668 of 6668 checks across 64 suites** (0.9.2.1: `test_usbhid` 30 new,
 `test_xemode` 195 -> 199; `check_usbhid_suite.py` 7/7,
 `check_xemode_suite.py` 28/28; `harness/hid_boot.py` 3/3).
 As of 0.9.2: **6634 of 6634 checks across 63 suites** (0.9.2: `test_xemode` 195 new,

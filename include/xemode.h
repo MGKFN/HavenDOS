@@ -78,7 +78,8 @@
 #define XM_EREADBACK   17  /* a write did not read back                 */
 #define XM_ETIMEOUT    18  /* a status bit never came                   */
 #define XM_EOFF        19  /* `gfx off`: pipe B is not lit              */
-#define XM_EREASONS    20
+#define XM_ENOTLIT     20  /* `gfx color`: pipe B is not running        */
+#define XM_EREASONS    21
 const char *xm_why_name(int why);
 
 /* ── what is read before anything is planned ─────────────────────── */
@@ -162,6 +163,24 @@ int  xm_wrpll(uint32_t port_khz, uint32_t dssm, uint32_t *cfgcr0, uint32_t *cfgc
 int  xm_plan_on (const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
                  xm_plan_t *p);
 int  xm_plan_off(const xm_state_t *s, xm_plan_t *p);
+
+/* v0.9.2.2: the background colour of pipe B (PIPE_BOTTOM_COLOR), what
+   the pipe shows where no plane is. 10 bits a channel: R 29:20, G 19:10,
+   B 9:0. A DIAGNOSTIC: on the HP on 11 November the monitor locked on
+   to pipe B's signal and showed black. A blue screen with a black
+   1024x768 box in it means the plane is there and fetching black; an
+   all-blue screen means the plane is not being shown at all; no change
+   means the pixels are not reaching the monitor. One write, to pipe B. */
+#define XM_RGB_BLUE   0x000003FFu
+#define XM_RGB_RED    0x3FF00000u
+#define XM_RGB_GREEN  0x000FFC00u
+#define XM_RGB_WHITE  0x3FFFFFFFu
+int  xm_plan_color(const xm_state_t *s, uint32_t rgb, xm_plan_t *p);
+
+/* v0.9.2.2: pipe B as it is right now -- scanline, frame counter, the
+   plane's armed and LIVE surface, its buffer, the background colour,
+   the status bits. Read only. */
+void xm_report_live(const gfx_dev_t *dev, gfx_emit_t emit);
 
 /* Is this write allowed? `old` is the register's value now. Pure,
    given the DPCLKA value it is passed. */

@@ -668,6 +668,33 @@ BUGS = [
         drop |= (1u << i);
     }"""),
 
+    # ── v0.9.2.2: a hub is a hub ──────────────────────────────────────
+    ("the Hub flag is never set",
+     "the slot context of a hub then describes a function, and low/full "
+     "speed devices behind it get no split transactions -- Kyan's "
+     "keyboard on a hub, 11 November",
+     """    d0 |= (1u << 26);""",
+     """    (void)0;"""),
+
+    ("the port count goes in the wrong field",
+     "Number of Ports is dword 1 bits 31:24; bits 23:16 are the root "
+     "port, so this moves the hub to another socket",
+     """    d1 = (ctx_get32(dsc, 1) & 0x00FFFFFFu) | ((uint32_t)nports << 24);""",
+     """    d1 = (ctx_get32(dsc, 1) & 0xFF00FFFFu) | ((uint32_t)nports << 16);"""),
+
+    ("the hub's endpoints are re-added with the slot",
+     "the add flags must be A0 alone: anything else re-lays a ring the "
+     "hub may be using",
+     """    ctx_set32(in_ctrl_ctx(x, hcno), 1, 1u);      /* add A0: the slot only */""",
+     """    ctx_set32(in_ctrl_ctx(x, hcno), 1, 3u);      /* add A0: the slot only */"""),
+
+    ("Context Entries is rebuilt instead of kept",
+     "the slot context is copied out of the device context; writing it "
+     "fresh loses Context Entries and the route string, and the "
+     "controller refuses it or loses the hub",
+     """    d0 = ctx_get32(dsc, 0) & ~((1u << 26) | (1u << 25));""",
+     """    d0 = ctx_get32(dsc, 0) & ((1u << 20) - 1u) & ~((1u << 26) | (1u << 25));"""),
+
     # ── NOT A DEFECT, and recorded rather than deleted ───────────────
     #
     # "Context Entries is raised to 31 instead of the highest DCI in

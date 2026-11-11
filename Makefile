@@ -455,7 +455,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_txhci tests/test_xhci.c drivers/pci_bar.c \
 	           && \
-	  python3 tools/run_suite.py --name test_xhci --min 334 -- /tmp/hd_txhci
+	  python3 tools/run_suite.py --name test_xhci --min 344 -- /tmp/hd_txhci
 	@echo "── test_update ────────────────────────────"
 	@echo "  where an update comes from, and whether it is what it claims to be"
 	@# fs/gpt.c is linked rather than included: it declares memcpy and
@@ -557,7 +557,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_txm tests/test_xemode.c && \
-	  python3 tools/run_suite.py --name test_xemode --min 199 -- /tmp/hd_txm
+	  python3 tools/run_suite.py --name test_xemode --min 209 -- /tmp/hd_txm
 	@echo "── test_rsa ───────────────────────────────"
 	@echo "  Miller-Rabin and RSA keygen, against CPython and openssl"
 	@# net/rsa.c arrived with a suite and a harness and was never added
@@ -753,7 +753,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -Iinclude -Itests -Wno-unused-function \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_thub tests/test_hub.c && \
-	  python3 tools/run_suite.py --name test_hub --min 92 -- /tmp/hd_thub
+	  python3 tools/run_suite.py --name test_hub --min 99 -- /tmp/hd_thub
 	@echo "── test_machine ───────────────────────────"
 	@echo "  reset and power off, against a machine that refuses to die"
 	@# kernel/machine.c is INCLUDED by the suite, not linked: the two

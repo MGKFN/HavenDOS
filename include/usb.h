@@ -307,6 +307,23 @@ typedef struct {
        beyond the default pipe returns USB_ECMD. Called by the core after
        SET_CONFIGURATION has been accepted. */
     int  (*configure)(struct usb_hc *, usb_dev_t *);
+
+    /* ── TELL THE CONTROLLER A DEVICE IS A HUB, v0.9.2.2 ─────────────
+       Optional. On xHCI the slot context of a hub carries a Hub flag,
+       its number of ports, Multi-TT and the TT think time -- and none of
+       them was ever set. The controller was told every hub was a plain
+       function. A high-speed device behind it was fine; a LOW or FULL
+       speed one -- a keyboard, a mouse receiver -- needs the controller
+       to schedule split transactions through the hub's translator, and
+       for a slot not marked as a hub it does not.
+
+       Kyan's HP, 11 November: a keyboard on a USB hub lit up and typed
+       nothing. Linux does this in xhci_update_hub_device(), after the
+       hub descriptor is read and before a port is touched; usb/hub.c
+       now does it at the same point. A back-end to which a hub is
+       transparent (UHCI) does not supply it. */
+    int  (*hub_info)(struct usb_hc *, const usb_dev_t *hub, int nports,
+                     int think_time, int multi_tt);
 } usb_hc_ops_t;
 
 typedef struct usb_hc {
@@ -375,6 +392,9 @@ int usb_attach_behind(int hub, int port, uint8_t speed);
  * call and not a recursion the caller has to repeat. */
 int usb_hub_scan(void);
 int usb_hub_count(void);      /* hubs seen by the last scan             */
+/* v0.9.2.2: mark `hub` as a hub on the controller (usb_hc_ops_t::hub_info).
+   USB_OK when the back-end has nothing to be told. */
+int usb_hub_info(const usb_dev_t *hub, int nports, int think_time, int multi_tt);
 int usb_hub_devices(void);    /* devices found behind them              */
 
 /* ── usb/hotplug.c, v0.8.8 ────────────────────────────────────────────

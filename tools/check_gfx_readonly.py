@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-"""check_gfx_readonly.py -- 0.9.0's display code writes nothing.
+"""check_gfx_readonly.py -- the display code writes only where it says.
+
+── 0.9.1: ONE FILE MAY WRITE, AND ONLY IN ONE PLACE ──────────────────
+
+drivers/xegmbus.c reads a monitor's EDID over GMBUS, which means writing
+the six GMBUS registers (0xC5100-0xC5120). That file is allowed GFX_WR
+under three conditions this check enforces:
+
+  - GFX_WR is used ONCE outside its own #define, inside gmbus_wr();
+  - gmbus_wr()'s body still holds the range guard (it names both
+    GMBUS_REG_FIRST and GMBUS_REG_LAST);
+  - nothing else in the file writes: no volatile store outside the
+    macro, no PCI config write, no port, no MSR, no memory type.
+
+Everything else stays as 0.9.0 left it: drivers/xedisp.c,
+shell/gfxcmd.c and the pure parser drivers/edid.c do not write at all.
+
+── 0.9.0, unchanged below ────────────────────────────────────────────
 
 0.9.0 is the first step of a display-engine driver for the HP's Iris Xe,
 and the promise it makes is that it only LOOKS. The laptop's panel is
@@ -37,7 +54,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import csource
 
-FILES = ("drivers/xedisp.c", "shell/gfxcmd.c")
+FILES = ("drivers/xedisp.c", "shell/gfxcmd.c", "drivers/edid.c")
+WRITER = "drivers/xegmbus.c"
 
 RULES = [
     (re.compile(r"\bGFX_WR\b"), "a register write seam (GFX_WR)"),
@@ -65,6 +83,47 @@ def scan(path):
     return bad
 
 
+def scan_writer(path):
+    """drivers/xegmbus.c: GFX_WR once, in gmbus_wr(), behind the guard."""
+    text = open(path, encoding="utf-8", errors="replace").read()
+    lines = text.splitlines()
+    code = csource.code_lines(text)
+    bad = []
+    # the function's body, by line numbers
+    start = next((i for i, l in enumerate(code)
+                  if re.search(r"\bgmbus_wr\s*\(", l) and "static" in l), None)
+    end = None
+    if start is not None:
+        end = next((i for i in range(start, len(code)) if code[i] == "}"), None)
+    if start is None or end is None:
+        return [(0, "gmbus_wr() is missing -- the only place a write may be", "")]
+    body = "\n".join(code[start:end + 1])
+    if "GMBUS_REG_FIRST" not in body or "GMBUS_REG_LAST" not in body:
+        bad.append((start + 1, "gmbus_wr() lost its range guard", lines[start].strip()))
+    uses = 0
+    in_def = False
+    for i, line in enumerate(code):
+        probe = re.sub(r"[=!<>]=", "  ", line)
+        is_def = bool(re.match(r"\s*#\s*(define|ifndef|endif)\b", line)) or in_def
+        in_def = is_def and line.rstrip().endswith("\\")
+        if re.search(r"\bGFX_WR\b", probe) and not is_def:
+            if start <= i <= end:
+                uses += 1
+            else:
+                bad.append((i + 1, "GFX_WR outside gmbus_wr()", lines[i].strip()))
+        for rx, what in RULES:
+            if what.startswith("a register write seam"):
+                continue                       # GFX_WR handled above
+            if what.startswith("a store through") and is_def:
+                continue                       # the macro's own body
+            if rx.search(probe):
+                bad.append((i + 1, what, lines[i].strip()))
+    if uses != 1:
+        bad.append((start + 1, "gmbus_wr() uses GFX_WR %d times, not once" % uses,
+                    lines[start].strip()))
+    return bad
+
+
 def main():
     if not os.path.isdir("drivers"):
         sys.stderr.write("run me from the source root\n")
@@ -76,16 +135,22 @@ def main():
             return 2
         for num, what, src in scan(f):
             found.append((f, num, what, src))
+    if not os.path.exists(WRITER):
+        sys.stderr.write("check_gfx_readonly: %s is missing\n" % WRITER)
+        return 2
+    for num, what, src in scan_writer(WRITER):
+        found.append((WRITER, num, what, src))
     if found:
-        print("check_gfx_readonly: the display code WRITES, and 0.9.0 "
-              "promised it would not\n")
+        print("check_gfx_readonly: the display code writes where it "
+              "must not\n")
         for f, num, what, src in found:
             print("  %s:%d  %s\n      %s" % (f, num, what, src))
         print("\n  The panel is being scanned out by this engine while the")
         print("  command runs. A write is 0.9.2's job, behind `gfx on`, with")
         print("  a read-back -- not something to add to an inspector.")
         return 1
-    print("check_gfx_readonly: ok, %s read and never write" % " and ".join(FILES))
+    print("check_gfx_readonly: ok, %s never write; %s writes only in "
+          "gmbus_wr(), behind its range guard" % (", ".join(FILES), WRITER))
     return 0
 
 

@@ -1,46 +1,98 @@
-# HavenDOS — handoff, 11 November 2026 (evening)
+# HavenDOS — handoff, 11 November 2026 (late)
 
-Current release: **v0.9.0** (channel Beta, codename "Janus"), the first
-step of the display-engine driver. Paste this file into a new chat to
-pick up where this left off.
+Current release: **v0.9.1** (channel Beta, codename "Janus"), the second
+step of the display-engine driver: `gfx edid` reads the monitor over
+GMBUS. Paste this file into a new chat to pick up where this left off.
 
-## START HERE: 0.9.0 HAS NOT RUN ON THE HP
+## START HERE: 0.9.1 HAS NOT RUN ON THE HP
 
-0.9.0 is built: 6304/6304 checks across 61 suites, 31/31 injections in
-the new harness, and 9/9 in a QEMU boot. **QEMU has no Intel display
-engine, so `gfx` has only ever run against a model of one.** The first
-thing the next chat needs is Kyan's photos of
-`docs/GFX-INSPECTOR-HARDWARE-TEST.md`. With the monitor plugged into
-HDMI and switched on:
+Built and tested here:
+- `make test`: 6428/6428 across 62 suites.
+- `check_edid_suite.py` 24/24, `check_gfx_suite.py` 38/38.
+- QEMU boot: 10/10.
 
-| step | type | what to look for |
-|---|---|---|
-| 1 | `gfx` (space to page; photo every page) | under **So**: the panel's pipe/transcoder/DDI, "Pipe B ... free", "HDMI is wired to DDI x", and the GMBUS pin or AUX for 0.9.1 |
-| 2 | `gfx vbt` | the child devices: type, DVO port, DDC pin, AUX |
-| 3 | `gfx regs` | every raw value; needed if anything in step 1 looks wrong |
-| 4 | unplug HDMI, `gfx` again | whether the DDI B hot-plug word changes |
+QEMU has no Intel display engine, so **`gfx edid` has only ever run
+against a model GMBUS controller.** First thing the next chat needs:
+Kyan's photos of `docs/GFX-EDID-HARDWARE-TEST.md`.
+1. `gfx edid`, every page.
+2. `gfx`, to check the four fixed lines.
+3. `gfx edid` with the monitor off.
 
-How to read it:
+How to read `gfx edid`:
+- **Good:** `maker GSM` (LG), a name, and a mode list whose first line
+  is the monitor's preferred mode. That line is 0.9.2's target.
+- **`Nothing answered at 50, twice`:** no ACK on pin 2. Most likely the
+  monitor is off, on another input, or unplugged. If it repeats with the
+  monitor definitely on HDMI, suspect the pin. The VBT said DDC 2, which
+  maps to GMBUS pin 2 on ADL-P (i915 `adlp_ddc_pin_map`).
+- **`never said it was ready`:** a GMBUS sequencing fault. The write log
+  on screen shows exactly what was sent. Compare it with i915
+  `do_gmbus_xfer`.
+- **`not an EDID`, with raw bytes:** the wire works but the bytes are
+  wrong. Look for a 1-byte shift: GMBUS3 packs four bytes, LSB first.
+- **Any `refused` count above 0:** the guard stopped a write outside
+  GMBUS, which should be impossible. Treat it as a defect in whoever
+  called `gmbus_wr()`.
 
-- **Pipe A's plane says `= the framebuffer HavenDOS draws on`.** The
-  inspector is reading the right registers. This is the built-in
-  cross-check: BAR2 + `PLANE_SURF` == the framebuffer GRUB handed over.
-- **`UNCLAIMED READ` in red.** A power-well gate in `drivers/xedisp.c`
-  is wrong. The offset is in `gfx regs`. Compare it with the model's
-  `owner()` in `tests/test_gfx.c`, which is written from i915's power
-  map.
-- **`detect off` on the HDMI port.** The firmware never enabled
-  hot-plug detection there. Turning it on is a write
-  (`SHOTPLUG_CTL_DDI`), so that belongs at the start of 0.9.1.
-- **`(LSPCON)` after HDMI.** The socket is DP inside: EDID comes over DP
-  AUX, not GMBUS, and 0.9.2 becomes DP link training, not HDMI.
-- **`PW_1 is off`.** The display is in a DC state. Nothing past it can
-  be read without asking for the well, which is a write.
+**The monitor:** an LG 24GN65R (label photographed 11 Nov). Its EDID
+gives the exact modes. Don't trust a spec sheet over it.
 
-**Ask Kyan** (still unanswered): the monitor's make, model and native
-resolution, and whether it is HDMI or USB-C. The 11 November photo
-shows an HDMI cable beside the laptop, so HDMI is the working
-assumption.
+## WHAT 0.9.0 FOUND ON THE HP (11 Nov, photos)
+
+`gfx` worked first time. The full analysis is in the project doc
+`havendos-0.9.0-gfx-on-the-hp.md`, and the 96 register values are a
+fixture in `tests/test_gfx.c`. The facts 0.9.2 builds on:
+
+| what | value on the HP |
+|---|---|
+| BAR0 / mapped | 60_01000000 / E2000000 (PSE-36) |
+| BAR2 / framebuffer | 40_00000000 / 40_00000000, 1024x768, pitch 4096 |
+| panel path | pipe A → transcoder A → DDI A, eDP, DP SST, 8 bpc, **x2** |
+| panel timing | 1920x1080 active, 2080x1112 total, hsync 1968-2000 |
+| the stretch | PIPESRC A 1024x768 scaled to 1920x1080 by the pipe scaler |
+| panel clock | DPLL1 (00E001A5 / 00000088) = **269.7 MHz**, HBR |
+| free | **DPLL0** (stale 018001D4/00002644), **pipe B**, **transcoder B** |
+| power wells on | PW_1, PW_A, PW_2, **PW_B**, PW_C (PW_D off) |
+| who asked | the **driver** register 45404 = 0000FC0F (the GOP); BIOS reg has none |
+| CDCLK | 179.2 MHz (38.4 × 14, CD2X /1.5) |
+| HDMI | **DDI B**, combo PHY, GMBUS pin 2, AUX B, no LSPCON |
+| hot-plug | SHOTPLUG_CTL_DDI A8: detect on for A and B; B saw a long pulse |
+| DC / DMC | DC states off, DMC not loaded |
+| FPGA_DBG | 80000001 before and after (firmware left it set) |
+| VBT | OpRegion 2.1, RVDA at 6D280018, BDB 253, 2 children of 39 bytes |
+
+**For 0.9.2, the GOP holds the power-well requests in the driver
+register.** If HavenDOS ever turns a well off, it is turning off the
+GOP's request. 0.9.2 should only ever ADD requests (PW_B is already on)
+and never clear one.
+
+## 0.9.1, IN ONE SCREEN
+
+- `drivers/xegmbus.c`, `include/xegmbus.h`: EDID over GMBUS.
+  - `gmbus_wr()` is the only write in the file, guarded to
+    0xC5100-0xC5120.
+  - GMBUS0 is read back after every write.
+  - Uses i915's sequence, including the first-NAK retry.
+- `drivers/edid.c`, `include/edid.h`: the pure EDID parser.
+  - Identity, name, range limits, every DTD in block 0 and CTA
+    extensions.
+- `drivers/xedisp.c`, four report fixes from the HP photos:
+  - requests per requester register;
+  - the pipe-scaler line;
+  - DDC shown for HDMI only;
+  - PLL frequencies and the panel refresh (link M/N).
+- `tools/check_gfx_readonly.py`: one file may write, in one function,
+  behind its guard; three files never write.
+- Tests:
+  - `tests/test_edid.c` (99) and `tools/check_edid_suite.py` (24).
+  - `test_gfx` 199 with the HP fixture.
+  - `check_gfx_suite` 38.
+
+**Not on GitHub as a release:** 0.9.0's workflow failed installing
+tools. The runner couldn't resolve Ubuntu's mirror, and the re-run hung
+in the same step. Ubuntu's archive was also 503 to this container. If
+0.9.1's run fails the same way, it is GitHub/Ubuntu, not the tree:
+re-run it later.
 
 ## WHAT 0.8.9.9 DID ON THE HP: TETHERING WORKS
 
@@ -150,8 +202,8 @@ cites PRM sections.
 
 | step | what | writes to the GPU? |
 |---|---|---|
-| 0.9.0 | **BUILT, NOT YET ON THE HP.** `gfx` inspector: map BAR0 (GTTMMADR, likely above 4 GB -- reuse `kernel/highfb.c`'s PSE-36 windows); print display version, power-well state, which pipes / transcoders / planes / DDIs are on, the panel's pipe, `PLANE_SURF` and stride, and hot-plug status per port. Also reads the VBT, so the HP says which port HDMI is on | **no** |
-| 0.9.1 | EDID from the monitor: GMBUS (HDMI) or DP AUX (`DDI_AUX_CTL`), print the name and preferred mode | only the GMBUS/AUX controller |
+| 0.9.0 | **CONFIRMED ON THE HP, 11 Nov.** `gfx` inspector: map BAR0 (GTTMMADR, likely above 4 GB -- reuse `kernel/highfb.c`'s PSE-36 windows); print display version, power-well state, which pipes / transcoders / planes / DDIs are on, the panel's pipe, `PLANE_SURF` and stride, and hot-plug status per port. Also reads the VBT, so the HP says which port HDMI is on | **no** |
+| 0.9.1 | **BUILT, NOT YET ON THE HP.** EDID from the monitor over GMBUS pin 2 (HDMI on DDI B, no LSPCON -- answered by 0.9.0 on the HP); DP AUX not needed for this machine | only the six GMBUS registers |
 | 0.9.2 | modeset behind an explicit command (`gfx on`): enable the power well, program a DPLL for the pixel clock, DDI clock select and buffer, transcoder timings, pipe B, plane B scanning out a framebuffer at the monitor's mode | **yes**, never at boot until proved |
 | 0.9.3 | console and desktop follow the new framebuffer (`vga_cols()`/`vga_rows()` already derive the grid); `gfx off` hands back the panel; a boot option once it is proved | yes |
 
@@ -2901,7 +2953,7 @@ Left, and each has its reason:
 | `check_usb_buffers.py` | a transfer constant its own back-end would refuse |
 | `check_diskname_sync.py` | the suite carrying a copy instead of linking |
 | `check_machine_reset.py` | a reset or power-off port outside `kernel/machine.c` (by VALUE since 0.9.0) |
-| `check_gfx_readonly.py` | any write in `drivers/xedisp.c` or `shell/gfxcmd.c` (0.9.0) |
+| `check_gfx_readonly.py` | any write in `drivers/xedisp.c`, `shell/gfxcmd.c` or `drivers/edid.c`; in `drivers/xegmbus.c`, any write outside `gmbus_wr()` or a `gmbus_wr()` without its range guard (0.9.0, 0.9.1) |
 | `check_harnesses.py` | an injection harness whose baseline will not build |
 | `check_kpoll_sites.py` | `kernel_poll()` outside two named files; a polling sleep in a driver; a client registered outside four |
 | `check_kpoll_guard.py` | an entry point that loses its `kpoll_enter()`/`kpoll_leave()` bracket, or returns before the leave; a second copy of the rescan sequence |
@@ -2910,8 +2962,10 @@ Left, and each has its reason:
 Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
-## Testing, as of 0.9.0
+## Testing, as of 0.9.1
 
+**6428 of 6428 checks across 62 suites** (0.9.1: `test_edid` 99 new,
+`test_gfx` 174 -> 199 with the HP fixture). As of 0.9.0:
 **6304 of 6304 checks across 61 suites** (`make test`, run, not
 reasoned about); `test_fat16path` still skips without `BOOTDISK=`. New:
 `test_gfx` (174), with `tools/check_gfx_suite.py` 31/31 and

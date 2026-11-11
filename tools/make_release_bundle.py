@@ -204,19 +204,15 @@ laptop's.
 
 ## What this release wants from the laptop
 
-**`docs/GFX-INSPECTOR-HARDWARE-TEST.md`.** Ten minutes, the external
-monitor plugged into HDMI, and a camera. `gfx` reads the Iris Xe
-display engine and writes nothing, so nothing on the laptop can change.
-QEMU has no Intel display engine, so this is the first time the code
-has met real hardware. Photograph every page of `gfx`, `gfx vbt` and
-`gfx regs`, then run `gfx` again with the HDMI cable out.
+**`docs/GFX-EDID-HARDWARE-TEST.md`.** Five minutes, the LG monitor on
+and set to HDMI. `gfx edid` asks the monitor for its EDID over the HDMI
+cable. It is the first command in the display series that writes, and
+it writes only the six registers of the display engine's I2C
+controller. Photograph every page, then `gfx` for the four fixed lines,
+then `gfx edid` once more with the monitor switched off.
 
-The last section of `gfx` says which connector HDMI is wired to and how
-0.9.1 will read the monitor's EDID. That decides the next release.
-
-Answered on 0.8.9.9: **iPhone tethering works** (DHCP, DNS, ping,
-`wget`). Pairing's TLS session is still refused by the phone, which
-`docs/PAIRING-STAGE3-HARDWARE-TEST.md` now notes at the top.
+The first mode `gfx edid` lists is the one 0.9.2 will put on the
+monitor.
 
 The older plans are still in `docs/` and still unanswered:
 `TRACKPAD-AND-PAIR-HARDWARE-TEST.md` for `i2chid` and the Notepad

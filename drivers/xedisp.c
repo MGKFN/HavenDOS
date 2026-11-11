@@ -30,6 +30,8 @@
 #include "../include/xedisp.h"
 #include "../include/pci.h"
 #include "../include/highfb.h"
+#include "../include/edid.h"
+#include "../include/xegmbus.h"
 
 #ifndef GFX_RD
 #define GFX_RD(base, off) \
@@ -101,6 +103,8 @@ static const uint8_t *gfx_phys_identity(uint32_t addr, uint32_t len)
 #define R_VSYNC(t)          (0x60014u + 0x1000u * (t))
 #define R_PIPESRC(t)        (0x6001Cu + 0x1000u * (t))
 #define R_DDI_FUNC(t)       (0x60400u + 0x1000u * (t)) /* TRANS_DDI_FUNC_CTL */
+#define R_LINK_M1(t)        (0x60040u + 0x1000u * (t)) /* _PIPEA_LINK_M1 */
+#define R_LINK_N1(t)        (0x60044u + 0x1000u * (t)) /* _PIPEA_LINK_N1 */
 
 /* Power well indices in HSW_PWR_WELL_CTL (two bits each: state at
    2*idx, request at 2*idx+1). i915 intel_display_power_map.c,
@@ -338,6 +342,10 @@ void gfx_read(const gfx_dev_t *dev, gfx_regs_t *r)
         tt->vtotal = rd(dev, r, R_VTOTAL(t));
         tt->vblank = rd(dev, r, R_VBLANK(t));
         tt->vsync  = rd(dev, r, R_VSYNC(t));
+        /* 0.9.1: the DP link M/N. With the port clock they give the
+           pixel clock, and so the refresh rate the panel runs at. */
+        tt->link_m = rd(dev, r, R_LINK_M1(t));
+        tt->link_n = rd(dev, r, R_LINK_N1(t));
         /* PIPESRC is a PIPE register at a transcoder address. */
         if(well_on(r, pipe_well(t)))
             tt->src = rd(dev, r, R_PIPESRC(t));
@@ -742,6 +750,70 @@ static uint32_t cdclk_khz(const gfx_regs_t *r)
     }
 }
 
+/* a * b / c in 32 bits of result, through a 64-bit product but WITHOUT
+   64-bit division: __udivdi3 is not linked into this kernel. Shift and
+   subtract, 64 rounds. 0 if c is 0 or the result does not fit. */
+static uint32_t muldiv(uint32_t a, uint32_t b, uint32_t c)
+{
+    uint64_t n = (uint64_t)a * b, q = 0, rem = 0;
+    int i;
+    if(!c) return 0;
+    for(i = 63; i >= 0; i--){
+        rem = (rem << 1) | ((n >> i) & 1u);
+        if(rem >= c){ rem -= c; q |= (uint64_t)1 << i; }
+    }
+    return (q >> 32) ? 0 : (uint32_t)q;
+}
+
+/* i915 icl_ddi_combo_pll_get_freq(): DCO from the integer and 15-bit
+   fraction, against a reference the PLL halves when it is 38.4 MHz;
+   then divided by P (pdiv), Q (qdiv, when its mode bit is set), K
+   (kdiv) and 5. */
+uint32_t gfx_combo_pll_khz(uint32_t cfgcr0, uint32_t cfgcr1, uint32_t dssm)
+{
+    uint32_t ref, dco, p0, p1, p2;
+    switch((dssm >> 29) & 7u){
+    case 0: ref = 24000; break;
+    case 1: ref = 19200; break;
+    case 2: ref = 19200; break;            /* 38.4, halved by the PLL */
+    default: return 0;
+    }
+    switch((cfgcr1 >> 2) & 0xFu){          /* DPLL_CFGCR1_PDIV        */
+    case 1: p0 = 2; break; case 2: p0 = 3; break;
+    case 4: p0 = 5; break; case 8: p0 = 7; break;
+    default: return 0;
+    }
+    switch((cfgcr1 >> 6) & 7u){            /* DPLL_CFGCR1_KDIV        */
+    case 1: p2 = 1; break; case 2: p2 = 2; break; case 4: p2 = 3; break;
+    default: return 0;
+    }
+    p1 = (cfgcr1 & (1u << 9)) ? ((cfgcr1 >> 10) & 0xFFu) : 1u;
+    if(!p1) return 0;
+    dco = (cfgcr0 & 0x3FFu) * ref +
+          (((cfgcr0 >> 10) & 0x7FFFu) * ref) / 0x8000u;
+    return dco / (p0 * p1 * p2 * 5u);
+}
+
+/* The port clock behind a combo port: which DPLL DPCLKA selects, and
+   that DPLL's frequency. 0 if the clock is gated or the PLL is off. */
+static uint32_t port_clock_khz(const gfx_regs_t *r, int port)
+{
+    uint32_t sel;
+    if(port != GFX_PORT_A && port != GFX_PORT_B) return 0;
+    if(r->dpclka & (1u << (10 + port))) return 0;
+    sel = (r->dpclka >> (port * 2)) & 3u;
+    if(sel > 1 || !(r->dpll_en[sel] & (1u << 31))) return 0;
+    return gfx_combo_pll_khz(r->dpll_cfgcr0[sel], r->dpll_cfgcr1[sel], r->dssm);
+}
+
+static void put_hz100(ln_t *l, uint32_t x100)
+{
+    uint32_t f = x100 % 100u;
+    Lu(l, x100 / 100u); Lc(l, '.');
+    Lc(l, (char)('0' + f / 10u)); Lc(l, (char)('0' + f % 10u));
+    Ls(l, " Hz");
+}
+
 static void put_mhz(ln_t *l, uint32_t khz)
 {
     Lu(l, khz / 1000u);
@@ -826,16 +898,28 @@ void gfx_report(const gfx_dev_t *dev, const gfx_regs_t *r,
             Ls(&l, "  ");
         }
         E(&l, GFX_T_TEXT);
-        /* Who asked: BIOS (the GOP) or a driver. A well only the
-           BIOS asked for is one a driver must ask for itself before
-           the firmware's request goes away. */
-        Ls(&l, "  asked for by the firmware:");
-        for(i = 0; i < 6; i++)
-            if(r->pw[0] & PW_REQ(w[i].idx)){ Lc(&l, ' '); Ls(&l, w[i].n); }
-        if(!(r->pw[0] & (PW_REQ(PW_1)|PW_REQ(PW_A)|PW_REQ(PW_2)|PW_REQ(PW_B)
-                        |PW_REQ(PW_C)|PW_REQ(PW_D))))
-            Ls(&l, " none");
-        E(&l, GFX_T_DIM);
+        /* Who asked, per requester register. 0.9.0 looked only at the
+           BIOS one and printed "none" on the HP -- where every request
+           is in the DRIVER register (45404 = 0000FC0F), set by the
+           firmware's own GOP driver. The BIOS register there holds
+           state bits only. Each register's odd bits are its requests. */
+        {
+            static const char *who[4] = { "BIOS", "driver", "KVMR", "debug" };
+            int q, any = 0;
+            for(q = 0; q < 4; q++){
+                uint32_t req = r->pw[q] & 0xAAAAAAAAu, named = 0;
+                if(!req) continue;
+                any = 1;
+                Ls(&l, "  requested in the "); Ls(&l, who[q]); Ls(&l, " register:");
+                for(i = 0; i < 6; i++)
+                    if(req & PW_REQ(w[i].idx)){
+                        Lc(&l, ' '); Ls(&l, w[i].n); named |= PW_REQ(w[i].idx);
+                    }
+                if(req & ~named){ Ls(&l, " +bits "); Lhex(&l, req & ~named, 8); }
+                E(&l, GFX_T_DIM);
+            }
+            if(!any) say(GFX_T_DIM, "  no requester register asks for any well");
+        }
     }
     Ls(&l, "  DC states ");
     switch(r->dc_state & 3u){
@@ -906,6 +990,21 @@ void gfx_report(const gfx_dev_t *dev, const gfx_regs_t *r,
                                       dev->bar2_lo + (pp->surf & 0xFFFFF000u));
             Lc(&l, ')'); E(&l, GFX_T_TEXT);
         }
+        /* PIPESRC against the transcoder's active size: when they
+           differ the pipe scaler is stretching the image. On the HP
+           the GOP runs 1024x768 and the panel is 1920x1080. */
+        {
+            const gfx_trans_t *tt = &r->trans[p];
+            uint32_t sw = (tt->src >> 16) + 1u, sh = (tt->src & 0xFFFFu) + 1u;
+            uint32_t aw = (tt->htotal & 0xFFFFu) + 1u, ah = (tt->vtotal & 0xFFFFu) + 1u;
+            if(tt->powered && tt->src && (tt->func & (1u << 31)) &&
+               (sw != aw || sh != ah)){
+                Ls(&l, "        pipe source "); Lu(&l, sw); Lc(&l, 'x'); Lu(&l, sh);
+                Ls(&l, ", scaled to "); Lu(&l, aw); Lc(&l, 'x'); Lu(&l, ah);
+                Ls(&l, " by the pipe scaler");
+                E(&l, GFX_T_TEXT);
+            }
+        }
     }
 
     /* ── transcoders ───────────────────────────────────────────── */
@@ -933,6 +1032,29 @@ void gfx_report(const gfx_dev_t *dev, const gfx_regs_t *r,
         Ls(&l, ", hsync "); Lu(&l, (tt->hsync & 0xFFFFu) + 1u); Lc(&l, '-');
         Lu(&l, (tt->hsync >> 16) + 1u);
         E(&l, GFX_T_TEXT);
+        /* The pixel clock: for DP it is link M/N times the port clock
+           (i915 intel_dotclock_calculate), for HDMI at 8 bpc the port
+           clock itself. Then the refresh rate from the totals. */
+        {
+            int      port = func_port(tt->func);
+            uint32_t mode = (tt->func >> 24) & 7u;
+            uint32_t pk   = port_clock_khz(r, port), pclk = 0;
+            uint32_t ht   = (tt->htotal >> 16) + 1u, vt = (tt->vtotal >> 16) + 1u;
+            if(pk && (mode == 2 || mode == 3))
+                pclk = muldiv(tt->link_m & 0xFFFFFFu, pk, tt->link_n & 0xFFFFFFu);
+            else if(pk && mode == 0 && ddi_bpc(tt->func) == 8)
+                pclk = pk;
+            if(pclk){
+                uint32_t lines = pclk * 1000u / ht;
+                Ls(&l, "        pixel clock "); put_mhz(&l, pclk);
+                Ls(&l, ", "); put_hz100(&l, lines * 100u / vt);
+                if(mode == 2 || mode == 3){
+                    Ls(&l, "  (link M/N "); Lu(&l, tt->link_m & 0xFFFFFFu);
+                    Lc(&l, '/'); Lu(&l, tt->link_n & 0xFFFFFFu); Lc(&l, ')');
+                }
+                E(&l, GFX_T_TEXT);
+            }
+        }
     }
 
     /* ── ports ─────────────────────────────────────────────────── */
@@ -953,7 +1075,12 @@ void gfx_report(const gfx_dev_t *dev, const gfx_regs_t *r,
         c = child_on(vbt, i);
         if(c){
             child_kind(&l, c);
-            if(c->gmbus_pin){ Ls(&l, ", DDC "); Lu(&l, (uint32_t)c->gmbus_pin); }
+            /* DDC is HDMI/DVI's wire. An eDP or DP child's ddc_pin is
+               meaningless and printing it (0.9.0: "eDP panel, DDC 9")
+               invites someone to read EDID down the wrong wires. */
+            if(c->gmbus_pin && (c->type & DT_TMDS)){
+                Ls(&l, ", DDC "); Lu(&l, (uint32_t)c->gmbus_pin);
+            }
             if(c->aux_port != GFX_PORT_NONE && c->is_dp){
                 Ls(&l, ", AUX "); Ls(&l, port_name(c->aux_port));
             }
@@ -972,8 +1099,12 @@ void gfx_report(const gfx_dev_t *dev, const gfx_regs_t *r,
             Ls(&l, (r->dpll_en[i] & (1u << 30)) ? "ON, locked" : "ON, NOT LOCKED");
         else Ls(&l, "off, free");
         if(r->dpll_en[i] & (1u << 31)){
-            Ls(&l, "  cfgcr0 "); Lhex(&l, r->dpll_cfgcr0[i], 8);
-            Ls(&l, " cfgcr1 "); Lhex(&l, r->dpll_cfgcr1[i], 8);
+            uint32_t k = gfx_combo_pll_khz(r->dpll_cfgcr0[i], r->dpll_cfgcr1[i],
+                                           r->dssm);
+            Ls(&l, ", ");
+            if(k) put_mhz(&l, k); else Ls(&l, "dividers ?");
+            Ls(&l, "  cfg "); Lhex(&l, r->dpll_cfgcr0[i], 8);
+            Lc(&l, ' '); Lhex(&l, r->dpll_cfgcr1[i], 8);
         }
         E(&l, GFX_T_TEXT);
     }
@@ -1031,11 +1162,11 @@ selfcheck:
             if(c->lspcon){
                 Ls(&l, " through an LSPCON (DP inside).");
                 E(&l, GFX_T_GOOD);
-                Ls(&l, "  0.9.1 reads the monitor's EDID over AUX ");
-                Ls(&l, port_name(c->aux_port)); Lc(&l, '.');
+                Ls(&l, "  Its EDID comes over DP AUX ");
+                Ls(&l, port_name(c->aux_port)); Ls(&l, ", not GMBUS (not in 0.9.1).");
             } else {
                 Lc(&l, '.'); E(&l, GFX_T_GOOD);
-                Ls(&l, "  0.9.1 reads the monitor's EDID over GMBUS pin ");
+                Ls(&l, "  `gfx edid` reads the monitor over GMBUS pin ");
                 Lu(&l, (uint32_t)c->gmbus_pin); Lc(&l, '.');
             }
             E(&l, GFX_T_TEXT);
@@ -1102,6 +1233,133 @@ void gfx_report_vbt(const gfx_vbt_t *vbt, gfx_emit_t emit)
         Lhex(&l, c->aux, 2); Ls(&l, " "); Ls(&l, port_name(c->aux_port));
         E(&l, GFX_T_TEXT);
     }
+}
+
+
+/* ── `gfx edid` ───────────────────────────────────────────────────── */
+static void put_pclk(ln_t *l, uint32_t khz)
+{
+    /* EDID clocks are 10 kHz steps: 148500 -> "148.5 MHz",
+       325080 -> "325.08 MHz". */
+    uint32_t f = (khz % 1000u) / 10u;
+    Lu(l, khz / 1000u);
+    if(f){ Lc(l, '.'); Lc(l, (char)('0' + f / 10u)); if(f % 10u) Lc(l, (char)('0' + f % 10u)); }
+    Ls(l, " MHz");
+}
+
+void gfx_report_edid(const gmbus_trace_t *tr, const edid_t *e,
+                     const uint8_t *raw, uint32_t rawlen, gfx_emit_t emit)
+{
+    ln_t l;
+    int i;
+    uint32_t b;
+    g_emit = emit; L0(&l);
+
+    Ls(&l, "Monitor EDID -- GMBUS pin "); Lu(&l, (uint32_t)tr->pin);
+    switch(tr->pin){
+    case 1: Ls(&l, " (DDI A)"); break;  case 2: Ls(&l, " (DDI B)"); break;
+    case 9: Ls(&l, " (TC1)"); break;    case 10: Ls(&l, " (TC2)"); break;
+    case 11: Ls(&l, " (TC3)"); break;   case 12: Ls(&l, " (TC4)"); break;
+    default: break;
+    }
+    Ls(&l, ", I2C address "); Lhex(&l, tr->addr, 2);
+    E(&l, GFX_T_HEAD);
+
+    Ls(&l, "  "); Lu(&l, tr->writes);
+    Ls(&l, " writes, every one to GMBUS (C5100-C5120); ");
+    Lu(&l, tr->refused); Ls(&l, " refused");
+    E(&l, tr->refused ? GFX_T_BAD : GFX_T_TEXT);
+    if(tr->retried) say(GFX_T_DIM, "  the first attempt was NAKed and retried once, as i915 does");
+
+    if(tr->why != GMBUS_OK && rawlen < EDID_BLOCK){
+        Ls(&l, "  Stopped: "); Ls(&l, gmbus_why_name(tr->why)); Lc(&l, '.');
+        E(&l, GFX_T_BAD);
+        switch(tr->why){
+        case GMBUS_ENAK:
+            say(GFX_T_TEXT, "  Nothing answered at 50, twice. Is the monitor switched on,");
+            say(GFX_T_TEXT, "  on the right input, and its cable in the laptop's HDMI port?");
+            break;
+        case GMBUS_ETIMEOUT:
+            Ls(&l, "  GMBUS2 was "); Lhex(&l, tr->status, 8);
+            Ls(&l, " when it gave up. Photograph this screen.");
+            E(&l, GFX_T_TEXT);
+            break;
+        case GMBUS_ESTUCK:
+            say(GFX_T_TEXT, "  GMBUS0 read back something other than the pin written,");
+            say(GFX_T_TEXT, "  so nothing was sent: the transfer would have used");
+            say(GFX_T_TEXT, "  whatever pin was there. The write log below has both.");
+            break;
+        case GMBUS_EBUSY:
+            Ls(&l, "  Another transfer was still running (GMBUS2 ");
+            Lhex(&l, tr->status, 8); Ls(&l, "). Nothing was started.");
+            E(&l, GFX_T_TEXT);
+            break;
+        case GMBUS_EPIN:
+            say(GFX_T_TEXT, "  Pins on Alder Lake-P: 1 (DDI A), 2 (DDI B), 9-12 (TC1-TC4).");
+            break;
+        default: break;
+        }
+    } else if(e->why != EDID_OK){
+        Ls(&l, "  "); Lu(&l, rawlen); Ls(&l, " bytes came back, but they are not an EDID: ");
+        E(&l, GFX_T_BAD);
+        Ls(&l, "  "); Ls(&l, edid_why_name(e->why)); Lc(&l, '.');
+        E(&l, GFX_T_BAD);
+    } else {
+        Ls(&l, "  maker "); Ls(&l, e->mfg);
+        Ls(&l, "  product "); Lhex(&l, e->product, 4);
+        Ls(&l, "  made week "); Lu(&l, e->week); Ls(&l, " of "); Lu(&l, e->year);
+        Ls(&l, "  EDID "); Lu(&l, e->version); Lc(&l, '.'); Lu(&l, e->revision);
+        E(&l, GFX_T_GOOD);
+        if(e->name[0]){ Ls(&l, "  name  "); Ls(&l, e->name); E(&l, GFX_T_GOOD); }
+        if(e->serial_text[0]){ Ls(&l, "  serial "); Ls(&l, e->serial_text); E(&l, GFX_T_TEXT); }
+        if(e->have_range){
+            Ls(&l, "  limits "); Lu(&l, e->vmin); Lc(&l, '-'); Lu(&l, e->vmax);
+            Ls(&l, " Hz, "); Lu(&l, e->hmin_khz); Lc(&l, '-'); Lu(&l, e->hmax_khz);
+            Ls(&l, " kHz");
+            if(e->max_pclk_mhz){ Ls(&l, ", pixel clock up to "); Lu(&l, e->max_pclk_mhz); Ls(&l, " MHz"); }
+            E(&l, GFX_T_TEXT);
+        }
+        Ls(&l, "  "); Lu(&l, e->extensions); Ls(&l, " extension block(s) announced, ");
+        Lu(&l, e->cta_blocks); Ls(&l, " CTA-861 read");
+        if(e->bad_ext){ Ls(&l, ", "); Lu(&l, e->bad_ext); Ls(&l, " with a bad checksum"); }
+        if(tr->why != GMBUS_OK){ Ls(&l, "; block 1 failed: "); Ls(&l, gmbus_why_name(tr->why)); }
+        E(&l, (e->bad_ext || tr->why != GMBUS_OK) ? GFX_T_WARN : GFX_T_TEXT);
+
+        say(GFX_T_HEAD, "Modes (the first is the one the monitor prefers)");
+        if(!e->nmodes) say(GFX_T_WARN, "  none -- no detailed timing in the blocks read");
+        for(i = 0; i < e->nmodes; i++){
+            const edid_mode_t *m = &e->modes[i];
+            Ls(&l, "  "); Lu(&l, m->hactive); Lc(&l, 'x'); Lu(&l, m->vactive);
+            if(m->interlaced) Lc(&l, 'i');
+            Lcol(&l, 13); put_hz100(&l, m->refresh_x100);
+            Ls(&l, "  "); put_pclk(&l, m->pclk_khz);
+            Ls(&l, "  total "); Lu(&l, (uint32_t)m->hactive + m->hblank); Lc(&l, 'x');
+            Lu(&l, (uint32_t)m->vactive + m->vblank);
+            Ls(&l, m->hpos ? " +h" : " -h"); Ls(&l, m->vpos ? "+v" : "-v");
+            if(m->block){ Ls(&l, " (block "); Lu(&l, m->block); Lc(&l, ')'); }
+            E(&l, i == 0 ? GFX_T_GOOD : GFX_T_TEXT);
+        }
+        if(e->nmodes) say(GFX_T_TEXT, "  0.9.2 lights pipe B with the first one.");
+    }
+
+    if(rawlen){
+        Ls(&l, "Raw ("); Lu(&l, rawlen); Ls(&l, " bytes)"); E(&l, GFX_T_HEAD);
+        for(b = 0; b < rawlen; b += 16){
+            uint32_t k;
+            Ls(&l, "  "); Lhex(&l, b, 3); Lc(&l, ':');
+            for(k = 0; k < 16 && b + k < rawlen; k++){ Lc(&l, ' '); Lhex(&l, raw[b + k], 2); }
+            E(&l, GFX_T_DIM);
+        }
+    }
+
+    say(GFX_T_HEAD, "Every GMBUS write, in order (register=written/read back)");
+    for(i = 0; i < tr->nwlog; i++){
+        if(i % 3 == 0) Ls(&l, " ");
+        Lc(&l, ' '); Lhex(&l, tr->wlog[i].off, 5); Lc(&l, '=');
+        Lhex(&l, tr->wlog[i].val, 8); Lc(&l, '/'); Lhex(&l, tr->wlog[i].back, 8);
+        if(i % 3 == 2 || i == tr->nwlog - 1) E(&l, GFX_T_TEXT);
+    }
+    if(!tr->nwlog) say(GFX_T_DIM, "  none");
 }
 
 #ifdef GFX_TEST

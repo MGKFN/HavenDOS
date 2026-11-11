@@ -171,8 +171,10 @@ BUGS = [
     ("the 19.2 MHz reference is taken as 38.4",
      "DSSM's field picks one of three crystals; the wrong one doubles "
      "every clock derived from it",
-     """    case 1: ref = 19200; break;""",
-     """    case 1: ref = 38400; break;"""),
+     """    case 1: ref = 19200; break;
+    case 2: ref = 38400; break;""",
+     """    case 1: ref = 38400; break;
+    case 2: ref = 38400; break;"""),
 
     ("hot-plug reads the neighbouring port's live bit",
      "SDEISR has one bit per port from 16. Off by one, the HDMI port "
@@ -197,6 +199,58 @@ BUGS = [
      "missing, in a photograph that is the only evidence",
      """        say(GFX_T_TEXT, "  Pipe B and transcoder B are free for the monitor.");""",
      """        say(GFX_T_TEXT, "  Pipe B and transcoder B are free for the external monitor, and so are DPLL1 and PW_B.");"""),
+
+    # ── 0.9.1: what the HP's own registers found ───────────────────
+    ("power-well requests are read from the BIOS register only",
+     "0.9.0's bug, found on the HP: every request there is in the "
+     "DRIVER register (45404 = 0000FC0F) and the screen said 'none'. "
+     "0.9.2 will be changing those requests and has to know whose "
+     "they are",
+     """            for(q = 0; q < 4; q++){
+                uint32_t req = r->pw[q] & 0xAAAAAAAAu, named = 0;""",
+     """            for(q = 0; q < 1; q++){
+                uint32_t req = r->pw[q] & 0xAAAAAAAAu, named = 0;"""),
+
+    ("the pipe scaler's stretch is not reported",
+     "the HP's firmware draws 1024x768 and the scaler stretches it to "
+     "the panel's 1920x1080; without this line the photograph says "
+     "1024x768 on the plane and 1920x1080 on the transcoder and leaves "
+     "the reader to notice",
+     """               (sw != aw || sh != ah)){""",
+     """               0){"""),
+
+    ("the 38.4 MHz reference is not halved for the combo PLL",
+     "i915 icl_wrpll_ref_clock(): the DPLL divides a 38.4 MHz "
+     "reference by two itself. Not halving it doubles every port "
+     "clock -- the HP's eDP link would read 539 MHz",
+     """    case 2: ref = 19200; break;            /* 38.4, halved by the PLL */""",
+     """    case 2: ref = 38400; break;            /* 38.4, halved by the PLL */"""),
+
+    ("the PLL's P divider of 3 is taken as 2",
+     "DPLL_CFGCR1_PDIV is a one-hot field: 2 means 3. The HP's DPLL1 "
+     "would read 404.6 MHz, not 269.7",
+     """    case 1: p0 = 2; break; case 2: p0 = 3; break;""",
+     """    case 1: p0 = 2; break; case 2: p0 = 2; break;"""),
+
+    ("the Q divider is used without its mode bit",
+     "QDIV_RATIO is only meaningful when QDIV_MODE is set; DPLL0's "
+     "stale config on the HP has ratio 9 and mode 1, DPLL1's ratio 0 "
+     "and mode 0",
+     """    p1 = (cfgcr1 & (1u << 9)) ? ((cfgcr1 >> 10) & 0xFFu) : 1u;""",
+     """    p1 = ((cfgcr1 >> 10) & 0xFFu) ? ((cfgcr1 >> 10) & 0xFFu) : 1u;"""),
+
+    ("link M/N divide truncates before multiplying",
+     "M/N is below one; integer M/N is zero and the panel's pixel "
+     "clock reads 0 MHz",
+     """                pclk = muldiv(tt->link_m & 0xFFFFFFu, pk, tt->link_n & 0xFFFFFFu);""",
+     """                pclk = ((tt->link_m & 0xFFFFFFu) / (tt->link_n & 0xFFFFFFu)) * pk;"""),
+
+    ("a DDC pin is shown for the eDP panel",
+     "0.9.0 printed 'eDP panel, DDC 9' on the HP. An eDP child's DDC "
+     "field is meaningless, and showing it invites a read down the "
+     "wrong wires",
+     """            if(c->gmbus_pin && (c->type & DT_TMDS)){""",
+     """            if(c->gmbus_pin){"""),
 
     # ── the VBT ────────────────────────────────────────────────────
     ("the MIPI sequence block is walked by its 16-bit size",

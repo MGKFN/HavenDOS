@@ -107,10 +107,16 @@ def main():
         ck("`gfx vbt` says there is no OpRegion",
            "gave no OpRegion" in scr, scr[-700:])
 
+        print("\n  `gfx edid` (0.9.1) refuses without an engine, writing nothing")
+        scr = run("gfx edid")
+        ck("it says there is no display engine to read through",
+           "No display engine to read through" in scr, scr[-700:])
+
         print("\n  an argument it does not know prints the usage")
         scr = run("gfx bogus")
-        ck("the usage names all three forms",
-           "gfx regs" in scr and "gfx vbt" in scr and "Read only" in scr,
+        ck("the usage names all four forms",
+           "gfx regs" in scr and "gfx vbt" in scr and "gfx edid" in scr and
+           "Read only" in scr,
            scr[-700:])
 
         print("\n  the shell is still answering afterwards")

@@ -173,6 +173,13 @@ void kernel_fb_phys(uint32_t *hi, uint32_t *lo, uint32_t *w, uint32_t *h,
                     uint32_t *pitch)
 { *hi = fb_hi; *lo = fb_lo; *w = fb_w; *h = fb_h; *pitch = fb_w * 4u; }
 
+/* drivers/xedisp.c formats the `gfx edid` screen too (0.9.1), so it
+   names the EDID and GMBUS reason strings. The parser is pure and is
+   linked for real; the GMBUS reasons belong to drivers/xegmbus.c, which
+   has a WRITE seam and is tested in tests/test_edid.c instead. This
+   suite keeps no write path at all. */
+#include "../drivers/edid.c"
+const char *gmbus_why_name(int why){ (void)why; return "gmbus"; }
 #include "../drivers/xedisp.c"
 
 /* ── checks ───────────────────────────────────────────────────────── */
@@ -559,7 +566,7 @@ int main(void)
     ck("  ... and where it is mapped", has("mapped at E3000000"), nl);
     ck("PW_1 and PW_A on, PW_B off",
        has("PW_1 on ") && has("PW_A on ") && has("PW_B off"), nl);
-    ck("who asked for them: the firmware", has("firmware: PW_1 PW_A"), nl);
+    ck("who asked for them: the BIOS register", has("BIOS register: PW_1 PW_A"), nl);
     ck("DC states off, DMC not loaded", has("DC states off") && has("not loaded"), nl);
     ck("CDCLK is 307.2 MHz from 38.4 x 16", has("CDCLK 307.2 MHz") &&
        has("ref 38.4 MHz, ratio 16, locked"), nl);
@@ -580,6 +587,7 @@ int main(void)
     ck("TC1: DP with AUX TC1", has("DP, AUX TC1"), nl);
     ck("TC3 is not wired", has("not wired"), nl);
     ck("DPLL0 on and locked", has("DPLL0 ON, locked"), nl);
+    ck("  ... at 269.7 MHz from its dividers (DP HBR)", has("DPLL0 ON, locked, 269.7 MHz"), nl);
     ck("DPLL1 free", has("DPLL1 off, free"), nl);
     ck("DDI A clocked by DPLL0", has("DDI A clock: DPLL0"), nl);
     ck("DDI B clock gated", has("DDI B clock: gated off"), nl);
@@ -590,10 +598,134 @@ int main(void)
        has("The panel runs on pipe A, transcoder A, DDI A."), nl);
     ck("pipe B is free for the monitor", has("Pipe B and transcoder B are free"), nl);
     ck("HDMI is wired to DDI B", has_tone("HDMI is wired to DDI B.", GFX_T_GOOD), nl);
-    ck("  ... so 0.9.1 reads EDID over GMBUS pin 2", has("GMBUS pin 2."), nl);
+    ck("  ... so `gfx edid` reads it over GMBUS pin 2", has("GMBUS pin 2."), nl);
     ck("no line is wider than the screen", longest <= GFX_LINE_MAX, longest);
     ck("  ... and none was cut to fit", gfx_test_cut() == 0, (long)gfx_test_cut());
     if(fails) dump();
+
+    /* ── 0.9.1: THE HP ITSELF ─────────────────────────────────────
+       Every value below is from Kyan's photograph of `gfx regs` on
+       0.9.0, 11 November 2026 -- the first read of this engine from
+       HavenDOS, transcribed in the order it was read. A fixture from
+       real silicon is the one thing this suite could not have before.
+       It found four things the report said wrong; each is checked. */
+    head("the HP's own registers (0.9.0 `gfx regs`, 11 November)");
+    {
+        static const uint32_t hp[][2] = {
+            {0x042300,0x80000001},{0x042000,0x8E380000},{0x045400,0x00005405},
+            {0x045404,0x0000FC0F},{0x045408,0x40000000},{0x04540C,0x00005405},
+            {0x045440,0x00000001},{0x045444,0x00000003},{0x045450,0x00000001},
+            {0x045454,0x00000003},{0x045504,0x00000000},{0x08F004,0x00000000},
+            {0x08F074,0x00000000},{0x0C4000,0x00030000},{0x0C4030,0x000000A8},
+            {0x0C4034,0x00000000},{0x046000,0x00780164},{0x046070,0xC000000E},
+            {0x051004,0x40000000},{0x051000,0x800C1C00},{0x046010,0x00000000},
+            {0x164284,0x018001D4},{0x164288,0x00002644},{0x046014,0xCC000000},
+            {0x16428C,0x00E001A5},{0x164290,0x00000088},{0x046020,0x00000000},
+            {0x046038,0x00000000},{0x046040,0x00000000},{0x046048,0x00000000},
+            {0x046050,0x00000000},{0x164280,0x01E07801},{0x044470,0x00000000},
+            {0x044030,0x00000000},{0x044038,0x00000000},{0x070008,0xC0000000},
+            {0x070180,0x94000008},{0x070188,0x00000040},{0x07018C,0x00000000},
+            {0x070190,0x02FF03FF},{0x07019C,0x00000000},{0x0701A4,0x00000000},
+            {0x071008,0x00000000},{0x071180,0x00000008},{0x071188,0x00000000},
+            {0x07118C,0x00000000},{0x071190,0x00000000},{0x07119C,0x00000000},
+            {0x0711A4,0x00000000},{0x072008,0x00000000},{0x072180,0x00000008},
+            {0x072188,0x00000000},{0x07218C,0x00000000},{0x072190,0x00000000},
+            {0x07219C,0x00000000},{0x0721A4,0x00000000},{0x060400,0x8A010102},
+            {0x060000,0x081F077F},{0x060004,0x081F077F},{0x060008,0x07CF07AF},
+            {0x06000C,0x04570437},{0x060010,0x04570437},{0x060014,0x04470441},
+            {0x06001C,0x03FF02FF},{0x061400,0x00030000},{0x061000,0x00000000},
+            {0x061004,0x00000000},{0x061008,0x00000000},{0x06100C,0x00000000},
+            {0x061010,0x00000000},{0x061014,0x00000000},{0x06101C,0x00000000},
+            {0x062400,0x00030000},{0x062000,0x00000000},{0x062004,0x00000000},
+            {0x062008,0x00000000},{0x06200C,0x00000000},{0x062010,0x00000000},
+            {0x062014,0x00000000},{0x06201C,0x00000000},{0x064000,0x80000002},
+            {0x064100,0x00000080},{0x04610C,0x00000000},{0x064300,0x00000080},
+            {0x161500,0x00000000},{0x046110,0x00000000},{0x064400,0x00000080},
+            {0x161504,0x00000000},{0x046114,0x00000000},{0x064500,0x00000080},
+            {0x161508,0x00000000},{0x046118,0x00000000},{0x064600,0x00000080},
+            {0x16150C,0x00000000},{0x1638A0,0xFFFFFFFF},
+        };
+        /* The VBT the HP reported: eDP 0x1806 on DPA with DDC 3 and
+           AUX A; HDMI 0x60D2 on HDMIB, DDC 2, AUX B. 39-byte children,
+           BDB 253. */
+        kid_t hpk[2] = { { 0x1806, 10, 3, 0x40, 0, 0 },
+                         { 0x60D2,  1, 2, 0x10, 0, 0 } };
+        unsigned k;
+        hp_state();
+        memset(regs, 0, SPAN);
+        for(k = 0; k < sizeof hp / sizeof hp[0]; k++) R(hp[k][0], hp[k][1]);
+        /* Wells on in the photo: PW_1, PW_2, PW_A, PW_B, PW_C. */
+        model_wells = (1u << W_PW1) | (1u << W_PW2) | (1u << W_PWA) |
+                      (1u << W_PWB) | (1u << W_PWC);
+        bar0_hi = 0x60u; bar0_lo = 0x01000000u;
+        bar2_hi = 0x40u; bar2_lo = 0x00000000u;
+        fb_hi = 0x40u; fb_lo = 0; fb_w = 1024; fb_h = 768;
+        vbt_len = build_vbt(vbtbuf, 253, 39, hpk, 2, 2, 0);
+        put_opregion(2, 1, 0x7u, vbtbuf, vbt_len, 0, 0, 0);
+        /* the panel's DP link M/N was not read by 0.9.0: these are
+           what a 1080p eDP panel at 60 Hz on a 269.72 MHz link uses
+           (M/N = pixel clock / link clock); the refresh check below
+           is about the arithmetic, and is labelled so. */
+        R(0x60040, 0x00041DC0); R(0x60044, 0x00080000);
+        run_all();
+        ck("every register read was in a powered well", unclaimed == 0, unclaimed);
+        ck("CDCLK 179.2 MHz (38.4 x 14 / 2 / 1.5)", has("CDCLK 179.2 MHz") &&
+           has("ratio 14, locked"), nl);
+        ck("  ... which CDCLK_CTL's own field agrees with (0x164 = 179)",
+           ((0x00780164u & 0x7FFu) + 2u) / 2u == 179u, 0);
+        ck("pipe A: 1024x768 XRGB8888 linear, stride 4096",
+           has("1024x768 XRGB8888 linear, stride 4096"), nl);
+        ck("  ... scanning out the framebuffer (BAR2 + 0 == 40_00000000)",
+           has("scans out GTT 00000000 = the framebuffer HavenDOS draws on"), nl);
+        ck("NEW: the stretch is named -- 1024x768 scaled to 1920x1080",
+           has("pipe source 1024x768, scaled to 1920x1080 by the pipe scaler"), nl);
+        ck("transcoder A -> DDI A DP SST, 8 bpc, x2",
+           has("-> DDI A DP SST, 8 bpc, x2"), nl);
+        ck("  ... 1920x1080 active, 2080x1112 total",
+           has("1920x1080 active, 2080x1112 total"), nl);
+        ck("NEW: DPLL1 at 269.7 MHz -- HBR, from cfg 00E001A5 00000088",
+           has("DPLL1 ON, locked, 269.7 MHz"), nl);
+        ck("  ... and the bit pattern decodes as i915 does: 269720 kHz",
+           gfx_combo_pll_khz(0x00E001A5u, 0x00000088u, 0x40000000u) == 269720u,
+           (long)gfx_combo_pll_khz(0x00E001A5u, 0x00000088u, 0x40000000u));
+        /* A Q ratio with its mode bit CLEAR must be ignored. Neither
+           of the HP's PLLs has that combination (DPLL0: ratio 9, mode
+           1; DPLL1: ratio 0, mode 0), so it is made here -- the
+           harness found the suite could not tell otherwise. */
+        ck("  ... a Q ratio without its mode bit is ignored",
+           gfx_combo_pll_khz(0x00E001A5u, 0x00000088u | (5u << 10), 0x40000000u)
+           == 269720u,
+           (long)gfx_combo_pll_khz(0x00E001A5u, 0x00000088u | (5u << 10), 0x40000000u));
+        ck("DPLL0 off and free", has("DPLL0 off, free"), nl);
+        ck("  ... though its stale dividers decode (qdiv 9): 100 MHz",
+           gfx_combo_pll_khz(0x018001D4u, 0x00002644u, 0x40000000u) == 100000u,
+           (long)gfx_combo_pll_khz(0x018001D4u, 0x00002644u, 0x40000000u));
+        ck("DDI A clocked by DPLL1", has("DDI A clock: DPLL1"), nl);
+        ck("NEW: requests read from the DRIVER register, not 'none'",
+           has("driver register: PW_1 PW_A PW_2 PW_B PW_C") &&
+           !has("firmware: none"), nl);
+        ck("  ... the BIOS register, state bits only, asks for nothing",
+           !has("BIOS register:"), nl);
+        /* 45408 = 40000000 is bit 30: the STATE bit of index 15, not
+           a request (requests are the odd bits). The first version of
+           this check expected a KVMR request line and was wrong; the
+           report was right. */
+        ck("  ... KVMR's 40000000 is a state bit (idx 15), so no request line",
+           !has("KVMR register:"), nl);
+        ck("NEW: the eDP child shows no DDC pin", has("eDP panel, AUX DDI A") &&
+           !has("eDP panel, DDC"), nl);
+        ck("  ... the HDMI child still does", has("HDMI, DDC 2"), nl);
+        ck("DDI B CONNECTED in this read (SDEISR 00030000)",
+           strstr(line_of("  DDI B"), "CONNECTED") != 0, nl);
+        ck("the firmware's FPGA_DBG is not blamed on us", has("already set") &&
+           !has("UNCLAIMED READ"), nl);
+        ck("the refresh arithmetic: M/N x 269720 kHz over 2080x1112 = 60.00 Hz",
+           has(", 60.00 Hz  (link M/N"), nl);
+        ck("HDMI is wired to DDI B, and `gfx edid` uses pin 2",
+           has("HDMI is wired to DDI B.") && has("GMBUS pin 2."), nl);
+        ck("no line is wider than the screen", longest <= GFX_LINE_MAX, longest);
+        if(fails) dump();
+    }
 
     head("the framebuffer cross-check is a real comparison");
     hp_state(); fb_lo = 0x00800000u; run_all();
@@ -660,7 +792,7 @@ int main(void)
         put_opregion(2, 1, 0x7u, vbtbuf, vbt_len, 0, 0, 0);
         run_all();
         ck("an LSPCON HDMI port says 'DP inside'", has("through an LSPCON (DP inside)"), nl);
-        ck("  ... and points 0.9.1 at AUX, not GMBUS", has("over AUX DDI B") &&
+        ck("  ... and points at DP AUX, not a GMBUS pin", has("DP AUX DDI B") &&
            !has("GMBUS pin"), nl);
         /* the same flag on an old BDB is a different field */
         hp_state();

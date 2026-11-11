@@ -1,3 +1,10 @@
+> **ANSWERED ON THE HP, 11 November 2026, on 0.9.0.** `gfx` read the
+> engine correctly; the pipe A plane cross-check passed. The panel is on
+> pipe A, transcoder A, DDI A (eDP, DP SST, 2 lanes, clocked by DPLL1).
+> HDMI is wired directly to DDI B, on GMBUS pin 2, with no LSPCON. The
+> monitor is an LG 24GN65R. The four report lines this found wrong are
+> fixed in 0.9.1. The next test is `docs/GFX-EDID-HARDWARE-TEST.md`.
+
 # 0.9.0 on the HP: the display engine, read only
 
 **Ten minutes, and nothing on the laptop changes.** `gfx` reads the

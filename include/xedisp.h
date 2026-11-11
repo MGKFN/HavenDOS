@@ -97,6 +97,7 @@ typedef struct {
     int       powered;
     uint32_t  func;           /* TRANS_DDI_FUNC_CTL                    */
     uint32_t  htotal, hblank, hsync, vtotal, vblank, vsync, src;
+    uint32_t  link_m, link_n;     /* PIPE_LINK_M1/N1 -- DP only (0.9.1) */
 } gfx_trans_t;
 
 typedef struct {
@@ -196,6 +197,11 @@ void gfx_report (const gfx_dev_t *dev, const gfx_regs_t *r,
 void gfx_report_regs(const gfx_dev_t *dev, const gfx_regs_t *r,
                      gfx_emit_t emit);
 void gfx_report_vbt (const gfx_vbt_t *vbt, gfx_emit_t emit);
+
+/* A combo PHY PLL's port clock in kHz, from its two config registers
+   and SKL_DSSM's reference field (i915 icl_ddi_combo_pll_get_freq).
+   0 if the dividers are not a valid encoding. */
+uint32_t gfx_combo_pll_khz(uint32_t cfgcr0, uint32_t cfgcr1, uint32_t dssm);
 
 /* The firmware framebuffer, from kernel/main.c, so the report can say
    whether the plane it finds is the one HavenDOS draws on. */

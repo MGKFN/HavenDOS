@@ -10,6 +10,12 @@
                  when the summary looks wrong.
      gfx vbt     the Video BIOS Table: which connector the firmware
                  says is wired to which port, with its DDC pin and AUX
+     gfx edid [pin]   (0.9.1) the monitor's EDID over GMBUS: maker,
+                 name, the modes it offers, the raw bytes, and every
+                 GMBUS register write with its read-back. The pin
+                 defaults to the one the VBT gives the HDMI port.
+                 THE FIRST COMMAND IN THIS SERIES THAT WRITES -- to
+                 the six GMBUS registers only; include/xegmbus.h.
 
    Each run reads the registers afresh; the mapping of BAR0 is made
    once and kept (drivers/xedisp.c says why). Everything printed comes
@@ -20,6 +26,8 @@
 #include "../include/string.h"
 #include "../include/vga.h"
 #include "../include/xedisp.h"
+#include "../include/xegmbus.h"
+#include "../include/edid.h"
 #include "../include/ui.h"
 
 static int g_stop;
@@ -46,17 +54,56 @@ static void emit(int tone, const char *line)
 static gfx_dev_t  g_dev;
 static gfx_regs_t g_regs;
 static gfx_vbt_t  g_vbt;
+static gmbus_trace_t g_tr;
+static edid_t        g_edid;
+static uint8_t       g_raw[256];
 
-void cmd_gfx(const char *arg)
+/* The pin the VBT gives the HDMI connector; 2 (DDI B, the HP's) if the
+   VBT names none or the connector is behind an LSPCON (EDID would come
+   over DP AUX there, which 0.9.1 does not do). */
+static int hdmi_pin(void)
+{
+    int i;
+    if(g_vbt.why == GFX_VBT_OK)
+        for(i = 0; i < g_vbt.nchild; i++){
+            const gfx_child_t *c = &g_vbt.child[i];
+            if(c->is_hdmi && !c->is_edp && !c->lspcon && c->gmbus_pin)
+                return c->gmbus_pin;
+        }
+    return 2;
+}
+
+static void cmd_edid(const char *pinarg)
+{
+    uint32_t got = 0;
+    int pin = (pinarg && *pinarg) ? atoi(pinarg) : hdmi_pin();
+    memset(g_raw, 0, sizeof g_raw);
+    memset(&g_edid, 0, sizeof g_edid);
+    gmbus_read_edid(&g_dev, pin, g_raw, &got, &g_tr);
+    if(got) edid_parse(g_raw, got, &g_edid);
+    else g_edid.why = EDID_ESHORT;
+    if(g_dev.why != GFX_OK){
+        vga_puts("No display engine to read through: ");
+        vga_puts(gfx_why_name(g_dev.why));
+        vga_puts(".\n");
+        return;
+    }
+    gfx_report_edid(&g_tr, &g_edid, g_raw, got, emit);
+}
+
+void cmd_gfx(const char *arg, const char *arg2)
 {
     g_stop = 0;
     ui_page_reset();
 
-    if(arg && *arg && strcmp(arg, "regs") && strcmp(arg, "vbt")){
+    if(arg && *arg && strcmp(arg, "regs") && strcmp(arg, "vbt") &&
+       strcmp(arg, "edid")){
         vga_puts("usage: gfx         the display engine, as the firmware left it\n");
         vga_puts("       gfx regs    every register read, offset and value\n");
         vga_puts("       gfx vbt     what the Video BIOS Table says is wired\n");
-        vga_puts("Read only. Nothing is written to the GPU.\n");
+        vga_puts("       gfx edid [pin]  the monitor's EDID over GMBUS\n");
+        vga_puts("Read only, except `gfx edid`, which writes the six GMBUS\n");
+        vga_puts("registers and nothing else.\n");
         return;
     }
 
@@ -69,7 +116,8 @@ void cmd_gfx(const char *arg)
         g_vbt.why = GFX_VBT_NOASLS;
     }
 
-    if(arg && !strcmp(arg, "regs"))     gfx_report_regs(&g_dev, &g_regs, emit);
+    if(arg && !strcmp(arg, "edid"))     cmd_edid(arg2);
+    else if(arg && !strcmp(arg, "regs")) gfx_report_regs(&g_dev, &g_regs, emit);
     else if(arg && !strcmp(arg, "vbt")) gfx_report_vbt(&g_vbt, emit);
     else                                gfx_report(&g_dev, &g_regs, &g_vbt, emit);
 }

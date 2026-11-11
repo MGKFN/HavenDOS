@@ -23,12 +23,12 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           kernel/string.c kernel/idt.c kernel/pit.c kernel/kpoll.c kernel/appguard.c kernel/bootsplash.c kernel/pmm.c kernel/heap.c kernel/errors.c kernel/klog.c \
           drivers/vga.c drivers/keyboard.c drivers/mouse.c \
           drivers/ata.c drivers/ahci.c drivers/atapi.c drivers/pci.c drivers/pci_bar.c drivers/uhci.c drivers/nvme.c drivers/virtio.c \
-          drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/rtc.c \
+          drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/xedisp.c drivers/rtc.c \
           fs/blkdev.c fs/ramfs.c fs/gpt.c fs/gpt_write.c fs/esp.c fs/fat16fmt.c fs/fat32fmt.c fs/espmake.c fs/uninstall.c fs/fat12.c fs/fat16.c fs/fat32.c fs/exfat.c fs/vfs.c fs/install.c \
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
-          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/paircmd.c shell/crashcmd.c shell/mines.c shell/mines_model.c shell/neofetch.c
+          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/mines.c shell/mines_model.c shell/neofetch.c
 
 SRCS_S  = boot/boot.S
 OBJS_C  = $(SRCS_C:.c=.o)
@@ -163,6 +163,7 @@ version-sync: include/version.h \
 	python3 tools/check_help.py
 	python3 tools/check_bus_label.py
 	python3 tools/check_machine_reset.py
+	python3 tools/check_gfx_readonly.py
 	python3 tools/check_diskname_sync.py
 	python3 tools/check_blk_dispatch.py
 	python3 tools/check_nic_dispatch.py
@@ -528,6 +529,16 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_ti2c tests/test_i2c.c && \
 	  python3 tools/run_suite.py --name test_i2c --min 49 -- /tmp/hd_ti2c
+	@echo "── test_gfx ───────────────────────────────"
+	@echo "  the Iris Xe inspector, against a model display engine"
+	@# drivers/xedisp.c is INCLUDED: the suite replaces its read seam
+	@# (GFX_RD) and its physical-memory seam (GFX_PHYS). There is no
+	@# write seam to replace, and no pci_cfg_write to link against --
+	@# a write added to the driver stops this suite building.
+	@$(TESTCC) -fno-builtin -Iinclude -Itests \
+	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
+	           -o /tmp/hd_tgfx tests/test_gfx.c && \
+	  python3 tools/run_suite.py --name test_gfx --min 174 -- /tmp/hd_tgfx
 	@echo "── test_rsa ───────────────────────────────"
 	@echo "  Miller-Rabin and RSA keygen, against CPython and openssl"
 	@# net/rsa.c arrived with a suite and a harness and was never added

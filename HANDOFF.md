@@ -1,52 +1,111 @@
-# HavenDOS — handoff, 11 November 2026
+# HavenDOS — handoff, 11 November 2026 (evening)
 
-Current release: **v0.8.9.9** (channel Beta, codename "Helios"), on
-GitHub as release v0.8.9.9 (ISO, source zip, bundle).
-Paste this file into a new chat to pick up where this left off.
+Current release: **v0.9.0** (channel Beta, codename "Janus"), the first
+step of the display-engine driver. Paste this file into a new chat to
+pick up where this left off.
 
-## START HERE: 0.8.9.9 HAS NOT BEEN TESTED ON THE HP
+## START HERE: 0.9.0 HAS NOT RUN ON THE HP
 
-0.8.9.9 is built, 6130/6130 checks across 60 suites, and DHCP works in
-QEMU. **Nothing in it has run on the HP yet.** It fixes three faults
-seen in the 0.8.9.8 photos (details under "0.8.9.9" below):
-pairing took the phone's Ethernet interface away ("DHCP 0 asked"); the
-mux refused TLS's five-byte read ("handshake failed at ClientHello
-sent"); one source port for every connection ("REFUSED the port").
+0.9.0 is built: 6304/6304 checks across 61 suites, 31/31 injections in
+the new harness, and 9/9 in a QEMU boot. **QEMU has no Intel display
+engine, so `gfx` has only ever run against a model of one.** The first
+thing the next chat needs is Kyan's photos of
+`docs/GFX-INSPECTOR-HARDWARE-TEST.md`. With the monitor plugged into
+HDMI and switched on:
 
-**The first thing the next chat needs is Kyan's photos of this, on the
-HP, iPhone attached, Personal Hotspot on:**
+| step | type | what to look for |
+|---|---|---|
+| 1 | `gfx` (space to page; photo every page) | under **So**: the panel's pipe/transcoder/DDI, "Pipe B ... free", "HDMI is wired to DDI x", and the GMBUS pin or AUX for 0.9.1 |
+| 2 | `gfx vbt` | the child devices: type, DVO port, DDC pin, AUX |
+| 3 | `gfx regs` | every raw value; needed if anything in step 1 looks wrong |
+| 4 | unplug HDMI, `gfx` again | whether the DDI B hot-plug word changes |
 
-| step | type | what success looks like | if it fails, the screen now says |
-|---|---|---|---|
-| 1 | `pair` | `the session is ENCRYPTED` | the TLS stage, any alert NUMBER from the phone, and the mux state + reason |
-| 2 | `ifconfig dhcp` | `DHCP OK. IP: 172.20.10.x  GW: 172.20.10.1` | asked / offered / acknowledged, and -- if nothing left -- which card refused it, its link state and the error |
-| 3 | `ping 172.20.10.1` | four replies | the DHCP counters again |
-| 4 | `ping 8.8.8.8`, then `ping google.com` | replies; a resolved address | DNS failure plus the same counters |
+How to read it:
 
-How to read the likely outcomes:
+- **Pipe A's plane says `= the framebuffer HavenDOS draws on`.** The
+  inspector is reading the right registers. This is the built-in
+  cross-check: BAR2 + `PLANE_SURF` == the framebuffer GRUB handed over.
+- **`UNCLAIMED READ` in red.** A power-well gate in `drivers/xedisp.c`
+  is wrong. The offset is in `gfx regs`. Compare it with the model's
+  `owner()` in `tests/test_gfx.c`, which is written from i915's power
+  map.
+- **`detect off` on the HDMI port.** The firmware never enabled
+  hot-plug detection there. Turning it on is a write
+  (`SHOTPLUG_CTL_DDI`), so that belongs at the start of 0.9.1.
+- **`(LSPCON)` after HDMI.** The socket is DP inside: EDID comes over DP
+  AUX, not GMBUS, and 0.9.2 becomes DP link training, not HDMI.
+- **`PW_1 is off`.** The display is in a DC state. Nothing past it can
+  be read without asking for the well, which is a write.
 
-- **Step 1 fails with an alert (40 or 70):** lockdownd refused our one
-  cipher suite, 0x003C TLS_RSA_WITH_AES_128_CBC_SHA256. The stack has
-  only AES-128-CBC + SHA-256 (`net/tls_crypto.c`); offering more means
-  writing SHA-1 HMAC (0x002F) or AES-GCM (0x009C) first. Tethering does
-  NOT need step 1 -- iOS already showed the hotspot indicator, i.e. it
-  trusts this host -- so go on to step 2 regardless.
-- **Step 1 fails with no alert and "connection gone":** the mux reason
-  printed under it is the lead.
-- **Step 2 says "asked 0" and the card refused it:** the claim fix did
-  not hold on real hardware; `usb eth` (tx errors, carrier) and
-  `dmesg` lines starting `usbnet:` / `usbmux:` are what to photograph.
-- **Step 2 says asked 2, offered 0:** frames leave but the phone does
-  not answer: check carrier in `usb eth` and the first-transfer bytes
-  it dumps (the 2-byte RX skip is still unconfirmed on a wire).
+**Ask Kyan** (still unanswered): the monitor's make, model and native
+resolution, and whether it is HDMI or USB-C. The 11 November photo
+shows an HDMI cable beside the laptop, so HDMI is the working
+assumption.
 
-Also never confirmed on the HP, and worth one photo each once the
-network is settled: 0.8.9.6's write-combining framebuffer (`dmesg`:
-`Framebuffer memory: write-combining (PAT)`), pointer speed and reach at
-high resolution, and the trackpad (`i2chid`).
+## WHAT 0.8.9.9 DID ON THE HP: TETHERING WORKS
+
+Photos of 11 November, 14:31, iPhone attached, Personal Hotspot on:
+
+```
+pair            paired (stored record reused) -> StartSession OK
+                TLS: failed (-1), reached ClientHello sent,
+                mux: connection gone; the device reset the connection
+ifconfig dhcp   DHCP OK. IP: 172.20.10.8  GW: 172.20.10.1
+ping 172.20.10.1    4 replies
+ping 8.8.8.8        4 replies, 20-30 ms (285 ms first)
+ping google.com     -> 172.217.17.206, 4 replies
+wget google.com     Saved 7.2 KB
+```
+
+**The first time HavenDOS reached the internet from real hardware.** All
+three 0.8.9.9 fixes held: the interface claim, the split mux read and
+the rotated source port. The 2-byte RX skip is now confirmed on a wire.
+
+**Still open: TLS to lockdownd.** The phone resets the TCP connection
+right after our ClientHello, with no alert. We offer one cipher suite,
+0x003C (AES128-CBC-SHA256). That suite is the lead, but it is
+unproved. The cheapest experiment is to also offer 0x002F
+(AES128-CBC-SHA), which needs an HMAC-SHA1 first. **Tethering does not
+need it,** so it is parked until the display work is done.
+
+Also still never confirmed on the HP, one photo each when convenient:
+the 0.8.9.6 write-combining framebuffer (`dmesg`), pointer speed and
+reach, and the trackpad (`i2chid`).
 
 Still open, not started: the desktop repaints the whole screen once a
 second.
+
+## 0.9.0, IN ONE SCREEN
+
+- `include/xedisp.h`, `drivers/xedisp.c`: the inspector. **Not
+  `gfx.h`**: `include/gfx.h` already exists and is the old display-mode
+  enum `drivers/vesa.c` and `drivers/mode13.c` use. It was briefly
+  overwritten while this release was written, and was caught and
+  restored before anything built on it. Check that a file is new before
+  writing it.
+- `shell/gfxcmd.c`: the `gfx`, `gfx regs` and `gfx vbt` commands, paged.
+- `kernel/main.c`: `kernel_fb_phys()`, the framebuffer's physical
+  address for the cross-check.
+- `tools/check_gfx_readonly.py`, run by `make`: refuses any write in
+  the display code. **0.9.2 must change this check on purpose** when it
+  adds `GFX_WR`. Allow the write seam in a separate file, and keep the
+  inspector itself read-only.
+- `tests/test_gfx.c` (174) and `tools/check_gfx_suite.py` (31/31). The
+  model's power wells come from i915's `xelpd_power_wells`, written
+  independently of the driver's gates.
+- `harness/gfx_boot.py`: QEMU boot, 9/9.
+- `tools/check_machine_reset.py`: compares hex literals by value now.
+  The old substring test refused `0x60400` (a display register) as port
+  0x604.
+
+Every register offset is from Linux i915 (MIT licence), display 13. The
+references used are in the file comments, by i915 symbol name. Fetch
+them from raw.githubusercontent.com/torvalds/linux; the container
+reaches GitHub. Directory: `drivers/gpu/drm/i915/display/`, files
+`intel_display_regs.h`, `skl_universal_plane_regs.h`,
+`intel_display_power_map.c`, `intel_vbt_defs.h`, `intel_bios.c`,
+`intel_opregion.c`, `intel_tc.c`, `intel_ddi.c`, `intel_dpll_mgr.c`,
+`intel_mg_phy_regs.h`.
 
 ## DECIDED FOR 0.9: AN IRIS XE DISPLAY DRIVER, FOR THE EXTERNAL MONITOR
 
@@ -91,7 +150,7 @@ cites PRM sections.
 
 | step | what | writes to the GPU? |
 |---|---|---|
-| 0.9.0 | `gfx` inspector: map BAR0 (GTTMMADR, likely above 4 GB -- reuse `kernel/highfb.c`'s PSE-36 windows); print display version, power-well state, which pipes / transcoders / planes / DDIs are on, the panel's pipe, `PLANE_SURF` and stride, and hot-plug status per port | **no** |
+| 0.9.0 | **BUILT, NOT YET ON THE HP.** `gfx` inspector: map BAR0 (GTTMMADR, likely above 4 GB -- reuse `kernel/highfb.c`'s PSE-36 windows); print display version, power-well state, which pipes / transcoders / planes / DDIs are on, the panel's pipe, `PLANE_SURF` and stride, and hot-plug status per port. Also reads the VBT, so the HP says which port HDMI is on | **no** |
 | 0.9.1 | EDID from the monitor: GMBUS (HDMI) or DP AUX (`DDI_AUX_CTL`), print the name and preferred mode | only the GMBUS/AUX controller |
 | 0.9.2 | modeset behind an explicit command (`gfx on`): enable the power well, program a DPLL for the pixel clock, DDI clock select and buffer, transcoder timings, pipe B, plane B scanning out a framebuffer at the monitor's mode | **yes**, never at boot until proved |
 | 0.9.3 | console and desktop follow the new framebuffer (`vga_cols()`/`vga_rows()` already derive the grid); `gfx off` hands back the panel; a boot option once it is proved | yes |
@@ -1476,7 +1535,9 @@ container will start the same way:
 apt-get update
 apt-get install -y --no-install-recommends xorriso mtools dosfstools \
     grub-common grub2-common grub-pc-bin grub-efi-ia32-bin \
-    gdisk parted qemu-system-x86
+    grub-efi-amd64-bin gdisk parted qemu-system-x86 \
+    gcc-multilib nasm exfatprogs exfat-fuse openssl
+pip install --break-system-packages hid-parser
 ```
 
 `apt-get update` first — without it the packages are "unable to locate".
@@ -2839,7 +2900,8 @@ Left, and each has its reason:
 | `check_klog_fmt.py` | a klog format specifier klog does not implement |
 | `check_usb_buffers.py` | a transfer constant its own back-end would refuse |
 | `check_diskname_sync.py` | the suite carrying a copy instead of linking |
-| `check_machine_reset.py` | a reset or power-off port outside `kernel/machine.c` |
+| `check_machine_reset.py` | a reset or power-off port outside `kernel/machine.c` (by VALUE since 0.9.0) |
+| `check_gfx_readonly.py` | any write in `drivers/xedisp.c` or `shell/gfxcmd.c` (0.9.0) |
 | `check_harnesses.py` | an injection harness whose baseline will not build |
 | `check_kpoll_sites.py` | `kernel_poll()` outside two named files; a polling sleep in a driver; a client registered outside four |
 | `check_kpoll_guard.py` | an entry point that loses its `kpoll_enter()`/`kpoll_leave()` bracket, or returns before the leave; a second copy of the rescan sequence |
@@ -2848,7 +2910,14 @@ Left, and each has its reason:
 Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
-## Testing, as of 0.8.9
+## Testing, as of 0.9.0
+
+**6304 of 6304 checks across 61 suites** (`make test`, run, not
+reasoned about); `test_fat16path` still skips without `BOOTDISK=`. New:
+`test_gfx` (174), with `tools/check_gfx_suite.py` 31/31 and
+`harness/gfx_boot.py` 9/9 in QEMU. 0.8.9.9 was 6130 across 60.
+
+### As of 0.8.9
 
 **5883 of 5883 checks**, across the 60 suites `make test` invokes — 59
 report and `test_fat16path` skips without a `BOOTDISK=` image, as it

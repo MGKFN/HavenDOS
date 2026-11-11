@@ -390,7 +390,7 @@ static const char *shell_cmds[]={
     "calc","calendar","cat","cd","chat","chmod","chown","clear",
     "cls","color","copy","cowsay","cp","crash","curl","dashboard","date",
     "del","deluser","df","diff","dir","disk","dmesg","dns",
-    "echo","edit","env","exfat","exit","export","fat16","fat32","find","fortune","grep",
+    "echo","edit","env","exfat","exit","export","fat16","fat32","find","fortune","gfx","grep",
     "guide","h","hacker","hash","head","help","hex","history",
     "kpoll",
     "host","hplusplus","htop","i2c","i2chid","ifconfig","install","lock","log","ls",
@@ -1588,6 +1588,7 @@ void cmd_exfat(const char *arg1, const char *arg2);
 void cmd_rsa(const char *arg1, const char *arg2);
 void cmd_i2c(const char *arg1, const char *arg2);
 void cmd_i2chid(const char *arg);
+void cmd_gfx(const char *arg);
 void cmd_pair(const char *arg);
 void cmd_crash(const char *arg1);
 void desktop_layout_audit(void);
@@ -3641,6 +3642,7 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"rsa"))      cmd_rsa(arg1,arg2);
     else if(!strcmp(cmd,"i2c"))      cmd_i2c(arg1,arg2);
     else if(!strcmp(cmd,"i2chid"))   cmd_i2chid(arg1);
+    else if(!strcmp(cmd,"gfx"))      cmd_gfx(arg1);
     else if(!strcmp(cmd,"pair"))     cmd_pair(arg1);
     else if(!strcmp(cmd,"crash"))    cmd_crash(arg1);
     else if(!strcmp(cmd,"layout"))   desktop_layout_audit();

@@ -2,11 +2,21 @@
 
 HavenDOS is an operating system written from scratch in C and x86 assembly by Tech Haven Studios: its own 32-bit kernel, drivers, filesystems, TCP/IP and TLS stack, a shell and a text-mode desktop with the look of an old DOS machine, on modern UEFI hardware.
 
-It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB sticks, and is part-way through teaching itself to pair with an iPhone so it can use the phone's connection — that laptop has no Ethernet port.
+It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB sticks, and reaches the internet through an iPhone over USB — that laptop has no Ethernet port.
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.8.9.9 Beta "Helios"
+## Current version: 0.9.0 Beta "Janus"
+
+**0.9.0** starts a display driver for the Iris Xe, so HavenDOS can use
+an external monitor. This first step only looks: `gfx` reads the display
+engine as the firmware left it and writes nothing. It shows the power
+wells, pipes, transcoders, ports, hot-plug state and PLLs, which pipe
+drives the panel, and which connector HDMI is wired to. It also
+confirms what the HP showed on 0.8.9.9: **iPhone tethering works**.
+DHCP, DNS, ping and a download all run through the phone, the first
+time HavenDOS has reached the internet from real hardware.
+[Changelog](changelogs/CHANGELOG-v0.9.0.md).
 
 **0.8.9.9** fixes the three faults in the 0.8.9.8 photos from the HP.
 Pairing took the iPhone's Ethernet interface away: the USB core could
@@ -69,7 +79,9 @@ Tested on an HP laptop with an Intel Alder Lake CPU, NVMe SSD and xHCI USB, and 
 | USB sticks (FAT16/FAT32; exFAT read-only) | Working |
 | `update` from a USB stick | Working |
 | iPhone pairing, stages 1 and 2 | Working |
-| iPhone pairing, stage 3 | The phone shows the Personal Hotspot indicator after `pair`; networking over it is next |
+| iPhone pairing, stage 3 | Pairs, and StartSession answers; the TLS session after it is refused by the phone (not needed for tethering) |
+| iPhone USB tethering | **Working** since 0.8.9.9: DHCP, DNS, ping, HTTP |
+| External monitor | 0.9.0 reads the display engine (`gfx`); driving the monitor is 0.9.2 |
 | Built-in trackpad (I2C-HID) | Not working in 0.8.9.5; 0.8.9.6 fixes two likely causes, untested |
 | MediaTek Wi-Fi | No driver |
 
@@ -83,11 +95,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.8.9.9.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.0.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.8.9.9.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.0.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

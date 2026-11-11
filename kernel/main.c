@@ -5,6 +5,7 @@
 #include "../include/machine.h"
 #include "../include/klog.h"
 #include "../include/highfb.h"
+#include "../include/xedisp.h"   /* v0.9.0: kernel_fb_phys() */
 #include "../include/i2c.h"
 #include "../include/net.h"      /* v0.7.6: net_ready() was implicit */
 #include "../include/string.h"
@@ -363,6 +364,21 @@ static uint32_t g_fb_hi_orig = 0, g_fb_lo_orig = 0;  /* before remapping */
 static uint32_t g_fb_hi = 0;
 static uint32_t g_fb_bpp = 0;
 static int      g_fb_kind = -1;   /* -1 = a linear framebuffer was supplied */
+
+/* v0.9.0: the framebuffer's PHYSICAL address and geometry, for `gfx`,
+   which compares it with what the display engine's plane registers say
+   is being scanned out. g_fb_lo is rewritten to the virtual window when
+   the framebuffer is above 4 GB, so the originals are what is handed
+   back; below 4 GB nothing was remapped and g_fb_lo is still physical. */
+void kernel_fb_phys(uint32_t *hi, uint32_t *lo, uint32_t *w, uint32_t *h,
+                    uint32_t *pitch)
+{
+    *hi    = g_fb_hi_orig;
+    *lo    = g_fb_hi_orig ? g_fb_lo_orig : g_fb_lo;
+    *w     = g_fb_w;
+    *h     = g_fb_h;
+    *pitch = g_fb_pitch;
+}
 
 static void parse_mb1(uint32_t addr){
     if(addr<0x500||addr>0x8000000)return;

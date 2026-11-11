@@ -1,3 +1,11 @@
+> **PARTLY ANSWERED, 11 November 2026, on 0.8.9.9.** `pair` reached
+> `paired` and StartSession returned a session ID. The TLS handshake
+> then failed at "ClientHello sent", and the mux reported "the device
+> reset the connection", with **no alert**. So lockdownd closed the
+> connection on our ClientHello. The one suite we offer, 0x003C, is the
+> lead. Tethering does not need this step, and it is parked behind 0.9.
+> See CHANGELOG-v0.9.0.md.
+
 # Pairing, stage 3, end to end — the hardware test for v0.8.9
 
 Fifteen minutes on the HP, an iPhone, and a camera.

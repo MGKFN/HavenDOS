@@ -1,3 +1,10 @@
+> **ANSWERED ON THE HP, 11 November 2026, on 0.8.9.9.** iPhone tethering
+> works end to end: `ifconfig dhcp` gave 172.20.10.8 with gateway
+> 172.20.10.1, the gateway, 8.8.8.8 and google.com all answered `ping`,
+> and `wget google.com` saved 7.2 KB. The first time HavenDOS has reached
+> the internet from real hardware. Kept for the record; nothing here
+> needs running again.
+
 # v0.8.7 "Iris" on the HP — the five minutes that settle it
 
 **Nothing in this release has been on hardware.** 37 suites and 2774

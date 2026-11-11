@@ -48,6 +48,12 @@ PORTS = {
     "0x4004": "VirtualBox ACPI PM1a_CNT (power off)",
 }
 
+# Hex literals as tokens: 0x604, 0x0604, 0x604u all mean the port;
+# 0x60400 does not. Not preceded by an identifier character, so
+# R_0x604 style names are not literals either.
+HEX_LIT = re.compile(r"(?<![0-9A-Za-z_])0[xX]([0-9A-Fa-f]+)[uUlL]*(?![0-9A-Za-z_])")
+PORT_VALUES = {int(k, 16) for k in PORTS}
+
 # The 8042 pulse is different: port 0x64 is the keyboard controller's
 # command port and drivers/keyboard.c, drivers/mouse.c and
 # drivers/mode13.c all write to it legitimately. What is forbidden is
@@ -159,10 +165,18 @@ def main():
                                        encoding="utf-8",
                                        errors="replace").read())
             for num, line in enumerate(code.splitlines(), 1):
-                low = line.lower()
-                for port, what in sorted(PORTS.items()):
-                    if port in low:
-                        bad.append((rel, num, "port %s -- %s" % (port, what)))
+                # v0.9.0: compare whole hex LITERALS by value. This was
+                # `port in line.lower()` -- a substring test -- and the
+                # display driver's TRANS_DDI_FUNC_CTL offset 0x60400 is
+                # "0x604" followed by "00", so a register offset was
+                # refused as a power-off port. The substring test also
+                # missed 0x0604 entirely. By value, both are right.
+                for lit in HEX_LIT.findall(line):
+                    v = int(lit, 16)
+                    if v in PORT_VALUES:
+                        port = "0x%x" % v
+                        bad.append((rel, num, "port %s -- %s"
+                                    % (port, PORTS[port])))
                 if PULSE_C.search(line) or PULSE_ASM.search(line):
                     bad.append((rel, num,
                                 "the 8042 reset pulse (0xFE -> 0x64)"))

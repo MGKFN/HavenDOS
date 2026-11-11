@@ -33,8 +33,8 @@
 */
 
 #define HAVENDOS_VER_MAJOR  0
-#define HAVENDOS_VER_MINOR  8
-#define HAVENDOS_VER_PATCH  9
+#define HAVENDOS_VER_MINOR  9
+#define HAVENDOS_VER_PATCH  0
 /* A fourth number, for a patch release that fixes the release before it
    without adding a feature.  ver_cmp() in fs/update.c already parses four
    components, so 0.8.5.1 compares as newer than 0.8.5 and `update`
@@ -61,18 +61,24 @@
    direction: 0.8.9.1 compares NEWER than 0.8.9, so `update` offers
    it. The rule is only ever broken by going from a longer number to a
    shorter one at the same prefix. */
-#define HAVENDOS_VER_BUILD  9
+/* ── v0.9.0: A NEW MINOR, AND THE FOURTH NUMBER RESETS ───────────────
+   ver_cmp() compares component by component, so 0.9.0 is newer than
+   0.8.9.9 at the second component and nothing after it is looked at.
+   Zero here means "no patch" and VER_NUM omits it. */
+#define HAVENDOS_VER_BUILD  0
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.8.9.9"
+#define HAVENDOS_VER_NUM    "0.9.0"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"
-#define HAVENDOS_CODENAME   "Helios"
+/* "Janus", for the 0.9.0-0.9.3 display series: the god with two faces,
+   for a machine about to have two screens. Helios ended at 0.8.9.9. */
+#define HAVENDOS_CODENAME   "Janus"
 #define HAVENDOS_FULL       HAVENDOS_NAME " " HAVENDOS_VER " " HAVENDOS_CHANNEL \
                             " \"" HAVENDOS_CODENAME "\""
 #define HAVENDOS_VENDOR     "TechHaven Studios"

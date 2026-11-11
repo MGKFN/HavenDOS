@@ -176,7 +176,7 @@ System Partition files are added; nothing is deleted and nothing is
 overwritten without a verified copy.
 
 What it does **not** do yet is create a firmware boot entry, so after
-installing you still add one by hand. That is 0.9.2 "Prometheus".
+installing you still add one by hand. A later release will do it.
 
 ## Reading a USB stick
 
@@ -194,9 +194,8 @@ needs `usb rescan`: a hub reports port changes on an interrupt endpoint
 that is not polled, and the laptop this tree is tested on appears to
 have no hub to test one with.
 
-**A stick over 32 GB is almost certainly exFAT**, which has no driver
-here. `fat32` says so by name rather than reporting nothing; reformat it
-as FAT32 or FAT16 to read it.
+**A stick over 32 GB is almost certainly exFAT**, which is read-only
+here (`exfat`). To write to it, reformat it as FAT32 or FAT16.
 
 `docs/USB-STORAGE-HARDWARE-TEST.md` is the five-minute test for the
 storage path: it works under QEMU on both controllers and with the
@@ -205,22 +204,19 @@ laptop's.
 
 ## What this release wants from the laptop
 
-**`docs/PAIRING-STAGE3-HARDWARE-TEST.md`.** Fifteen minutes with an
-iPhone and a camera, and it covers BOTH HALVES of pairing stage 3 --
-the first half's instructions were in the 0.8.8.11 doc and are carried
-forward, so if that test was never run this one replaces it.
+**`docs/GFX-INSPECTOR-HARDWARE-TEST.md`.** Ten minutes, the external
+monitor plugged into HDMI, and a camera. `gfx` reads the Iris Xe
+display engine and writes nothing, so nothing on the laptop can change.
+QEMU has no Intel display engine, so this is the first time the code
+has met real hardware. Photograph every page of `gfx`, `gfx vbt` and
+`gfx regs`, then run `gfx` again with the HDMI cable out.
 
-`pair` now goes all the way: the Trust dialog, the record saved, a
-session opened, a TLS handshake presenting our host certificate as a
-client certificate, and one request sent inside the encrypted session
-as proof. It prints `STAGE 3 IS COMPLETE.` or the step it stopped at.
+The last section of `gfx` says which connector HDMI is wired to and how
+0.9.1 will read the monitor's EDID. That decides the next release.
 
-The one line in it that can change the road is in Part 4: **which
-cipher suite lockdownd chose.** This stack offers exactly one, static
-RSA, and whether iOS will negotiate it is the single thing the tests
-cannot answer -- `openssl s_server` is happy to and iOS may not be.
-`tlsinfo` prints the chosen suite and the alert number side by side for
-exactly that reason.
+Answered on 0.8.9.9: **iPhone tethering works** (DHCP, DNS, ping,
+`wget`). Pairing's TLS session is still refused by the phone, which
+`docs/PAIRING-STAGE3-HARDWARE-TEST.md` now notes at the top.
 
 The older plans are still in `docs/` and still unanswered:
 `TRACKPAD-AND-PAIR-HARDWARE-TEST.md` for `i2chid` and the Notepad

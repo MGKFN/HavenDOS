@@ -355,6 +355,67 @@ int main(void)
         }
     }
 
+    head("v0.9.3: dotfiles get a legal 8.3 name, and old ones are found");
+    {
+        /* ".shell_history" was a BLANK name with extension SHE: fsck.fat
+           calls that a bad short name and renames it FSCK0000.000, and
+           Windows' chkdsk does the same -- to .accounts too. Found by
+           harness/esp_update.py running fsck.fat on an installed volume. */
+        uint64_t where;
+        char back[64];
+        uint32_t rs;
+        build_disk(DISK_SECTORS);
+        where = add_volume(T_HAVEN, 262144u, "HAVENDOS");
+        ck("mount a HavenDOS volume", where != 0 && fat16_init() == 1, 0);
+        ck("write .shell_history",
+           fat16_write(".shell_history", "ls\nver\n", 7) == 7, 0);
+        rs = (uint32_t)(where + root_start);
+        {
+            uint8_t d[512];
+            int found = 0, blank = 0;
+            d_read(0, rs, d);
+            for(int i = 0; i < 512; i += 32){
+                if(memcmp(d + i, "_SHELL_H   ", 11) == 0) found = 1;
+                if(d[i] == ' ' && d[i + 8] != ' ') blank = 1;
+            }
+            ck("its entry is _SHELL_H", found, 0);
+            ck("and no entry has a blank name", !blank, 0);
+        }
+        ck("it reads back by its dotted name",
+           fat16_read(".shell_history", back, sizeof back) == 7
+           && memcmp(back, "ls\nver\n", 7) == 0, 0);
+        ck(".bpkg_db and .bpkg are two files, not one",
+           fat16_write(".bpkg_db", "db", 2) == 2
+           && fat16_write(".bpkg", "pk", 2) == 2
+           && fat16_read(".bpkg_db", back, sizeof back) == 2
+           && memcmp(back, "db", 2) == 0, 0);
+
+        /* An entry as a pre-0.9.3 system left it: blank name, ACC. */
+        {
+            uint8_t d[512];
+            int slot = -1;
+            ck("write .accounts", fat16_write(".accounts", "admin:x", 7) == 7, 0);
+            d_read(0, rs, d);
+            for(int i = 0; i < 512; i += 32)
+                if(memcmp(d + i, "_ACCOUNT", 8) == 0) slot = i;
+            ck("find its entry", slot >= 0, slot);
+            if(slot >= 0){
+                memcpy(d + slot, "        ACC", 11);
+                d_write(0, rs, d);
+            }
+            ck("remount, as the next boot would", fat16_init() == 1, 0);
+            ck("the old-style .accounts is still found",
+               fat16_read(".accounts", back, sizeof back) == 7
+               && memcmp(back, "admin:x", 7) == 0, 0);
+            d_read(0, rs, d);
+            ck("and its entry was renamed in place to _ACCOUNT",
+               slot >= 0 && memcmp(d + slot, "_ACCOUNT   ", 11) == 0, 0);
+        }
+        ck("\".\" and \"..\" are not dotfiles",
+           is_dotfile(".x") && !is_dotfile(".") && !is_dotfile("..")
+           && !is_dotfile("a.b"), 0);
+    }
+
     head("a disk with no GPT and no MBR entry mounts nothing");
     {
         build_disk(DISK_SECTORS);

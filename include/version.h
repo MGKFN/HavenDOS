@@ -34,7 +34,7 @@
 
 #define HAVENDOS_VER_MAJOR  0
 #define HAVENDOS_VER_MINOR  9
-#define HAVENDOS_VER_PATCH  2
+#define HAVENDOS_VER_PATCH  3
 /* A fourth number, for a patch release that fixes the release before it
    without adding a feature.  ver_cmp() in fs/update.c already parses four
    components, so 0.8.5.1 compares as newer than 0.8.5 and `update`
@@ -66,21 +66,24 @@
    0.8.9.9 at the second component and nothing after it is looked at.
    Zero here means "no patch" and VER_NUM omits it. */
 /* v0.9.2.1 and .2: patches to 0.9.2 -- what its runs on the HP found.
-   Each compares newer than the last under ver_cmp(). */
-#define HAVENDOS_VER_BUILD  2
+   Each compares newer than the last under ver_cmp(). 0.9.3 is newer than
+   0.9.2.2 at the third component, and the fourth goes back to zero. */
+#define HAVENDOS_VER_BUILD  0
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.2.2"
+#define HAVENDOS_VER_NUM    "0.9.3"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"
-/* "Janus", for the 0.9.0-0.9.3 display series: the god with two faces,
-   for a machine about to have two screens. Helios ended at 0.8.9.9. */
-#define HAVENDOS_CODENAME   "Janus"
+/* "Gaia", v0.9.3: the earth -- the ground an install stands on, and now
+   all of it rather than the first 2047 MB. RM-1003 named it for 0.9.1;
+   the display series ("Janus", 0.9.0-0.9.2.2) took those numbers first,
+   so the road-to-1.0 releases each move up by two. */
+#define HAVENDOS_CODENAME   "Gaia"
 #define HAVENDOS_FULL       HAVENDOS_NAME " " HAVENDOS_VER " " HAVENDOS_CHANNEL \
                             " \"" HAVENDOS_CODENAME "\""
 #define HAVENDOS_VENDOR     "TechHaven Studios"

@@ -6,7 +6,16 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.2.2 Beta "Janus"
+## Current version: 0.9.3 Beta "Gaia"
+
+**0.9.3.** **An install larger than 2047 MB is FAT32 now**, up to 32 GB.
+Before, every install was a 2047 MB FAT16 volume, whatever the size of the
+disk or the free space. Both installers make it. The installed system finds
+it on GPT and MBR disks, and keeps it mounted while an update reads from
+the ESP. `update` and `rename` work on it. Also fixed: FAT16 dotfiles like
+`.accounts` had names `chkdsk` would "repair" away. They are renamed safely
+the first time they are used.
+[Changelog](changelogs/CHANGELOG-v0.9.3.md).
 
 **0.9.2.2.** On 0.9.2.1 the LG monitor **locked on to HavenDOS's signal**:
 1920x1080 at 60 Hz on its HDMI input, from a display path HavenDOS set
@@ -135,11 +144,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.2.2.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.3.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.2.2.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.3.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -147,7 +156,7 @@ The GRUB loader is unsigned, so **Secure Boot must be off** on real hardware.
 
 Default accounts after installation: `admin` / `Admin@123`, `bootos` / `BootOS2026`, `guest` with no password. Change them.
 
-**Before installing on a real machine, back up your files** and read the installer's disk preview carefully. Installing beside Windows uses existing unallocated space and does not shrink Windows for you; the whole-disk option replaces the disk layout. The HavenDOS system partition is FAT16, so it is limited to 2047 MB.
+**Before installing on a real machine, back up your files** and read the installer's disk preview carefully. Installing beside Windows uses existing unallocated space and does not shrink Windows for you; the whole-disk option replaces the disk layout. The HavenDOS system partition is FAT16 up to 2047 MB and FAT32 above that (since 0.9.3), and the installer takes at most 32 GB of free space, leaving the rest free.
 
 ### Updating an installed system
 

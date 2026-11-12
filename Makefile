@@ -24,7 +24,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           drivers/vga.c drivers/keyboard.c drivers/mouse.c \
           drivers/ata.c drivers/ahci.c drivers/atapi.c drivers/pci.c drivers/pci_bar.c drivers/uhci.c drivers/nvme.c drivers/virtio.c \
           drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/xedisp.c drivers/xegmbus.c drivers/xemode.c drivers/edid.c drivers/rtc.c \
-          fs/blkdev.c fs/ramfs.c fs/gpt.c fs/gpt_write.c fs/esp.c fs/fat16fmt.c fs/fat32fmt.c fs/espmake.c fs/uninstall.c fs/fat12.c fs/fat16.c fs/fat32.c fs/exfat.c fs/vfs.c fs/install.c \
+          fs/blkdev.c fs/ramfs.c fs/gpt.c fs/gpt_write.c fs/esp.c fs/fat16fmt.c fs/fat32fmt.c fs/espmake.c fs/uninstall.c fs/fat12.c fs/fat16.c fs/fat32.c fs/exfat.c fs/vfs.c fs/sysvol.c fs/instsize.c fs/install.c \
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
@@ -426,14 +426,15 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_twds tests/test_wholedisk_size.c fs/fat16fmt.c \
+	           fs/fat32fmt.c fs/instsize.c \
 	           && \
-	  python3 tools/run_suite.py --name test_wholedisk_size --min 76 -- /tmp/hd_twds
+	  python3 tools/run_suite.py --name test_wholedisk_size --min 124 -- /tmp/hd_twds
 	@echo "── test_fat16gpt ──────────────────────────"
 	@echo "  can the installed system find its own partition on a GPT disk"
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tf16g tests/test_fat16gpt.c && \
-	  python3 tools/run_suite.py --name test_fat16gpt --min 44 -- /tmp/hd_tf16g
+	  python3 tools/run_suite.py --name test_fat16gpt --min 56 -- /tmp/hd_tf16g
 	@echo "── test_fat16nvme ─────────────────────────"
 	@echo "  can an installed system on an NVMe drive read itself back"
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
@@ -445,7 +446,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tia tests/test_installadd.c && \
-	  python3 tools/run_suite.py --name test_installadd --min 151 -- /tmp/hd_tia
+	  python3 tools/run_suite.py --name test_installadd --min 180 -- /tmp/hd_tia
 	@echo "── test_xhci ──────────────────────────────"
 	@echo "  xHCI against a controller that executes its commands"
 	@# -no-pie so a static ring's address still fits the uint32_t a
@@ -474,6 +475,11 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -Iinclude -Itests -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tf32 tests/test_fat32.c && \
 	  python3 tools/run_suite.py --name test_fat32 --min 227 -- /tmp/hd_tf32
+	@echo "── test_fat32sys ──────────────────────────"
+	@echo "  the system volume on FAT32: parked, borrowed, found, renamed"
+	@$(TESTCC) -Iinclude -Itests -Wno-builtin-declaration-mismatch \
+	           -Wno-unused-function -o /tmp/hd_tf32s tests/test_fat32sys.c && \
+	  python3 tools/run_suite.py --name test_fat32sys --min 112 -- /tmp/hd_tf32s
 	@echo "── test_kbdinit ───────────────────────────"
 	@echo "  the 8042 is given time to answer, during init as well as at runtime"
 	@# drivers/keyboard.c is COMPILED here through io.h's IO_H seam. What

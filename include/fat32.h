@@ -90,13 +90,34 @@ typedef int (*fat32_write_fn)(void *ctx, uint64_t lba, const uint8_t *buf);
 int  fat32_mount_dev(fat32_read_fn rd, fat32_write_fn wr, void *ctx,
                      uint64_t part_lba);
 
-/* Probe the local disks (VirtIO, then ATA) for an MBR partition of type
- * 0x0B or 0x0C that really is FAT32, and mount the first one.  Returns 1
- * if a volume is mounted.  NOT called on live media -- see vfs_init(). */
+/* Find the HavenDOS volume on the boot disk and mount it as the SYSTEM
+ * volume: on GPT, the partition with the HavenDOS type GUID (never the
+ * ESP); on MBR, a 0x0B/0x0C partition labelled HAVENDOS, else the first
+ * FAT32 one as before 0.9.3. Returns 1 if mounted. NOT called on live
+ * media -- see vfs_init(). */
 int  fat32_init(void);
 
 int  fat32_detected(void);
+/* Drops a BORROWED volume and brings the system volume back. With the
+   system volume itself mounted it does nothing: only fat32_init() replaces
+   that. See "THE SYSTEM VOLUME IS PARKED" in fs/fat32.c. */
 void fat32_unmount(void);
+
+/* v0.9.3. The system volume -- the one fat32_init() mounted -- is parked,
+   not lost, while fat32_mount_dev() lends the slot to another volume.
+   fat32_sys_begin() gives the slot back to the system for ONE operation
+   and fat32_sys_end() returns it to the borrower; with nothing borrowed
+   both are free. sys_begin returns 0 when there is no system volume. */
+int  fat32_mount_system(fat32_read_fn rd, fat32_write_fn wr, void *ctx,
+                        uint64_t part_lba);
+int  fat32_sys_begin(void);
+void fat32_sys_end(void);
+int  fat32_system_mounted(void);  /* in the slot or parked               */
+int  fat32_borrowed(void);        /* the slot holds somebody else's      */
+
+/* Moves a directory entry; data is not copied. 1 on success. The target
+   must not exist; a directory is renamed only within its own parent. */
+int  fat32_rename(const char *from, const char *to);
 int  fat32_flush(void);           /* FAT window + FSInfo to disk */
 
 /* Geometry, for `disk` and for tests.  Zero when nothing is mounted. */

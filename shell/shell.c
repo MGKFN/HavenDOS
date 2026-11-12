@@ -3019,7 +3019,10 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
         vga_printf("  CPU          Intel x86 32-bit\n");
         vga_printf("  RAM Free     %u KB / %u KB\n", f2*4, t2*4);
         vga_printf("  Display      80x25 VGA Text Mode\n");
-        vga_printf("  Disk         %s\n", vfs_using_fat16()?"VirtIO FAT16":(has_disk?"ATA FAT12":"RAMFS (no disk)"));
+        { extern int vfs_using_fat32(void);
+          vga_printf("  Disk         %s\n", vfs_using_fat16()?"FAT16":
+                     vfs_using_fat32()?"FAT32":
+                     (has_disk?"FAT12":"RAMFS (no disk)")); }
         vga_puts("\n");
         vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK); vga_puts("  Session\n");
         vga_set_color(VGA_DARK_GREY,VGA_BLACK);  vga_puts("  -------\n");
@@ -3044,7 +3047,11 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
         extern int         fat16_detected(void);
         extern int         ata_present(void);
         int vready=virtio_blk_ready();
-        int has_ata=vfs_using_disk() && !vfs_using_fat16();
+        /* v0.9.3: "a disk is mounted and it is not FAT16" meant FAT12 until
+           there was a third kind. On a FAT32 install this printed "ATA
+           FAT12 : present" on an NVMe laptop that has no ATA at all. */
+        extern int vfs_using_fat32(void);
+        int has_ata=vfs_using_disk() && !vfs_using_fat16() && !vfs_using_fat32();
         extern int boot_is_live(void);
         int has_fat16=fat16_detected();
         /* fat16_on_ata() is gone from this screen: it only ever meant
@@ -3236,13 +3243,21 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
             extern uint32_t fat32_total_clusters(void);
             extern uint32_t fat32_free_clusters(void);
             extern uint32_t fat32_cluster_bytes(void);
+            extern int  fat32_sys_begin(void);
+            extern void fat32_sys_end(void);
+            extern int  blk_boot_dev(void);
+            extern const char *blk_bus_name(int);
             int has_fat32 = vfs_using_fat32();
             vga_set_color(has_fat32?VGA_LIGHT_GREEN:VGA_DARK_GREY,VGA_BLACK);
-            if(has_fat32){
+            /* The system volume's numbers, even if `fat32` is holding a
+               stick open: the driver lends the slot back for this. */
+            if(has_fat32 && fat32_sys_begin()){
                 char cl[12], kb[12];
                 utoa(fat32_total_clusters(),cl,10);
                 utoa(fat32_cluster_bytes()/1024,kb,10);
-                vga_puts("  FAT32 part : mounted  ");
+                vga_puts("  FAT32 part : mounted on ");
+                vga_puts(blk_bus_name(blk_boot_dev()));
+                vga_puts(", ");
                 vga_puts(cl); vga_puts(" clusters of ");
                 vga_puts(kb); vga_puts("KB\n");
                 uint32_t fr = fat32_free_clusters();
@@ -3258,6 +3273,7 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
                     utoa((uint32_t)(((uint64_t)fr*fat32_cluster_bytes())>>20),mb_s,10);
                     vga_puts("  Free space : "); vga_puts(mb_s); vga_puts("MB\n");
                 }
+                fat32_sys_end();
             } else {
                 vga_puts("  FAT32 part : not mounted\n");
             }
@@ -3286,7 +3302,7 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
             vga_puts("  Tip        : this is live media; reboot and pick "
                      "'Install to Disk' to\n"
                      "               set up persistent storage\n");
-        else if(!has_fat16)
+        else if(!vfs_using_disk())
             vga_puts("  Tip        : run 'install' to set up persistent storage\n");
         vga_set_color(VGA_WHITE,VGA_BLACK);
     }

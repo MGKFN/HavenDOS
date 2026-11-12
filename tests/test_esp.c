@@ -175,6 +175,8 @@ static uint32_t g_loader_sz = FAKE_LOADER_SZ;
    this suite compiles -- see tests/kpollguard.inc. */
 #include "kpollguard.inc"
 
+/* v0.9.3: fat32_init() reads a GPT, so fs/gpt.c is linked, not stubbed. */
+#include "../fs/gpt.c"
 #include "../fs/fat32.c"
 #define ESP_NO_KERNEL_GLUE 1
 #include "../fs/esp.c"

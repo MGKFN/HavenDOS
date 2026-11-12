@@ -70,6 +70,8 @@ extern uint64_t inst_disk_sectors(int idx);
 #include "esp.h"
 #include "espmake.h"
 #include "install_add.h"
+#include "fat32fmt.h"
+#include "fat32.h"
 
 #define FAT_EOF          0xFFF8
 #define ATTR_DIRECTORY   0x10
@@ -124,6 +126,72 @@ static uint16_t s_next_cluster;
 static uint64_t     s_part_lba = PART_START_SECT;
 static fat16_geom_t s_geom;
 static uint32_t     s_whole_sectors;  /* whole-disk partition, capped */
+
+/* ── v0.9.3 "Gaia": THE VOLUME IS FAT16 OR FAT32 ─────────────────────
+   Every install before this one made FAT16, and FAT16 ends at 65524
+   clusters of 32 KB: 2047 MB. A 512 GB laptop got a 2 GB HavenDOS and
+   510 GB nobody could use from it.
+
+   Up to 2047 MB nothing changes -- FAT16, the same bytes as before, so
+   every small-disk test and every machine already installed is exactly
+   what it was. Above it the volume is FAT32, made by fs/fat32fmt.c (the
+   formatter that has been making ESPs since 0.8.8.8) and FILLED BY
+   fs/fat32.c, the driver the system then mounts it with. The installer
+   does not get a third FAT writer of its own: the FAT16 path's hand-rolled
+   uint16_t cluster writer is why that path needed its own tests, and the
+   FAT32 path is the same code that will read the files back.
+
+   s_fs32 is decided once per install, by instadd_fs_for(), from the size
+   of the partition -- the ONLY input, so the preview, the whole-disk path
+   and the additive path cannot disagree about it. */
+static int          s_fs32;
+static fat32_geom_t s_geom32;
+static uint64_t     s_vol_sectors;    /* the volume's size, for the bound */
+
+/* instadd_fs_for() and havendos_wholedisk_sectors() are in fs/instsize.c:
+   pure arithmetic, so tests/test_wholedisk_size.c links the functions
+   this file calls rather than a copy of them -- which is what it did
+   until 0.9.3, and why the copy and the installer could have drifted. */
+
+/* Geometry for a volume of `sectors`, of whichever type that size gets. */
+static int vol_plan(uint32_t sectors)
+{
+    memset(&s_geom,   0, sizeof s_geom);
+    memset(&s_geom32, 0, sizeof s_geom32);
+    s_vol_sectors = sectors;
+    s_fs32 = (instadd_fs_for(sectors) == 32);
+    return s_fs32 ? fat32_geom(sectors, &s_geom32)
+                  : fat16_geom(sectors, &s_geom);
+}
+static uint64_t vol_cluster_bytes(void)
+{
+    return (uint64_t)(s_fs32 ? s_geom32.sects_per_clust
+                             : s_geom.sects_per_clust) * 512u;
+}
+static uint64_t vol_data_clusters(void)
+{
+    return s_fs32 ? s_geom32.clusters : s_geom.clusters;
+}
+
+/* The serial number. Derived from where the volume is, not from a clock:
+   the same install onto the same gap produces the same bytes, which is what
+   lets the suites compare against fixtures. XOR'd so it is not the ESP's,
+   which fs/espmake.c derives from ITS start with the same multiplier. */
+/* What step 8 reads back: the filesystem-type string where the type
+   that was made puts it, and the label the GRUB menu searches for. */
+static int vol_bpb_ok(const uint8_t *b)
+{
+    if(b[510]!=0x55 || b[511]!=0xAA) return 0;
+    if(s_fs32)
+        return memcmp(b+82,"FAT32   ",8)==0 && memcmp(b+71,"HAVENDOS   ",11)==0;
+    return b[54]=='F' && b[55]=='A' && b[56]=='T';
+}
+
+static uint32_t vol_serial(uint64_t first)
+{
+    return (uint32_t)(first * 2654435761ull) ^ 0x48415645u;   /* "HAVE" */
+}
+
 /* Progress callback for long writes (set before write_file, cleared after) */
 static void   (*s_progress_cb)(int,int,const char*) = 0;
 static int      s_progress_step  = 0;
@@ -280,13 +348,45 @@ static int write_file(uint16_t dir_cluster,
     return write_dirent(dir_cluster,name8,ext3,ATTR_ARCHIVE,first_c,size);
 }
 
+/* ── filling a FAT32 volume, through fs/fat32.c (v0.9.3) ─────────────
+   Disk-absolute callbacks, because that is what fat32_mount_dev() hands
+   its I/O. The write one carries the bound the FAT16 path gets from
+   addressing everything relative to s_part_lba: a sector outside the
+   volume being installed is refused here, below the driver, so no bug in
+   the driver's allocator can reach the partition table, the ESP or
+   anybody else's partition. Not expected to fire; there so that if it
+   ever must, it is a failed install and not a damaged disk. */
+static int v32_rd(void *ctx, uint64_t lba, uint8_t *buf)
+{
+    (void)ctx; return inst_disk_read(s_disk, lba, buf);
+}
+static int v32_wr(void *ctx, uint64_t lba, const uint8_t *buf)
+{
+    (void)ctx;
+    if(lba < s_part_lba || lba >= s_part_lba + s_vol_sectors) return 0;
+    return inst_disk_write(s_disk, lba, buf);
+}
+/* Mounting the new volume parks a FAT32 system volume, if this is an
+   installed HavenDOS installing again, and closing brings it back -- see
+   "THE SYSTEM VOLUME IS PARKED" in fs/fat32.c. */
+static int  v32_open(void)  { return fat32_mount_dev(v32_rd, v32_wr, 0, s_part_lba); }
+static void v32_close(void) { fat32_unmount(); }
+
+/* fat32_write() returns 1, not a byte count; fat16's returns the count.
+   One spelling of "did it work" for this file. */
+static int v32_put(const char *path, const void *data, uint32_t len)
+{
+    return fat32_write(path, (const char *)data, len) == 1
+        && fat32_file_size(path) == len;
+}
+
 /* ── MBR partition entry ─────────────────────────────────────────── */
-static void build_part_entry(uint8_t *e, uint8_t status,
+static void build_part_entry(uint8_t *e, uint8_t status, uint8_t type,
                               uint32_t lba_start, uint32_t lba_count)
 {
     e[0]=status;
     e[1]=0xFE; e[2]=0xFF; e[3]=0xFF;   /* CHS start — max (LBA mode) */
-    e[4]=0x0E;                           /* FAT16 LBA */
+    e[4]=type;                           /* 0x0E FAT16 LBA, 0x0C FAT32 LBA */
     e[5]=0xFE; e[6]=0xFF; e[7]=0xFF;   /* CHS end   — max (LBA mode) */
     e[8] =(uint8_t)(lba_start        &0xFF);
     e[9] =(uint8_t)((lba_start>> 8)  &0xFF);
@@ -322,6 +422,39 @@ int havendos_install_image_available(void)
     return 0;
 #endif
 }
+
+/* The whole-disk install's grub.cfg, shared by the FAT16 and FAT32 paths.
+   core.img was built with prefix=(hd0,msdos1)/boot/grub so GRUB already
+   knows where to find modules -- no insmod needed here. GRUB's fat module
+   reads FAT12, FAT16 and FAT32 alike, and `search --label` finds the
+   volume label either formatter writes. */
+static const char s_wd_cfg[]=
+    "set timeout=5\n"
+    "set default=0\n"
+    "\n"
+    "menuentry \"HavenDOS " HAVENDOS_VER "\" {\n"
+    "    search --no-floppy --set=root --label HAVENDOS\n"
+    "    multiboot /boot/havendos.elf mode=desktop gfx=text\n"
+    "    boot\n"
+    "}\n"
+    "\n"
+    "menuentry \"HavenDOS " HAVENDOS_VER "  (shell mode)\" {\n"
+    "    search --no-floppy --set=root --label HAVENDOS\n"
+    "    multiboot /boot/havendos.elf mode=shell gfx=text\n"
+    "    boot\n"
+    "}\n"
+    "\n"
+    "menuentry \"HavenDOS " HAVENDOS_VER "  (explicit hd0,msdos1)\" {\n"
+    "    set root=(hd0,msdos1)\n"
+    "    multiboot (hd0,msdos1)/boot/havendos.elf mode=desktop gfx=text\n"
+    "    boot\n"
+    "}\n"
+    "\n"
+    "menuentry \"HavenDOS " HAVENDOS_VER "  (reinstall)\" {\n"
+    "    search --no-floppy --set=root --label HAVENDOS\n"
+    "    multiboot /boot/havendos.elf mode=desktop gfx=text install=1\n"
+    "    boot\n"
+    "}\n";
 
 /* ── Public install entry ────────────────────────────────────────── */
 int havendos_install_to_drive(int disk_idx,
@@ -384,10 +517,7 @@ int havendos_install_to_drive(int disk_idx,
 
        A 16 GB disk therefore gets a 2047 MB HavenDOS partition and 14 GB
        of free space after it, rather than a refusal. */
-    s_whole_sectors = (uint32_t)(dsects - PART_START_SECT);
-    if(s_whole_sectors > INSTADD_MAX_SECTORS)
-        s_whole_sectors = INSTADD_MAX_SECTORS;
-    s_whole_sectors = s_whole_sectors / INSTADD_ALIGN * INSTADD_ALIGN;
+    s_whole_sectors = havendos_wholedisk_sectors(dsects);
 
     /* Validated here, not at step 4. A geometry this function cannot
        express is a reason to refuse the disk, not a reason to abandon one
@@ -398,7 +528,10 @@ int havendos_install_to_drive(int disk_idx,
        function, where the reset then zeroed it, and fat16_format() refused
        a geometry with no cluster size -- turning E15 into E5 and moving
        the failure one step later. */
-    if(!fat16_geom(s_whole_sectors, &s_geom)) return -15;
+    /* v0.9.3: FAT16 up to 2047 MB, FAT32 above -- see vol_plan(). The
+       2047 MB cap described above is now the FAT16/FAT32 boundary, and
+       the cap is INSTADD_MAX_SECTORS, 32 GB. */
+    if(!vol_plan(s_whole_sectors)) return -15;
 
     /* ── 1: Wipe pre-partition area ──────────────────────────────
        Completely zero sectors 0..2047 (the 1MB before our partition).
@@ -445,8 +578,8 @@ int havendos_install_to_drive(int disk_idx,
                Leave it as 0x00 so GRUB overwrites it correctly at boot.    */
         }
 
-        build_part_entry(mbr+446,0x80,(uint32_t)PART_START_SECT,
-                         s_whole_sectors);
+        build_part_entry(mbr+446,0x80,(uint8_t)(s_fs32?0x0C:0x0E),
+                         (uint32_t)PART_START_SECT,s_whole_sectors);
         mbr[510]=0x55; mbr[511]=0xAA;
         if(!inst_disk_write(disk_idx,0,mbr)) return -3;
     }
@@ -512,91 +645,97 @@ int havendos_install_to_drive(int disk_idx,
     }
     step++;
 
-    /* ── 4: FAT16 format ─────────────────────────
+    /* ── 4: format ───────────────────────────────────────────────
        The boot sector, both FATs and the root directory, with the geometry
        computed from the partition size rather than assumed. This was 60
        lines of hand-written BPB with a 128-sector FAT nailed into it; see
        the note beside the include at the top of this file for what that
        produced on anything larger than 64 MB. */
-    if(cb) cb(step,total,"Formatting FAT16 partition...");
-    /* s_geom was computed and validated before step 1; nothing between
-       then and here changes the partition size. */
-    if(!fat16_format(inst_fmt_wr,0,&s_geom,
-                     (uint32_t)PART_START_SECT,"HAVENDOS"))     return -5;
-    /* ── 5: Directories ──────────────────────────────────────────── */
-    if(cb) cb(step,total,"Creating /boot/grub...");
-    /* v0.7.19: these were lower case.  FAT16 short names are UPPER case by
-       specification -- a lower-case entry is out of spec, is not what
-       name_to_83() produces, and was only ever found because some of the
-       lookups happened to fold case.  Written correctly now; the lookups
-       still fold case so disks installed before this keep working. */
-    uint16_t boot_clust=make_dir(0,"BOOT    ",0);
-    if(!boot_clust) return -6;
-    uint16_t grub_clust=make_dir(boot_clust,"GRUB    ",boot_clust);
-    if(!grub_clust) return -6;
-    step++;
-
-    /* ── 6: grub.cfg ─────────────────────────────────────────────── */
-    if(cb) cb(step,total,"Writing /boot/grub/grub.cfg...");
-    {
-        /* grub.cfg written to installed disk.
-           core.img was built with prefix=(hd0,msdos1)/boot/grub so GRUB
-           already knows where to find modules — no insmod needed here.
-           Two entries: search-based (robust) and explicit (fallback).   */
-        const char *cfg=
-            "set timeout=5\n"
-            "set default=0\n"
-            "\n"
-            "menuentry \"HavenDOS " HAVENDOS_VER "\" {\n"
-            "    search --no-floppy --set=root --label HAVENDOS\n"
-            "    multiboot /boot/havendos.elf mode=desktop gfx=text\n"
-            "    boot\n"
-            "}\n"
-            "\n"
-            "menuentry \"HavenDOS " HAVENDOS_VER "  (shell mode)\" {\n"
-            "    search --no-floppy --set=root --label HAVENDOS\n"
-            "    multiboot /boot/havendos.elf mode=shell gfx=text\n"
-            "    boot\n"
-            "}\n"
-            "\n"
-            "menuentry \"HavenDOS " HAVENDOS_VER "  (explicit hd0,msdos1)\" {\n"
-            "    set root=(hd0,msdos1)\n"
-            "    multiboot (hd0,msdos1)/boot/havendos.elf mode=desktop gfx=text\n"
-            "    boot\n"
-            "}\n"
-            "\n"
-            "menuentry \"HavenDOS " HAVENDOS_VER "  (reinstall)\" {\n"
-            "    search --no-floppy --set=root --label HAVENDOS\n"
-            "    multiboot /boot/havendos.elf mode=desktop gfx=text install=1\n"
-            "    boot\n"
-            "}\n";
-        if(!write_file(grub_clust,"GRUB    ","CFG",
-                        (const uint8_t*)cfg,(uint32_t)strlen(cfg))) return -7;
+    if(cb) cb(step,total,s_fs32 ? "Formatting FAT32 partition..."
+                                : "Formatting FAT16 partition...");
+    /* The geometry was computed and validated before step 1; nothing
+       between then and here changes the partition size. */
+    if(s_fs32){
+        if(!fat32_format(inst_fmt_wr,0,&s_geom32,(uint32_t)PART_START_SECT,
+                         vol_serial(PART_START_SECT),"HAVENDOS"))  return -5;
+    } else {
+        if(!fat16_format(inst_fmt_wr,0,&s_geom,
+                         (uint32_t)PART_START_SECT,"HAVENDOS"))     return -5;
     }
-    step++;
-
-    /* ── 7: havendos.elf ─────────────────────────────────────────── */
-    if(cb) cb(step,total,"Copying HavenDOS kernel (please wait)...");
-    {
+    if(s_fs32){
+        /* ── 5-7 on FAT32: one mount, three steps ─────────────────── */
+        if(cb) cb(step,total,"Creating /boot/grub...");
+        if(!v32_open()) return -5;
+        if(!fat32_mkdir("/BOOT") || !fat32_mkdir("/BOOT/GRUB")){
+            v32_close(); return -6;
+        }
+        step++;
+        if(cb) cb(step,total,"Writing /boot/grub/grub.cfg...");
+        if(!v32_put("/BOOT/GRUB/GRUB.CFG",s_wd_cfg,
+                    (uint32_t)strlen(s_wd_cfg))){ v32_close(); return -7; }
+        step++;
+        if(cb) cb(step,total,"Copying HavenDOS kernel (please wait)...");
 #if KERNEL_ELF_AVAILABLE
-        const uint8_t *kdata=kernel_elf_data;
-        uint32_t ksize=kernel_elf_size;
-        if(ksize<52||kdata[0]!=0x7F||kdata[1]!='E'||
-           kdata[2]!='L'||kdata[3]!='F') return -8;
-        /* Enable sub-step progress so the screen updates during the
-           ~540KB write instead of appearing frozen for several seconds. */
-        s_progress_cb    = cb;
-        s_progress_step  = step;
-        s_progress_total = total;
-        s_progress_label = "Copying HavenDOS kernel...";
-        int wok=write_file(boot_clust,"HAVENDOS","ELF",kdata,ksize);
-        s_progress_cb = 0;
-        if(!wok) return -8;
+        if(kernel_elf_size<52||kernel_elf_data[0]!=0x7F||kernel_elf_data[1]!='E'
+           ||kernel_elf_data[2]!='L'||kernel_elf_data[3]!='F'
+           ||!v32_put("/BOOT/HAVENDOS.ELF",kernel_elf_data,kernel_elf_size)){
+            v32_close(); return -8;
+        }
 #else
-        return -8;
+        v32_close(); return -8;
 #endif
+        v32_close();     /* flushes the FAT and FSInfo before step 8 reads */
+        step++;
+    } else {
+        /* ── 5: Directories ──────────────────────────────────────────── */
+        if(cb) cb(step,total,"Creating /boot/grub...");
+        /* v0.7.19: these were lower case.  FAT16 short names are UPPER case by
+           specification -- a lower-case entry is out of spec, is not what
+           name_to_83() produces, and was only ever found because some of the
+           lookups happened to fold case.  Written correctly now; the lookups
+           still fold case so disks installed before this keep working. */
+        uint16_t boot_clust=make_dir(0,"BOOT    ",0);
+        if(!boot_clust) return -6;
+        uint16_t grub_clust=make_dir(boot_clust,"GRUB    ",boot_clust);
+        if(!grub_clust) return -6;
+        step++;
+
+        /* ── 6: grub.cfg ─────────────────────────────────────────────── */
+        if(cb) cb(step,total,"Writing /boot/grub/grub.cfg...");
+        {
+            /* grub.cfg written to installed disk.
+               core.img was built with prefix=(hd0,msdos1)/boot/grub so GRUB
+               already knows where to find modules — no insmod needed here.
+               Two entries: search-based (robust) and explicit (fallback).   */
+            const char *cfg=s_wd_cfg;
+            if(!write_file(grub_clust,"GRUB    ","CFG",
+                            (const uint8_t*)cfg,(uint32_t)strlen(cfg))) return -7;
+        }
+        step++;
+
+        /* ── 7: havendos.elf ─────────────────────────────────────────── */
+        if(cb) cb(step,total,"Copying HavenDOS kernel (please wait)...");
+        {
+#if KERNEL_ELF_AVAILABLE
+            const uint8_t *kdata=kernel_elf_data;
+            uint32_t ksize=kernel_elf_size;
+            if(ksize<52||kdata[0]!=0x7F||kdata[1]!='E'||
+               kdata[2]!='L'||kdata[3]!='F') return -8;
+            /* Enable sub-step progress so the screen updates during the
+               ~540KB write instead of appearing frozen for several seconds. */
+            s_progress_cb    = cb;
+            s_progress_step  = step;
+            s_progress_total = total;
+            s_progress_label = "Copying HavenDOS kernel...";
+            int wok=write_file(boot_clust,"HAVENDOS","ELF",kdata,ksize);
+            s_progress_cb = 0;
+            if(!wok) return -8;
+#else
+            return -8;
+#endif
+        }
+        step++;
     }
-    step++;
 
     /* ── 8: Verify ───────────────────────────────────────────────── */
     if(cb) cb(step,total,"Verifying install...");
@@ -605,7 +744,7 @@ int havendos_install_to_drive(int disk_idx,
         uint8_t vmbr[512];
         if(!inst_disk_read(disk_idx,0,vmbr)) return -9;
         if(vmbr[510]!=0x55||vmbr[511]!=0xAA) return -9;
-        if(vmbr[446+4]!=0x0E) return -9;  /* our partition type */
+        if(vmbr[446+4]!=(s_fs32?0x0C:0x0E)) return -9;  /* our partition type */
 
         /* Read back core.img sector 1 and verify LBA patch took */
         uint8_t vcore[512];
@@ -626,7 +765,7 @@ int havendos_install_to_drive(int disk_idx,
         uint8_t vbpb[512];
         if(!inst_rd(0,vbpb)) return -9;
         if(vbpb[510]!=0x55||vbpb[511]!=0xAA) return -9;
-        if(vbpb[54]!='F'||vbpb[55]!='A'||vbpb[56]!='T') return -9;
+        if(!vol_bpb_ok(vbpb)) return -9;
     }
     step++;
 
@@ -634,7 +773,11 @@ int havendos_install_to_drive(int disk_idx,
     if(cb) cb(step,total,"Finalising...");
     {
         const char *m="HavenDOS " HAVENDOS_VER " installed OK\n";
-        write_file(0,"HAVENDOS","TXT",(const uint8_t*)m,(uint32_t)strlen(m));
+        if(s_fs32){
+            if(v32_open()){ v32_put("/HAVENDOS.TXT",m,(uint32_t)strlen(m));
+                            v32_close(); }
+        } else
+            write_file(0,"HAVENDOS","TXT",(const uint8_t*)m,(uint32_t)strlen(m));
     }
     step++;
 
@@ -772,6 +915,22 @@ int havendos_find_existing(int disk)
     return -1;
 }
 
+/* The menu on the HavenDOS partition. The UEFI loader on the ESP has its
+   own, which is the one the firmware reads; this one is here so a BIOS
+   chainload or a manual `configfile` finds a menu where it expects one, and
+   so the partition is self-describing if someone goes looking with another
+   tool. */
+static const char s_add_cfg[] =
+    "set timeout=5\n"
+    "set default=0\n"
+    "\n"
+    "menuentry \"HavenDOS " HAVENDOS_VER "\" {\n"
+    "    search --no-floppy --set=root --label HAVENDOS\n"
+    "    multiboot /boot/havendos.elf mode=desktop gfx=text\n"
+    "    boot\n"
+    "}\n";
+static const char s_add_marker[] = "HavenDOS " HAVENDOS_VER " installed OK\n";
+
 int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
                               void (*cb)(int,int,const char*))
 {
@@ -782,7 +941,7 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
     uint64_t first, last, want;
     int      r, entry = -1, nw = 0;
     uint64_t written[8];
-    uint32_t need_bytes;
+    uint64_t need_bytes;
 
     if(!rep) return INSTADD_E_DISK;
     memset(rep, 0, sizeof *rep);
@@ -895,20 +1054,32 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
     rep->part_last    = last;
     rep->part_sectors = want;
 
-    if(!fat16_geom((uint32_t)want, &rep->geom)) return INSTADD_E_GEOM;
-    rep->vol_free_bytes = rep->geom.clusters
-                        * (uint32_t)rep->geom.sects_per_clust * 512u;
+    /* FAT16 to 2047 MB, FAT32 above it -- the same rule, the same
+       function, as the whole-disk path. The report carries both the type
+       and the geometry of that type, so the preview says which. */
+    if(!vol_plan((uint32_t)want))               return INSTADD_E_GEOM;
+    rep->fs_type = s_fs32 ? 32 : 16;
+    rep->geom    = s_geom;
+    rep->geom32  = s_geom32;
+    rep->vol_cluster_bytes = (uint32_t)vol_cluster_bytes();
+    /* FAT32's root directory is a cluster of the data area; FAT16's is
+       not. One cluster is therefore already spent on FAT32. */
+    rep->vol_free_bytes = (vol_data_clusters() - (s_fs32 ? 1u : 0u))
+                        * vol_cluster_bytes();
 
     /* What goes in it: the kernel, the menu, two directories, and the
        marker file -- each rounded up to a whole cluster, because that is
        how a filesystem spends space. */
     {
-        uint32_t cb_bytes = (uint32_t)rep->geom.sects_per_clust * 512u;
+        /* 32-bit arithmetic on purpose: a cluster is at most 32 KB and the
+           kernel a few MB, and a 64-bit divide by a variable is a libgcc
+           call (__udivdi3) this freestanding kernel does not link. */
+        uint32_t cb_bytes = (uint32_t)vol_cluster_bytes();
         uint32_t rnd;
         need_bytes = 0;
         rnd = (rep->kernel_bytes + cb_bytes - 1) / cb_bytes * cb_bytes;
         need_bytes += rnd;
-        need_bytes += cb_bytes * 4u;    /* grub.cfg, /boot, /boot/grub, marker */
+        need_bytes += (uint64_t)cb_bytes * 4u;  /* grub.cfg, /boot, /boot/grub, marker */
         rep->vol_need_bytes = need_bytes;
         if(need_bytes > rep->vol_free_bytes)    return INSTADD_E_VOLSPACE;
     }
@@ -990,17 +1161,38 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
     s_disk         = disk;
     s_part_lba     = first;
     s_next_cluster = 2;
-    s_geom         = rep->geom;
     s_add_dry      = 0;
     s_add_wrote    = 0;
+    /* Re-planned rather than copied out of the report: esp_find() and
+       espmk above share nothing with this file's state, but the plan is a
+       pure function of `want` and recomputing it is the one way the type
+       and geometry used to write cannot differ from the ones previewed. */
+    if(!vol_plan((uint32_t)want))               return INSTADD_E_GEOM;
 
     /* ── 6: format and fill ─────────────────────────────────────── */
-    if(cb) cb(step, total, "Formatting the new partition...");
-    if(!fat16_format(add_wr, 0, &s_geom, (uint32_t)first, "HAVENDOS"))
-        return INSTADD_E_FORMAT;
-
-    {
+    if(cb) cb(step, total, s_fs32 ? "Formatting the new partition (FAT32)..."
+                                  : "Formatting the new partition (FAT16)...");
+    if(s_fs32){
+        if(!fat32_format(add_wr, 0, &s_geom32, (uint32_t)first,
+                         vol_serial(first), "HAVENDOS"))
+            return INSTADD_E_FORMAT;
+        if(!v32_open())                         return INSTADD_E_FILES;
+        if(!fat32_mkdir("/BOOT") || !fat32_mkdir("/BOOT/GRUB")
+           || !v32_put("/BOOT/GRUB/GRUB.CFG", s_add_cfg,
+                       (uint32_t)strlen(s_add_cfg))){
+            v32_close();                        return INSTADD_E_FILES;
+        }
+        if(cb) cb(step, total, "Copying HavenDOS kernel (please wait)...");
+        if(!v32_put("/BOOT/HAVENDOS.ELF", kernel_elf_data, kernel_elf_size)
+           || !v32_put("/HAVENDOS.TXT", s_add_marker,
+                       (uint32_t)strlen(s_add_marker))){
+            v32_close();                        return INSTADD_E_FILES;
+        }
+        v32_close();
+    } else {
         uint16_t boot_clust, grub_clust;
+        if(!fat16_format(add_wr, 0, &s_geom, (uint32_t)first, "HAVENDOS"))
+            return INSTADD_E_FORMAT;
         boot_clust = make_dir(0, "BOOT    ", 0);
         if(!boot_clust)                         return INSTADD_E_FILES;
         grub_clust = make_dir(boot_clust, "GRUB    ", boot_clust);
@@ -1011,20 +1203,9 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
            here so a BIOS chainload or a manual `configfile` finds a menu
            where it expects one, and so the partition is self-describing
            if someone goes looking with another tool. */
-        {
-            const char *cfg =
-                "set timeout=5\n"
-                "set default=0\n"
-                "\n"
-                "menuentry \"HavenDOS " HAVENDOS_VER "\" {\n"
-                "    search --no-floppy --set=root --label HAVENDOS\n"
-                "    multiboot /boot/havendos.elf mode=desktop gfx=text\n"
-                "    boot\n"
-                "}\n";
-            if(!write_file(grub_clust, "GRUB    ", "CFG",
-                           (const uint8_t *)cfg, (uint32_t)strlen(cfg)))
-                return INSTADD_E_FILES;
-        }
+        if(!write_file(grub_clust, "GRUB    ", "CFG",
+                       (const uint8_t *)s_add_cfg, (uint32_t)strlen(s_add_cfg)))
+            return INSTADD_E_FILES;
 
         if(cb) cb(step, total, "Copying HavenDOS kernel (please wait)...");
         s_progress_cb    = cb;
@@ -1036,12 +1217,9 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
         s_progress_cb = 0;
         if(!r)                                  return INSTADD_E_FILES;
 
-        {
-            const char *m = "HavenDOS " HAVENDOS_VER " installed OK\n";
-            if(!write_file(0, "HAVENDOS", "TXT",
-                           (const uint8_t *)m, (uint32_t)strlen(m)))
-                return INSTADD_E_FILES;
-        }
+        if(!write_file(0, "HAVENDOS", "TXT", (const uint8_t *)s_add_marker,
+                       (uint32_t)strlen(s_add_marker)))
+            return INSTADD_E_FILES;
     }
     step++;
 
@@ -1059,9 +1237,7 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
     {
         uint8_t v[512];
         if(!inst_rd(0, v))                      return INSTADD_E_VERIFY;
-        if(v[510] != 0x55 || v[511] != 0xAA)    return INSTADD_E_VERIFY;
-        if(v[54] != 'F' || v[55] != 'A' || v[56] != 'T')
-                                                return INSTADD_E_VERIFY;
+        if(!vol_bpb_ok(v))                      return INSTADD_E_VERIFY;
         /* and that the table really says what we asked it to */
         if(!inst_disk_read(disk, 1, v))         return INSTADD_E_VERIFY;
         if(v[0] != 'E' || v[1] != 'F' || v[2] != 'I' || v[3] != ' ')

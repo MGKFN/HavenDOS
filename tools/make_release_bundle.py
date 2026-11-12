@@ -161,8 +161,8 @@ double-click `Update-HavenDOS.cmd`, then approve the prompt.
 
 Then boot HavenDOS and type `update`, on a boot entry **without**
 `live` -- on the ISO that is entry 4. A live shell cannot see the
-HavenDOS partition and `update` will refuse with "No FAT16 partition
-found".
+HavenDOS partition and `update` will refuse with "No HavenDOS partition
+is mounted".
 
 `update/README-UPDATE.md` has the detail, the flags, and the caveats.
 

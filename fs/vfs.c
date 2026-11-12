@@ -58,6 +58,37 @@ extern void fat32_list_dir(const char*, void(*)(const char*,int,uint32_t));
 extern int  fat32_exists(const char*);
 extern int  fat32_is_dir(const char*);
 extern int  fat32_mkdir(const char*);
+extern int  fat32_rename(const char*, const char*);
+extern int  fat32_sys_begin(void);
+extern void fat32_sys_end(void);
+
+/* ── v0.9.3: EVERY FAT32 ROUTE REACHES THE SYSTEM VOLUME ─────────────
+   fs/fat32.c holds one volume at a time, and the ESP update source, the
+   `fat32` command, the installer and the uninstaller all borrow it. Until
+   this release a vfs_read() made while one of them held it read THEIR
+   volume -- a settings file looked up on somebody's stick. The system
+   volume is parked rather than dropped now, and each route below takes its
+   turn in the slot for exactly one call. With nothing borrowed, begin and
+   end do nothing at all.
+
+   A route refuses (-1) if there is no system volume to take a turn with,
+   which is the same answer fs_borrowed() gives FAT16. */
+#define F32_SYS(call) do {                     \
+        int r_;                                \
+        if (!fat32_sys_begin()) return -1;     \
+        r_ = (call);                           \
+        fat32_sys_end();                       \
+        return r_;                             \
+    } while (0)
+/* The same, for the two yes/no questions: "no system volume" is "no", not
+   -1, which every caller of vfs_exists() would read as "yes". */
+#define F32_SYS_Q(call) do {                   \
+        int r_;                                \
+        if (!fat32_sys_begin()) return 0;      \
+        r_ = (call);                           \
+        fat32_sys_end();                       \
+        return r_;                             \
+    } while (0)
 
 /* Does this name carry a directory component? */
 static int has_dir(const char *n){
@@ -195,7 +226,7 @@ void vfs_refresh_fat32(void) {
  * target, bpkg installing into /apps.  It looked like a write that "worked"
  * and a read that came back empty. */
 int vfs_write(const char *name, const char *data, uint32_t size) {
-    if (using_fat32) return fat32_write(name, data, size);
+    if (using_fat32) { F32_SYS(fat32_write(name, data, size)); }
     if (using_fat16 && fs_borrowed()) return -1;
     if (using_fat16) return has_dir(name) ? fat16_write_path(name, data, size)
                                           : fat16_write(name, data, size);
@@ -204,7 +235,7 @@ int vfs_write(const char *name, const char *data, uint32_t size) {
 }
 
 int vfs_read(const char *name, char *buf, uint32_t bufsz) {
-    if (using_fat32) return fat32_read(name, buf, bufsz);
+    if (using_fat32) { F32_SYS(fat32_read(name, buf, bufsz)); }
     if (using_fat16 && fs_borrowed()) return -1;
     if (using_fat16) return has_dir(name) ? fat16_read_path(name, buf, bufsz)
                                           : fat16_read(name, buf, bufsz);
@@ -213,7 +244,7 @@ int vfs_read(const char *name, char *buf, uint32_t bufsz) {
 }
 
 int vfs_delete(const char *name) {
-    if (using_fat32) return fat32_delete(name);
+    if (using_fat32) { F32_SYS(fat32_delete(name)); }
     if (using_fat16 && fs_borrowed()) return -1;
     if (using_fat16) return has_dir(name) ? fat16_delete_path(name)
                                           : fat16_delete(name);
@@ -222,7 +253,7 @@ int vfs_delete(const char *name) {
 }
 
 void vfs_list(void (*cb)(const char*, int, uint32_t)) {
-    if (using_fat32)      fat32_list(cb);
+    if (using_fat32)      { if (fat32_sys_begin()) { fat32_list(cb); fat32_sys_end(); } }
     else if (using_fat16 && fs_borrowed()) { /* see fs_borrowed() */ }
     else if (using_fat16) fat16_list(cb);
     else if (using_fat12) fat12_list(cb);
@@ -230,7 +261,7 @@ void vfs_list(void (*cb)(const char*, int, uint32_t)) {
 }
 
 int vfs_exists(const char *name) {
-    if (using_fat32) return fat32_exists(name);
+    if (using_fat32) { F32_SYS_Q(fat32_exists(name)); }
     if (using_fat16 && fs_borrowed()) return 0;
     if (using_fat16) return has_dir(name) ? fat16_exists_path(name)
                                           : fat16_exists(name);
@@ -239,11 +270,11 @@ int vfs_exists(const char *name) {
 }
 
 int vfs_rename(const char *old, const char *newname) {
-    /* FAT32 has no rename of its own yet: read, write under the new name,
-       delete the old.  Stated rather than silently routed to a filesystem
-       that is not mounted, which is what returning fat16_rename() here
-       would do. */
-    if (using_fat32) return 0;
+    /* v0.9.3: FAT32 renames now -- fat32_rename() moves the directory
+       entry. Until this it returned 0 here, which was harmless while FAT32
+       was only ever somebody else's volume and is a lost file the day it is
+       the system's own. */
+    if (using_fat32) { F32_SYS(fat32_rename(old, newname)); }
     if (using_fat16 && fs_borrowed()) return -1;
     if (using_fat16) return fat16_rename(old, newname);
     if (using_fat12) return fat12_rename(old, newname);
@@ -251,7 +282,7 @@ int vfs_rename(const char *old, const char *newname) {
 }
 
 int vfs_mkdir(const char *name) {
-    if (using_fat32) return fat32_mkdir(name);
+    if (using_fat32) { F32_SYS(fat32_mkdir(name)); }
     if (using_fat16 && fs_borrowed()) return -1;
     if (using_fat16) return fat16_mkdir(name);
     if (using_fat12) return 0; /* FAT12 mkdir not implemented */
@@ -277,7 +308,7 @@ extern int  ramfs_is_dir(const char*);
 extern void ramfs_list_dir(const char*, void(*)(const char*,int,uint32_t));
 
 int vfs_is_dir(const char *name) {
-    if (using_fat32) return fat32_is_dir(name);
+    if (using_fat32) { F32_SYS_Q(fat32_is_dir(name)); }
     return ramfs_is_dir(name);
 }
 
@@ -287,7 +318,7 @@ void vfs_list_dir(const char *dir, void (*cb)(const char*, int, uint32_t)) {
        FAT32 is the only one of the three that can actually list a
        subdirectory; FAT16 and FAT12 ignore `dir` and list their root, which
        is the behaviour this release leaves exactly as it found it. */
-    if (using_fat32)      fat32_list_dir(dir, cb);
+    if (using_fat32)      { if (fat32_sys_begin()) { fat32_list_dir(dir, cb); fat32_sys_end(); } }
     else if (using_fat16 && fs_borrowed()) { /* see fs_borrowed() */ }
     else if (using_fat16) fat16_list(cb);
     else if (using_fat12) fat12_list(cb);

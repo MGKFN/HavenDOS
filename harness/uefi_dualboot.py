@@ -34,9 +34,20 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import qemu as Q
 
-ISO   = sys.argv[1] if len(sys.argv) > 1 else "havendos.iso"
-IMG   = "/tmp/hd_dualboot.img"
+# v0.9.3: `--gb N` sizes the disk. Windows' partitions take about 5.8 GB,
+# so at the default 8 GB the free gap is about 2.2 GB -- just over the
+# 2047 MB FAT16/FAT32 boundary, so FAT32, which is the edge worth testing.
+# `--gb 7` leaves about 1.2 GB and the volume is FAT16, the path every
+# release before 0.9.3 took; `--gb 12` is a FAT32 volume of over 6 GB.
+# The harness works out which to expect from the gap. Run all three.
+_args = [a for a in sys.argv[1:]]
 DISK_GB = 8
+if "--gb" in _args:
+    i = _args.index("--gb")
+    DISK_GB = int(_args[i + 1])
+    del _args[i:i + 2]
+ISO   = _args[0] if _args else "havendos.iso"
+IMG   = "/tmp/hd_dualboot.img"
 
 # OVMF, split or combined depending on the distribution.
 OVMF_CANDIDATES = [
@@ -234,7 +245,7 @@ def main():
                  "there is nothing to be learned without it")
     print("OVMF: %s\n" % code)
 
-    print("Building a Windows-shaped 8 GB GPT disk with sgdisk")
+    print("Building a Windows-shaped %d GB GPT disk with sgdisk" % DISK_GB)
     esp_first, esp_last = build_disk()
     before_parts = part_bounds(IMG)
     for n, (a, b, name) in sorted(before_parts.items()):
@@ -255,6 +266,11 @@ def main():
         gaps.append((tail_lo, tail_hi))
     for lo, hi in gaps:
         print("  free  %10d..%-10d  %d MB" % (lo, hi, (hi - lo + 1) // 2048))
+    # FAT32 when the volume will be over 2047 MB -- the installer's rule,
+    # include/install_add.h, restated here as what to EXPECT.
+    big = max((hi - lo + 1) for lo, hi in gaps) if gaps else 0
+    want_fat = 32 if big - 4096 > 4192256 else 16
+    print("  expecting a FAT%d volume" % want_fat)
 
     print("Hashing every allocated sector outside the free space")
     before = hash_outside(IMG, [])
@@ -310,6 +326,8 @@ def main():
               txt[:400])
         check("and says the table is kept", "keeps its partition" in txt,
               "")
+        check("and names the filesystem it will make (FAT%d)" % want_fat,
+              ("formatted FAT%d" % want_fat) in txt, txt[:600])
 
         q.key("ret"); time.sleep(2)
         txt = screen(q, "/tmp/hd_db_04_confirm.png")
@@ -394,8 +412,16 @@ def main():
                  "::/EFI/HAVENDOS/grub.cfg /tmp/hd_db_cfg.txt "
                  "&& grep -q bootmgfw /tmp/hd_db_cfg.txt").returncode == 0)
 
-        sh("dd if=%s of=/tmp/hd_db_part.img bs=512 skip=%d count=%d "
-           "status=none" % (IMG, pa, pb - pa + 1))
+        # conv=sparse: a FAT32 volume is gigabytes of zeroes
+        sh("rm -f /tmp/hd_db_part.img; dd if=%s of=/tmp/hd_db_part.img bs=512 "
+           "skip=%d count=%d conv=sparse status=none" % (IMG, pa, pb - pa + 1))
+        check("the BPB says FAT%d" % want_fat,
+              sh("dd if=/tmp/hd_db_part.img bs=1 skip=%d count=5 status=none"
+                 % (82 if want_fat == 32 else 54)).stdout.startswith(
+                     "FAT32" if want_fat == 32 else "FAT16"))
+        if want_fat == 32:
+            check("and the volume is the whole gap, not 2047 MB",
+                  pb - pa + 1 > 4192256, "%d sectors" % (pb - pa + 1))
         check("fsck.vfat accepts the new volume",
               sh("fsck.vfat -n /tmp/hd_db_part.img").returncode == 0,
               sh("fsck.vfat -n /tmp/hd_db_part.img").stdout[-300:])
@@ -437,6 +463,7 @@ def main():
                 [ "-drive", "if=pflash,format=raw,unit=0,file=%s" % fresh ])
 
     booted = ""
+    landed = ""
     reached_grub = False
     with Q.Qemu(mem=512, boot="c", gfx=True,
                 binary="qemu-system-x86_64", machine=MACHINE,
@@ -479,6 +506,20 @@ def main():
                 break
         print("\n".join("    | " + l for l in booted.splitlines()[:16]
                         if l.strip()))
+        # v0.9.3: past the banner. A system that mounted its own volume
+        # goes to the first-boot wizard; one that did not -- every FAT32
+        # install, with 0.9.2's `!vfs_using_fat16()` in kernel/main.c --
+        # goes to the installer. The banner looks the same either way.
+        landed = ""
+        for _ in range(24):
+            time.sleep(5)
+            landed = screen(q, "/tmp/hd_db_07b_landed.png")
+            if "Terms of Service" in landed or "Installer" in landed \
+               or "install ISO" in landed or "Welcome" in landed:
+                break
+        print("\n  where it landed:")
+        print("\n".join("    | " + l for l in landed.splitlines()[:10]
+                        if l.strip()))
 
     check("the firmware ran the loader from the installed ESP", reached_grub)
     check("and HavenDOS booted from its own partition, no removable media",
@@ -490,6 +531,10 @@ def main():
     check("and it boots the system, not the installer",
           "Installer" not in booted and "install ISO" not in booted,
           booted[:300])
+    check("and reaches the first-boot wizard, which only an installed "
+          "system runs",
+          "Terms of Service" in landed and "Installer" not in landed,
+          landed[:400])
 
     print("\nAnd with the variable store the install left behind")
     Q.kill_stale()

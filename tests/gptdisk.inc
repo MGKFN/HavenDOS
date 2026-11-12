@@ -120,6 +120,19 @@ static int d_write(void *ctx, uint64_t lba, const void *buf){
         if(g_nwlog < MAXWLOG) g_wlog[g_nwlog] = lba;
         g_nwlog++;
     }
+    /* v0.9.3: a sector that is not in the model READS as zeroes, so a
+       zero written to one is already there. Not storing it keeps the
+       model the size of what is on the disk rather than the size of what
+       was formatted: a FAT32 volume's FATs are tens of thousands of zero
+       sectors, and storing them filled MAXSEC on the first 32 GB install.
+       The write log above still records the write -- the "which sectors
+       did it touch" checks are about writes, not about contents. */
+    if(!find(lba)){
+        const uint8_t *z = (const uint8_t *)buf;
+        int k, nz = 0;
+        for(k = 0; k < 512; k++) if(z[k]){ nz = 1; break; }
+        if(!nz) return 0;
+    }
     memcpy(make(lba)->b, buf, 512);
     return 0;
 }

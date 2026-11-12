@@ -78,11 +78,11 @@ update
 ```
 
 Use a boot entry **without** `live` — on the ISO that is entry 4,
-"Update installed system from the ESP". `update` begins by requiring
-`fat16_detected()`, because it writes the new kernel to the HavenDOS
-partition already on the disk, and a live shell cannot see that
-partition. It refuses with "No FAT16 partition found" if you boot a
-live entry.
+"Update installed system from the ESP". `update` begins by requiring a
+mounted HavenDOS partition -- FAT16, or since 0.9.3 FAT32 -- because it
+writes the new kernel to the partition already on the disk, and a live
+shell cannot see that partition. It refuses with "No HavenDOS partition
+is mounted" if you boot a live entry.
 
 `ver_cmp()` from `fs/update.c`, against this release:
 

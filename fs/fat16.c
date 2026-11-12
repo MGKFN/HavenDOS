@@ -298,9 +298,30 @@ static uint32_t cluster_to_lba(uint16_t cluster){
    a blank extension, and so did "verylongname.bin" — two different files
    collapsing onto one directory entry, the second overwriting the first.
    Skip forward to the real dot instead of assuming we stopped on it. */
+/* ── DOTFILES (v0.9.3) ────────────────────────────────────────────────
+   ".shell_history" used to become a BLANK name with the extension "SHE":
+   the loop below stopped at the leading dot before copying anything. Every
+   dotfile the system keeps -- .accounts, .theme, .desktop, the shell
+   history -- was an entry fsck.fat calls a "bad short file name" and
+   offers to rename to FSCK0000.000, which is what Windows' chkdsk would do
+   too, taking the accounts file with it. harness/esp_update.py found it by
+   running fsck.fat on an installed FAT16 volume after a shell had been used.
+   (tools/check_fat32_suite.py had named it "fs/fat16.c's dotfile bug" when
+   it made sure FAT32 could not have it; FAT16 kept it.)
+
+   A leading dot is now an underscore: ".shell_history" is _SHELL_H,
+   ".accounts" is _ACCOUNT -- legal 8.3, and distinct where the old form
+   was not (".bpkg_db" and ".bpkg" were both blank-dot-BPK). root_find()
+   still finds a file written the old way and renames its entry in place
+   the first time it is asked, so nothing a system saved before 0.9.3 is
+   lost. */
+static int is_dotfile(const char *n){
+    return n && n[0]=='.' && n[1] && !(n[1]=='.' && !n[2]);
+}
 static void name_to_83(const char *name, char out[8], char ext[3]){
     memset(out,' ',8); memset(ext,' ',3);
     int i=0;
+    if(is_dotfile(name)){ out[i++]='_'; name++; }
     while(*name && *name!='.' && i<8){
         char c=*name++; if(c>='a'&&c<='z') c-=32;
         out[i++]=c;
@@ -376,8 +397,45 @@ static void de_from_struct(uint8_t *buf, int i, const fat_dirent_t *e){
              e->start_cluster, e->file_size);
 }
 
+/* What a dotfile's entry looked like before 0.9.3: a blank name, and the
+   three characters after the dot as the extension. */
+static void legacy_dot_83(const char *name, char out[8], char ext[3]){
+    memset(out,' ',8); memset(ext,' ',3);
+    name++;
+    for(int i=0;i<3 && name[i] && name[i]!='.';i++){
+        char c=name[i]; if(c>='a'&&c<='z') c-=32;
+        ext[i]=c;
+    }
+}
+static int root_find_83(const char n83[8], const char e83[3],
+                        fat_dirent_t *out, int *entry_idx, uint32_t *sect_out);
 static int root_find(const char *name, fat_dirent_t *out, int *entry_idx){
     char n83[8],e83[3]; name_to_83(name,n83,e83);
+    uint32_t sect=0;
+    int r=root_find_83(n83,e83,out,entry_idx,&sect);
+    if(r>=0 || !is_dotfile(name)) return r;
+    /* Not under its own name: perhaps under the pre-0.9.3 one. Found
+       there, the entry is renamed in place -- once -- and the caller sees
+       the file it asked for. */
+    {
+        char l83[8],le3[3]; legacy_dot_83(name,l83,le3);
+        r=root_find_83(l83,le3,out,entry_idx,&sect);
+        if(r<0) return r;
+        /* sector_buf still holds the sector the entry is in. A refused
+           write (a read-only borrow) leaves the old name, still found. */
+        {
+            uint8_t *d = de_ptr(sector_buf, r % (BYTES_PER_SECT/32));
+            memcpy(d + DE_NAME, n83, 8);
+            memcpy(d + DE_EXT,  e83, 3);
+            if(wr(root_start+sect, sector_buf) && out){
+                memcpy(out->name, n83, 8); memcpy(out->ext, e83, 3);
+            }
+        }
+        return r;
+    }
+}
+static int root_find_83(const char n83[8], const char e83[3],
+                        fat_dirent_t *out, int *entry_idx, uint32_t *sect_out){
     int per_sect = BYTES_PER_SECT/32;
     for(uint32_t s=0;s<root_sects;s++){
         if(!rd(root_start+s, sector_buf)) return -1;
@@ -394,6 +452,7 @@ static int root_find(const char *name, fat_dirent_t *out, int *entry_idx){
             if(n83_eq(d,n83,e83)){
                 if(out) de_to_struct(sector_buf, i, out);
                 if(entry_idx) *entry_idx=(int)(s*per_sect+i);
+                if(sect_out) *sect_out=s;
                 return (int)(s*per_sect+i);
             }
         }

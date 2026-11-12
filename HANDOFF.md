@@ -1,9 +1,47 @@
-# HavenDOS — handoff, 11 November 2026 (midnight)
+# HavenDOS — handoff, 12 November 2026
 
-Current release: **v0.9.2.2** (channel Beta, codename "Janus"). Paste
+Current release: **v0.9.3** (channel Beta, codename "Gaia"). Paste
 this file into a new chat to pick up where this left off.
 
-## START HERE: THE MONITOR TOOK THE SIGNAL. THE PICTURE IS MISSING.
+## START HERE: 0.9.3 "GAIA" — FAT32 INSTALLS
+
+Kyan had no monitor (12 Nov) and asked for the RM-1003 items: app port
+wave 2 (Hephaestus), the FAT32 formatter (Gaia) and Prometheus, plus
+optimisation and bug fixes. **Gaia shipped as 0.9.3.**
+- **The installers:** FAT16 up to 2047 MB, FAT32 above it, at most
+  32 GB. The rule is in `fs/instsize.c`. The volume is formatted by
+  `fs/fat32fmt.c` and filled through `fs/fat32.c`. `v32_wr()` refuses
+  any sector outside the volume.
+- **`fat32_init()`:** on GPT, the HavenDOS type GUID, never the ESP. On
+  MBR, the HAVENDOS label first, then the old first-FAT32 rule.
+- **The system volume is PARKED, not dropped, while the slot is
+  borrowed.** `fat32_sys_begin()`/`_end()` give it one turn. The VFS
+  routes and the new `fs/sysvol.c` take that turn, and `fs/update.c` uses
+  sysvol.
+- **Found and fixed:**
+  - `kernel/main.c` sent every non-FAT16 boot to the installer.
+  - FAT16 dotfiles had blank 8.3 names; they're migrated in place.
+  - `fat32_format()` over-read its label.
+  - `harness/esp_update.py` never installed.
+- **Proved in QEMU:**
+  - `uefi_dualboot.py --gb 7/8/12`
+  - `wholedisk_fat32.py` (new)
+  - `esp_update.py` on FAT16 and `--gb 12` FAT32
+- **Kyan:** his HP's firmware already created a UEFI boot entry on its
+  own, so the NVRAM-entry half of Prometheus is **dropped**.
+- **Next:**
+  - Prometheus (0.9.4): an installed system installs HavenDOS by copying
+    its own `/boot/havendos.elf`. The pass-1 kernel carries no image; see
+    `havendos_install_image_available()`.
+  - Hephaestus (0.9.5): port more of the 45 boxed apps (`fits=1` in
+    `shell/desktop.c`'s appreg).
+  - Optimisation: the desktop repaints fully every second; a hub's change
+    endpoint isn't polled.
+- **Still open from 0.9.2.2:** the monitor's missing picture. Run
+  `gfx color` with the monitor connected (docs/GFX-ON-HARDWARE-TEST.md,
+  steps 7-8).
+
+## 0.9.2.2: THE MONITOR TOOK THE SIGNAL. THE PICTURE IS MISSING.
 
 **0.9.2.1 on the HP (11 Nov, photos).**
 - `gfx on` reported `Lit. 69 writes, every one read back`, with the
@@ -2588,8 +2626,8 @@ Left, and each has its reason:
     the desktop pins 25 rows, and the auto-detect cannot land before
     the viewport layer without being a regression.
 
-19. **Partitions are capped at 2047 MB** until there is a FAT32
-    formatter. 0.9.1.
+19. ~~Partitions are capped at 2047 MB.~~ Done in 0.9.3 "Gaia": FAT16 up
+    to 2047 MB, FAT32 above, capped at 32 GB.
 
 20. **The idle panic is unexplained** and has not recurred. If it does,
     take the EIP and run `nm -n havendos.elf`.
@@ -3059,9 +3097,14 @@ Left, and each has its reason:
 Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
-## Testing, as of 0.9.2.2
+## Testing, as of 0.9.3
 
-**6695 of 6695 checks across 64 suites** (0.9.2.2: `test_xemode` 209,
+**6896 of 6896 checks across 65 suites** (0.9.3: `test_fat32sys` 112 new,
+`test_installadd` 151 -> 180, `test_wholedisk_size` 76 -> 124,
+`test_fat16gpt` 44 -> 56; `check_fat32sys_suite.py` 18/18,
+`check_installadd_suite.py` 30/30; QEMU `uefi_dualboot.py` at 7/8/12 GB,
+`wholedisk_fat32.py` at 1 and 6 GB, `esp_update.py` FAT16 and FAT32).
+As of 0.9.2.2: **6695 of 6695 checks across 64 suites** (0.9.2.2: `test_xemode` 209,
 `test_hub` 99, `test_xhci` 344; `check_hub_suite.py` 18/18,
 `check_xhci_suite.py` 93/93, `check_xemode_suite.py` 30/30).
 As of 0.9.2.1: **6668 of 6668 checks across 64 suites** (0.9.2.1: `test_usbhid` 30 new,

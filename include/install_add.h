@@ -36,6 +36,7 @@
 #define INSTALL_ADD_H
 #include "types.h"
 #include "fat16fmt.h"
+#include "fat32fmt.h"
 #include "esp.h"
 
 /* Partitions are aligned to this, in sectors: 1 MB, which is what every
@@ -44,12 +45,28 @@
    manager, which is its own kind of alarming. */
 #define INSTADD_ALIGN   2048u
 
-/* The largest volume this installer will create, in sectors. FAT16 with
-   32 KB clusters tops out just under 2 GB; see include/fat16fmt.h for why
-   64 KB clusters are not used to reach further. A gap larger than this is
-   not refused -- this much is taken from the start of it and the rest is
-   left free. */
-#define INSTADD_MAX_SECTORS  4192256u      /* 2047 MB */
+/* The largest FAT16 volume, in sectors. FAT16 with 32 KB clusters tops
+   out just under 2 GB; see include/fat16fmt.h for why 64 KB clusters are
+   not used to reach further. Until v0.9.3 this was also the largest
+   volume either installer would make.
+
+   v0.9.3 "Gaia": it is now the BOUNDARY. A partition up to this size is
+   FAT16, exactly as before; a larger one is FAT32. See instadd_fs_for(). */
+#define INSTADD_FAT16_MAX_SECTORS  4192256u      /* 2047 MB */
+
+/* The largest volume either installer makes, in sectors: 32 GB.
+
+   Why there is a cap at all, now that FAT32 could go to 2 TB:
+     - 32 GB is the largest FAT32 volume Windows' own format will make, so
+       it is the size every tool on a dual-boot machine expects to see;
+     - the formatter writes both FATs a sector at a time. At 32 GB that is
+       32 thousand writes; at 512 GB it would be half a million, and an
+       installer that sits for minutes on "Formatting" is one people pull
+       the power on;
+     - and the free space is the user's. A gap larger than this is not
+       refused -- this much is taken from the start of it and the rest is
+       left free, for Linux or for later. */
+#define INSTADD_MAX_SECTORS  67108864u     /* 32 GB */
 
 /* And the smallest. FAT16 needs 4085 clusters to be FAT16 at all, and the
    kernel is well over a megabyte. */
@@ -68,10 +85,15 @@ typedef struct {
     /* the gap it was taken from, which may be larger */
     uint64_t gap_first, gap_last, gap_sectors;
 
-    /* the volume inside it */
-    fat16_geom_t geom;
-    uint32_t vol_free_bytes;   /* what the volume would hold             */
-    uint32_t vol_need_bytes;   /* what we would put in it                */
+    /* the volume inside it. fs_type says which geometry is the real
+       one; the other is zero. Bytes are 64-bit since v0.9.3, because a
+       32 GB volume's free space does not fit in 32. */
+    int          fs_type;      /* 16 or 32                               */
+    fat16_geom_t geom;         /* when fs_type == 16                     */
+    fat32_geom_t geom32;       /* when fs_type == 32                     */
+    uint32_t vol_cluster_bytes;
+    uint64_t vol_free_bytes;   /* what the volume would hold             */
+    uint64_t vol_need_bytes;   /* what we would put in it                */
 
     /* THE SECTORS OUTSIDE THE NEW PARTITION THAT WOULD BE WRITTEN.
        Four, always, in the order fs/gpt_write.c writes them: backup
@@ -148,6 +170,18 @@ typedef struct {
    or -1. Used by the installer and by the drive picker, which shows it as
    information rather than as a refusal. */
 int havendos_find_existing(int disk);
+
+/* v0.9.3: 16 or 32 -- the filesystem a partition of this many sectors
+   gets. The one place the boundary is decided; both installers and the
+   preview ask it. */
+int      instadd_fs_for(uint64_t sectors);
+
+/* v0.9.3: the size of the partition the WHOLE-DISK installer makes on a
+   disk of this many sectors -- everything after the first megabyte, up to
+   INSTADD_MAX_SECTORS, in whole megabytes. 0 if the disk is too small to
+   hold a partition at all. Exposed so tests/test_wholedisk_size.c tests
+   the function the installer calls instead of a copy of it. */
+uint32_t havendos_wholedisk_sectors(uint64_t disk_sectors);
 
 int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
                               void (*cb)(int,int,const char*));

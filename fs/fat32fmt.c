@@ -127,10 +127,19 @@ int fat32_geom(uint32_t part_sectors, fat32_geom_t *g)
     return 1;
 }
 
+/* An 11-byte, space-padded label field, never reading past the string. */
+static void label_11(uint8_t *d, const char *label)
+{
+    int i, end = 0;
+    for(i = 0; i < 11; i++){
+        if(!end && (!label || !label[i])) end = 1;
+        d[i] = end ? (uint8_t)' ' : (uint8_t)label[i];
+    }
+}
+
 static void boot_sector(uint8_t *s, const fat32_geom_t *g,
                         uint32_t hidden, uint32_t volid, const char *label)
 {
-    int i;
     memset(s, 0, SECT);
 
     s[0] = 0xEB; s[1] = 0x58; s[2] = 0x90;         /* jmp short + nop  */
@@ -163,8 +172,12 @@ static void boot_sector(uint8_t *s, const fat32_geom_t *g,
     s[0x40] = 0x80;
     s[0x42] = 0x29;                  /* extended boot signature        */
     w32(s + 0x43, volid);
-    for(i = 0; i < 11; i++)
-        s[0x47 + i] = (label && label[i]) ? (uint8_t)label[i] : ' ';
+    /* v0.9.3: stops AT the terminator. This read label[i] for every i
+       below 11 whatever came first, so "HAVENBOOT" -- nine characters --
+       had its tenth and eleventh bytes taken from past the end of the
+       string. They happened to be zero in every build so far, which is
+       luck and not a property: the next literal in .rodata decides. */
+    label_11(s + 0x47, label);
     memcpy(s + 0x52, "FAT32   ", 8);
 
     s[510] = 0x55; s[511] = 0xAA;
@@ -235,8 +248,7 @@ int fat32_format(fat32_wr_fn wr, void *ctx, const fat32_geom_t *g,
     /* ── the root cluster: the label, then zeroes ────────────────── */
     memset(s, 0, SECT);
     if(label && label[0]){
-        for(i = 0; i < 11u; i++)
-            s[i] = label[i] ? (uint8_t)label[i] : ' ';
+        label_11(s, label);
         s[11] = 0x08;                /* ATTR_VOLUME_ID                 */
     }
     if(!wr(ctx, g->data_start, s)) return 0;

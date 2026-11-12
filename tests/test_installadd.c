@@ -51,6 +51,8 @@ static uint32_t g_loader_sz = FAKE_LOADER_SZ;
 #define MAXSEC   98304
 #define MAXWLOG  65536
 
+#include <unistd.h>
+#include <sys/types.h>
 #include "types.h"
 #include "gpt.h"
 #include "gpt_write.h"
@@ -96,6 +98,11 @@ static int g_live = 0;          /* pretend this is a live session       */
    value, because the install then runs to the end, reports success, and
    has a truncated kernel on the disk. */
 static int g_wfail_at   = -1;
+/* v0.9.3: a write to this LBA reports success and is thrown away -- a
+   disk that lies. The read-back at the end of the install is the only
+   thing that can notice, and until this existed nothing showed that it
+   does: deleting it passed the suite. */
+static long long g_wdrop_lba = -1;
 static int g_wfail_once = -1;
 static int g_wcount = 0;
 
@@ -123,6 +130,7 @@ int inst_disk_write(int i, uint64_t lba, const uint8_t *b){
     if(g_wfail_at >= 0 && g_wcount >= g_wfail_at){ g_wcount++; return 0; }
     if(g_wfail_once >= 0 && g_wcount == g_wfail_once){ g_wcount++; return 0; }
     g_wcount++;
+    if(g_wdrop_lba >= 0 && (long long)lba == g_wdrop_lba) return 1;
     return d_write(0, lba, b) == 0;
 }
 int inst_disk_is_readonly(int i){ return i == MODEL_DISK ? g_ro : 1; }
@@ -260,6 +268,7 @@ int esp_install(int disk, esp_report_t *rep, int part, int dry){
 
 #include "install_add.h"
 #include "uninstall.h"
+#include "../fs/instsize.c"
 #include "../fs/install.c"
 
 /* ── a real FAT32 ESP inside the model disk ─────────────────────────── */
@@ -371,6 +380,30 @@ static int reset_esp(uint64_t *lo, uint64_t *hi)
                                     p[k].last_lba - p[k].first_lba + 1);
     }
     return 0;
+}
+
+/* v0.9.3: a partition out of the model as a SPARSE file -- a 3 GB FAT32
+   volume is a few thousand non-zero sectors and three billion zero bytes,
+   and writing the zeroes would make this suite a disk benchmark. */
+static int extract_sparse(uint64_t first, uint64_t n, const char *path)
+{
+    FILE *f = fopen(path, "wb");
+    int k;
+    if(!f) return 0;
+    for(k = 0; k < g_ndsec; k++){
+        uint64_t l = g_dsec[k].lba;
+        if(l < first || l >= first + n) continue;
+        if(fseeko(f, (off_t)((l - first) * 512u), SEEK_SET) != 0
+           || fwrite(g_dsec[k].b, 1, 512, f) != 512){ fclose(f); return 0; }
+    }
+    fclose(f);
+    return truncate(path, (off_t)(n * 512u)) == 0;
+}
+
+/* fs/fat32.c's read callback, over the model: 1 for success. */
+static int f32_model_rd(void *ctx, uint64_t lba, uint8_t *buf)
+{
+    (void)ctx; return d_read(0, lba, buf) == 0;
 }
 
 /* ── the comparison that matters ────────────────────────────────────── */
@@ -782,8 +815,11 @@ int main(void)
         inst_add_t r2;
         int r;
         uint64_t elo, ehi;
+        /* 100 GB free: v0.9.3 takes a gap up to 32 GB whole, so the
+           8 GB this used to be is now used up entirely and "room to
+           spare" needs more room. */
         build_disk_gap(1024ull * 1024 * 1024 * 1024 / 512 / 2, 128,
-                       8ull * 1024 * 1024 * 1024 / 512);   /* 8 GB free */
+                       100ull * 1024 * 1024 * 1024 / 512);
         ck("rebuild with plenty of free space", reset_esp(&elo, &ehi), 0);
         ck("the first install succeeds",
            havendos_install_additive(MODEL_DISK, 0, &r2, 0) == INSTADD_OK, 0);
@@ -882,6 +918,25 @@ int main(void)
         }
     }
 
+    head("a disk that drops the boot sector is caught by the read-back");
+    {
+        /* Every write "succeeds". One of them -- the volume's boot sector
+           -- never reaches the platter. Nothing in the install reads that
+           sector back except the verify at the end, so this is the test
+           that the verify exists and looks at the right sector. */
+        inst_add_t r2;
+        int r;
+        build_disk(1024ull * 1024 * 1024 * 1024 / 512 / 2);
+        ck("rebuild the disk and its ESP", reset_esp(0, 0), 0);
+        r = havendos_install_additive(MODEL_DISK, 1, &r2, 0);
+        ck("plan it first", r == INSTADD_OK, r);
+        g_wdrop_lba = (long long)r2.part_first;
+        r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
+        g_wdrop_lba = -1;
+        ck("the install reports it as a verify failure",
+           r == INSTADD_E_VERIFY, r);
+    }
+
     head("a disk with no GPT is refused, not guessed at");
     {
         inst_add_t r2;
@@ -898,31 +953,153 @@ int main(void)
            havendos_install_add_strerror(r) != 0, 0);
     }
 
-    head("a gap far larger than FAT16 can hold is capped, not refused");
+    head("a gap far larger than 32 GB is capped, not refused");
     {
         inst_add_t r2;
         int r;
-        /* 64 GB free. FAT16 at 32 KB clusters stops just under 2 GB, so a
-           cap is the only way this is anything but an error message on a
-           disk with plenty of room. The rest of the gap is left free. */
+        /* 400 GB free. v0.9.3 lifted the 2047 MB FAT16 cap: the volume is
+           FAT32 now, and capped at 32 GB -- the largest FAT32 Windows'
+           own format makes, and a bound on how long formatting takes.
+           The rest of the gap is left free. */
         build_disk_gap(1024ull * 1024 * 1024 * 1024 / 512 / 2, 128,
-                       64ull * 1024 * 1024 * 1024 / 512);
+                       400ull * 1024 * 1024 * 1024 / 512);
         ck("an ESP with Windows on it, as before", reset_esp(0, 0), 0);
         r = havendos_install_additive(MODEL_DISK, 1, &r2, 0);
         ck("the preview succeeds", r == INSTADD_OK, r);
-        ck("the partition is capped at the FAT16 limit",
+        ck("the partition is capped at 32 GB",
            r2.part_sectors == INSTADD_MAX_SECTORS, (long)r2.part_sectors);
+        ck("which is not the old 2047 MB",
+           r2.part_sectors > INSTADD_FAT16_MAX_SECTORS, (long)r2.part_sectors);
         ck("the gap it came from is much larger",
            r2.gap_sectors > r2.part_sectors * 8, (long)(r2.gap_sectors >> 20));
-        ck("the geometry is still a valid FAT16",
-           r2.geom.clusters >= FAT16_MIN_CLUSTERS
-           && r2.geom.clusters <= FAT16_MAX_CLUSTERS, (long)r2.geom.clusters);
+        ck("the preview says FAT32", r2.fs_type == 32, r2.fs_type);
+        ck("the geometry is a valid FAT32",
+           r2.geom32.clusters >= FAT32_MIN_CLUSTERS
+           && r2.geom32.part_sectors == r2.part_sectors,
+           (long)r2.geom32.clusters);
+        ck("and the FAT16 one is left empty", r2.geom.clusters == 0,
+           (long)r2.geom.clusters);
+        ck("free space is reported past 4 GB without wrapping",
+           r2.vol_free_bytes > 0xFFFFFFFFull, (long)(r2.vol_free_bytes >> 20));
         ck("and the leftover is left alone",
            r2.part_last < r2.gap_last, 0);
-        printf("      %llu MB gap -> a %llu MB partition, %llu MB left free\n",
+        printf("      %llu MB gap -> a %llu MB FAT32 partition, %llu MB left free\n",
                (unsigned long long)(r2.gap_sectors / 2048),
                (unsigned long long)(r2.part_sectors / 2048),
                (unsigned long long)((r2.gap_last - r2.part_last) / 2048));
+    }
+
+    head("GAIA: a 3 GB gap is FAT32, used whole, and Windows is untouched");
+    {
+        /* The thing 0.9.3 is for, done for real and judged from outside:
+           fsck.fat and mtools read the volume, the bytes outside it are
+           compared one by one, and the volume is then mounted with the
+           driver the installed system will mount it with. */
+        inst_add_t r2;
+        int r, bad;
+        uint64_t allowed[4], first_bad = 0, elo, ehi;
+        build_disk_gap(1024ull * 1024 * 1024 * 1024 / 512 / 2, 128,
+                       3ull * 1024 * 1024 * 1024 / 512);
+        ck("rebuild with a 3 GB gap", reset_esp(&elo, &ehi), 0);
+        snapshot();
+        g_logging = 1; g_nwlog = 0;
+        r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
+        g_logging = 0;
+        ck("the install succeeds", r == INSTADD_OK, r);
+        if(r != INSTADD_OK)
+            printf("      %s\n", havendos_install_add_strerror(r));
+        ck("as FAT32", r2.fs_type == 32, r2.fs_type);
+        ck("over the whole gap, less alignment",
+           r2.part_sectors > INSTADD_FAT16_MAX_SECTORS
+           && r2.part_sectors + 2 * INSTADD_ALIGN > r2.gap_sectors,
+           (long)(r2.part_sectors >> 11));
+
+        for(i = 0; i < (unsigned)r2.n_outside && i < 4; i++)
+            allowed[i] = r2.outside[i];
+        bad = identical_outside(r2.part_first, r2.part_last, elo, ehi,
+                                allowed, r2.n_outside, &first_bad);
+        ck("EVERY SECTOR OUTSIDE IT AND THE ESP IS IDENTICAL", bad == 0, bad);
+        if(bad) printf("      first differing sector: LBA %llu\n",
+                       (unsigned long long)first_bad);
+        {
+            /* and the write log agrees: the volume, the ESP, the four */
+            unsigned lim = (unsigned)g_nwlog, k, out = 0;
+            if(lim > MAXWLOG) lim = MAXWLOG;
+            for(k = 0; k < lim; k++){
+                uint64_t l = g_wlog[k];
+                if(l >= r2.part_first && l <= r2.part_last) continue;
+                if(l >= elo && l <= ehi) continue;
+                out++;
+            }
+            ck("the write log holds the partition, the ESP and the four",
+               out == 4, (long)out);
+        }
+
+        ck("extract the volume (sparse)",
+           extract_sparse(r2.part_first, r2.part_sectors,
+                          "/tmp/hd_ia_f32.img"), 0);
+        ck("fsck.fat accepts it",
+           system("fsck.fat -n /tmp/hd_ia_f32.img > /dev/null 2>&1") == 0, 0);
+        ck("file(1)-level: the BPB says FAT32",
+           system("dd if=/tmp/hd_ia_f32.img bs=1 skip=82 count=5 status=none "
+                  "| grep -q FAT32") == 0, 0);
+        ck("its label is HAVENDOS, which is what GRUB searches for",
+           system("mlabel -i /tmp/hd_ia_f32.img -s :: 2>/dev/null "
+                  "| grep -q HAVENDOS") == 0, 0);
+        ck("the kernel is there, readable by mtools",
+           system("mcopy -n -i /tmp/hd_ia_f32.img ::/boot/havendos.elf "
+                  "/tmp/hd_ia_k32.bin > /dev/null 2>&1") == 0, 0);
+        {
+            FILE *w = fopen("/tmp/hd_ia_kernel.bin", "wb");
+            if(w){ fwrite(g_kernel, 1, FAKE_KERNEL_SZ, w); fclose(w); }
+        }
+        ck("and byte-identical to the image",
+           system("cmp -s /tmp/hd_ia_k32.bin /tmp/hd_ia_kernel.bin") == 0, 0);
+        ck("the menu is there",
+           system("mcopy -n -i /tmp/hd_ia_f32.img ::/boot/grub/grub.cfg "
+                  "/tmp/hd_ia_cfg32.txt > /dev/null 2>&1") == 0
+           && system("grep -q 'search --no-floppy --set=root --label HAVENDOS' "
+                     "/tmp/hd_ia_cfg32.txt") == 0, 0);
+        ck("and the marker",
+           system("mcopy -n -i /tmp/hd_ia_f32.img ::/havendos.txt "
+                  "/tmp/hd_ia_m32.txt > /dev/null 2>&1") == 0, 0);
+
+        /* And with the driver the installed system mounts it with. */
+        ck("fs/fat32.c mounts it",
+           fat32_mount_dev(f32_model_rd, 0, 0, r2.part_first) == 1, 0);
+        {
+            static char kb[FAKE_KERNEL_SZ + 16];
+            int n = fat32_read("/boot/havendos.elf", kb, sizeof kb);
+            ck("and reads the kernel back, every byte",
+               n == (int)FAKE_KERNEL_SZ
+               && memcmp(kb, g_kernel, FAKE_KERNEL_SZ) == 0, n);
+        }
+        ck("FSInfo is believed, not 'unknown'",
+           fat32_free_clusters() != 0xFFFFFFFFu, 0);
+        fat32_unmount();
+
+        /* The bound under the driver: fs/install.c's v32_wr() refuses any
+           sector outside the volume being installed. Asked directly --
+           this suite includes fs/install.c, so the static is in reach --
+           because no correct driver ever exercises it, and a bound that
+           nothing exercises is a bound nobody knows works. Both edges,
+           and the volume's last sector, which must be ALLOWED: a bound
+           one sector short would fail the install that fills the disk. */
+        {
+            static uint8_t sb[512];
+            d_read(0, r2.part_last, sb);
+            ck("the bound allows the volume's last sector",
+               v32_wr(0, r2.part_last, sb) == 1, 0);
+            d_read(0, r2.part_first, sb);
+            ck("and its first",
+               v32_wr(0, r2.part_first, sb) == 1, 0);
+            ck("and refuses the sector after it",
+               v32_wr(0, r2.part_last + 1, sb) == 0, 0);
+            ck("and the sector before it",
+               v32_wr(0, r2.part_first - 1, sb) == 0, 0);
+            ck("and LBA 1, the GPT header",
+               v32_wr(0, 1, sb) == 0, 0);
+        }
     }
 
     head("a gap that alignment shrinks below the floor is refused");

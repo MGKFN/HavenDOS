@@ -27,6 +27,7 @@
 #include "../include/types.h"
 #include "../include/string.h"
 #include "../include/fat32.h"
+#include "../include/gpt.h"
 
 #define SECT_SZ        512u
 #define DIRENT_SZ      32u
@@ -865,21 +866,152 @@ const char *fat_fs_name(const uint8_t *bs)
     return "unknown";
 }
 
-void fat32_unmount(void){
+/* ── THE SYSTEM VOLUME IS PARKED, NOT DROPPED (v0.9.3) ──────────────
+   This driver holds one mounted volume, and until 0.9.3 that only mattered
+   to an installed system on FAT32 in theory: the installer always made
+   FAT16, so the one slot was the ESP's or a stick's to borrow and nobody's
+   to lose. 0.9.3 installs FAT32 above 2047 MB, so the slot is now the
+   SYSTEM's -- and esp.c, update_src.c, uninstall.c and the `fat32`
+   command all borrow it. Each of them unmounted when done and asked the
+   VFS to remount, and in between every vfs_read() of a settings file
+   reached the stick.
+
+   So the volume fat32_init() mounted is kept aside, whole, while another
+   one is borrowed:
+
+     fat32_mount_dev()  with the system mounted   -> park it, mount the other
+     fat32_unmount()    with a borrowed one       -> drop it, the system returns
+     fat32_unmount()    with the system mounted   -> nothing. Only
+                        fat32_init() replaces the system volume, so no
+                        borrower's tidy-up can take the machine's own
+                        filesystem away -- including the one that unmounts
+                        twice after a failed mount, of which there are two.
+
+   And fat32_sys_begin()/fat32_sys_end() put the system volume back for the
+   length of ONE operation while a borrow is still open. That is what lets
+   fs/update.c back up and write a kernel on a FAT32 system while the
+   update source is still mounted from the ESP: the two volumes take turns
+   in the slot, and each one's FAT window and FSInfo are flushed before it
+   is put aside, so neither turn can leave the other's sectors half-written.
+
+   The state below is EVERY global the mount owns. A field added to the
+   mount and not to this struct is the bug this design invites, so
+   tests/test_fat32sys.c parks one real volume, mounts another, writes to
+   both, and fsck.fat's both images afterwards. */
+typedef struct {
+    fat32_read_fn  rd;  fat32_write_fn wr;  void *ctx;  uint64_t part;
+    int      mounted;
+    uint32_t spc, rsvd, nfats, fatsz, total, root, fat_start, data_start;
+    uint32_t clusters, fsinfo_sect;
+    uint32_t free_count, next_free;  int free_known, fsinfo_dirty;
+} f32_state_t;
+
+static f32_state_t g_sys;         /* the system volume, while parked       */
+static int g_sys_parked;          /* g_sys holds it                        */
+static int g_cur_is_sys;          /* what is mounted IS the system volume  */
+static f32_state_t g_borrow;      /* the borrowed one, during a sys turn   */
+static int g_sys_turn;            /* fat32_sys_begin() swapped them        */
+
+static void state_save(f32_state_t *s){
+    s->rd = g_rd; s->wr = g_wr; s->ctx = g_ctx; s->part = g_part;
+    s->mounted = g_mounted;
+    s->spc = g_sects_per_clust; s->rsvd = g_rsvd_sects; s->nfats = g_num_fats;
+    s->fatsz = g_fat_sz; s->total = g_total_sects; s->root = g_root_clus;
+    s->fat_start = g_fat_start; s->data_start = g_data_start;
+    s->clusters = g_clusters; s->fsinfo_sect = g_fsinfo_sect;
+    s->free_count = g_free_count; s->next_free = g_next_free;
+    s->free_known = g_free_known; s->fsinfo_dirty = g_fsinfo_dirty;
+}
+static void state_load(const f32_state_t *s){
+    g_rd = s->rd; g_wr = s->wr; g_ctx = s->ctx; g_part = s->part;
+    g_mounted = s->mounted;
+    g_sects_per_clust = s->spc; g_rsvd_sects = s->rsvd; g_num_fats = s->nfats;
+    g_fat_sz = s->fatsz; g_total_sects = s->total; g_root_clus = s->root;
+    g_fat_start = s->fat_start; g_data_start = s->data_start;
+    g_clusters = s->clusters; g_fsinfo_sect = s->fsinfo_sect;
+    g_free_count = s->free_count; g_next_free = s->next_free;
+    g_free_known = s->free_known; g_fsinfo_dirty = s->fsinfo_dirty;
+    /* The FAT window belonged to whichever volume was in the slot before;
+       it was flushed when that one was put aside, and it is not this one's. */
+    g_fatw_valid = 0; g_fatw_dirty = 0;
+}
+
+/* Flush and forget whatever is in the slot. Touches nothing parked. */
+static void slot_drop(void){
     if(g_mounted) fat32_flush();
     g_mounted = 0; g_rd = 0; g_wr = 0; g_ctx = 0; g_part = 0;
     g_fatw_valid = 0; g_fatw_dirty = 0;
     g_clusters = 0; g_free_known = 0; g_fsinfo_dirty = 0;
+    g_cur_is_sys = 0;
 }
+
+/* Bring the parked system volume back into the slot, if there is one. */
+static void sys_return(void){
+    if(!g_sys_parked) return;
+    state_load(&g_sys);
+    g_sys_parked = 0;
+    g_cur_is_sys = 1;
+}
+
+void fat32_unmount(void){
+    if(g_sys_turn) fat32_sys_end();      /* never strand a turn half-done  */
+    if(g_cur_is_sys && g_mounted) return;   /* see the block above        */
+    slot_drop();
+    sys_return();
+}
+
+/* Drop everything, system volume included. fat32_init() only. */
+static void unmount_all(void){
+    g_sys_turn = 0;
+    slot_drop();
+    g_sys_parked = 0;
+}
+
+int fat32_sys_begin(void){
+    if(g_sys_turn) return 1;                       /* already its turn     */
+    if(g_cur_is_sys && g_mounted) return 1;        /* nothing is borrowed  */
+    if(!g_sys_parked) return 0;                    /* there is no system   */
+    if(g_mounted) fat32_flush();
+    state_save(&g_borrow);
+    state_load(&g_sys);
+    g_sys_parked = 0; g_cur_is_sys = 1; g_sys_turn = 1;
+    return 1;
+}
+
+void fat32_sys_end(void){
+    if(!g_sys_turn) return;
+    if(g_mounted) fat32_flush();
+    state_save(&g_sys);
+    g_sys_parked = 1;
+    state_load(&g_borrow);
+    g_cur_is_sys = 0; g_sys_turn = 0;
+}
+
+int fat32_system_mounted(void){
+    return (g_cur_is_sys && g_mounted) || g_sys_parked;
+}
+int fat32_borrowed(void){ return g_mounted && !g_cur_is_sys; }
 
 int fat32_mount_dev(fat32_read_fn rd, fat32_write_fn wr, void *ctx,
                     uint64_t part_lba)
 {
     uint8_t bs[SECT_SZ];
-    fat32_unmount();
-    if(!rd) return 0;
-    if(!rd(ctx, part_lba, bs)) return 0;
-    if(fat_probe_type(bs) != FATTYPE_32) return 0;
+    /* Park the system volume rather than lose it; drop anything else. A
+       borrow opened during a system turn would orphan the turn, so the
+       turn is closed first -- the borrow then parks the system as usual. */
+    if(g_sys_turn) fat32_sys_end();
+    if(g_cur_is_sys && g_mounted){
+        fat32_flush();
+        state_save(&g_sys);
+        g_sys_parked = 1;
+        g_cur_is_sys = 0;
+        g_mounted = 0;
+    }
+    slot_drop();
+    if(!rd || !rd(ctx, part_lba, bs) || fat_probe_type(bs) != FATTYPE_32){
+        sys_return();
+        return 0;
+    }
 
     g_rd = rd; g_wr = wr; g_ctx = ctx; g_part = part_lba;
 
@@ -897,11 +1029,24 @@ int fat32_mount_dev(fat32_read_fn rd, fat32_write_fn wr, void *ctx,
     g_data_start = g_rsvd_sects + g_num_fats * g_fat_sz;   /* RootEntCnt==0 */
     g_clusters   = (g_total_sects - g_data_start) / g_sects_per_clust;
 
-    if(!clus_valid(g_root_clus)){ fat32_unmount(); return 0; }
+    if(!clus_valid(g_root_clus)){ slot_drop(); sys_return(); return 0; }
 
     g_fatw_valid = 0; g_fatw_dirty = 0;
     g_mounted = 1;
     fsinfo_load();
+    return 1;
+}
+
+/* Mount a volume AS THE SYSTEM VOLUME: the one a borrow parks and an
+   unmount never drops. fat32_init() is the kernel's only caller; it is
+   public so tests/test_fat32sys.c can stand a real image in for the boot
+   disk without fs/blkdev.c. Replaces whatever was mounted, parked or not. */
+int fat32_mount_system(fat32_read_fn rd, fat32_write_fn wr, void *ctx,
+                       uint64_t part_lba)
+{
+    unmount_all();
+    if(!fat32_mount_dev(rd, wr, ctx, part_lba)) return 0;
+    g_cur_is_sys = 1;
     return 1;
 }
 
@@ -1258,6 +1403,45 @@ int fat32_delete(const char *path){
     return fat32_flush() ? 1 : 0;
 }
 
+/* ── fat32_rename (v0.9.3) ───────────────────────────────────────────
+   vfs_rename() returned 0 for FAT32 -- "no rename of its own yet" -- which
+   was invisible while FAT32 was only ever somebody else's volume and is a
+   lost settings file the day it is the system's own: notepad's save-as and
+   the file manager both rename.
+
+   It moves the DIRECTORY ENTRY, never the data: a new entry naming the
+   same first cluster, size and attributes is written, and only then is the
+   old one erased. A failure between the two leaves both names pointing at
+   one chain, which fsck reports and repairs, rather than neither name,
+   which loses the file. The new name must not exist.
+
+   A directory may be renamed in place and is refused across directories:
+   its ".." would still name the old parent, and rewriting that is a
+   second write that can fail on its own. */
+int fat32_rename(const char *from, const char *to){
+    f32_ent_t e, e2;
+    uint32_t  src_dir = 0, dst_dir = 0;
+    char      leaf[F32_NAME_MAX];
+    uint8_t   n11[11], ntres;
+    int       nlfn = 0;
+    f32_cur_t at;
+
+    if(!g_mounted || !g_wr) return 0;
+    if(path_walk(from, &e, &src_dir, 0, 0) != 1) return 0;
+    if(!e.nslots) return 0;                       /* the root has no entry  */
+    if(e.sname[0] == '.') return 0;               /* "." and ".."           */
+    if(path_walk(to, &e2, &dst_dir, leaf, sizeof leaf) != 0) return 0;
+    if(!leaf[0]) return 0;
+    if((e.attr & ATTR_DIRECTORY) && dst_dir != src_dir) return 0;
+
+    if(!make_sname(dst_dir, leaf, n11, &ntres, &nlfn)) return 0;
+    if(!dir_alloc_slots(dst_dir, nlfn + 1, &at)) return 0;
+    if(!write_entry(at, leaf, n11, ntres, nlfn, e.attr, e.clus, e.size))
+        return 0;
+    if(!entry_erase(&e)) return 0;
+    return fat32_flush() ? 1 : 0;
+}
+
 /* ── fat32_rmdir ─────────────────────────────────────────────────────
    v0.8.8.8. fat32_delete() refuses a directory -- "rmdir is its own
    thing" -- and until now nothing in the tree needed one, because
@@ -1391,28 +1575,87 @@ static int local_write(void *ctx, uint64_t lba, const uint8_t *buf){
     (void)ctx; return blk_write(g_f32_dev, lba, buf);
 }
 
-int fat32_init(void){
-    uint8_t mbr[SECT_SZ];
+/* The volume label a HavenDOS install volume carries, in the FAT32 BPB at
+   offset 71 -- fs/fat32fmt.c writes it there and as the root's label entry,
+   and the GRUB menu finds the partition by it (search --label HAVENDOS). */
+static int bpb_label_is_ours(const uint8_t *bs){
+    static const char L[11] = { 'H','A','V','E','N','D','O','S',' ',' ',' ' };
+    for(int i = 0; i < 11; i++) if(bs[71 + i] != (uint8_t)L[i]) return 0;
+    return 1;
+}
 
+static int gpt_cb(void *ctx, uint64_t lba, void *buf){
+    return local_read(ctx, lba, (uint8_t *)buf) ? 0 : -1;   /* gpt.c: 0 = ok */
+}
+
+/* ── v0.9.3: THE INSTALL VOLUME ON A GPT DISK ────────────────────────
+   Until this release fat32_init() read the MBR and nothing else. On a GPT
+   disk the MBR is the protective one -- a single 0xEE entry -- so a FAT32
+   volume the additive installer had made could never have been found, and
+   it never needed to be, because the installer only made FAT16.
+
+   It finds one now by the same two facts fs/fat16.c's find_gpt_volume()
+   uses: the type GUID only the HavenDOS installer writes, and then the
+   volume itself. The ESP is skipped BY NAME first, although it would fail
+   the GUID test anyway -- it is FAT32, it is first on the disk, and it is
+   the one partition where mounting the wrong thing as the system volume
+   would end in somebody's Windows not booting. */
+static int find_gpt_fat32(void){
+    static const uint8_t OURS[16] = {
+        'H','A','V','E','N','D','O','S','-','P','A','R','T','-','0','1'
+    };
+    gpt_part_t parts[GPT_MAX_PARTS];
+    int n, i, k;
+
+    if(!gpt_present(gpt_cb, 0)) return 0;
+    n = gpt_scan(gpt_cb, 0, parts, GPT_MAX_PARTS);
+    for(i = 0; i < n; i++){
+        int ours = 1;
+        if(parts[i].is_esp) continue;
+        for(k = 0; k < 16; k++)
+            if(parts[i].type_guid[k] != OURS[k]){ ours = 0; break; }
+        if(!ours || parts[i].first_lba == 0) continue;
+        if(fat32_mount_system(local_read, local_write, 0, parts[i].first_lba))
+            return 1;
+    }
+    return 0;
+}
+
+int fat32_init(void){
+    uint8_t mbr[SECT_SZ], bs[SECT_SZ];
+
+    unmount_all();
     if(blk_count() == 0) blk_scan();
     g_f32_dev = blk_boot_dev();
     if(g_f32_dev < 0) return 0;              /* no disk at all */
 
+    if(find_gpt_fat32()) return 1;
+
     if(!local_read(0, 0, mbr)) return 0;
     if(!(mbr[510] == 0x55 && mbr[511] == 0xAA)) return 0;
 
-    for(int i = 0; i < 4; i++){
-        const uint8_t *p = mbr + 446 + i * 16;
-        uint8_t  type = p[4];
-        uint32_t lba  = ld32(p + 8);
-        uint32_t cnt  = ld32(p + 12);
-        if(!lba || !cnt) continue;
-        /* 0x0B is FAT32 with CHS addressing, 0x0C the same with LBA.  The
-           byte is a hint only: fat32_mount_dev() re-derives the type from
-           the cluster count and will refuse a partition that is labelled
-           FAT32 and is not one. */
-        if(type != 0x0B && type != 0x0C) continue;
-        if(fat32_mount_dev(local_read, local_write, 0, lba)) return 1;
+    /* Two passes over the MBR. The first takes only a volume labelled
+       HAVENDOS -- what the whole-disk installer writes from 0.9.3 on -- so
+       a disk that also carries somebody's FAT32 data partition ahead of
+       ours mounts ours. The second is the behaviour before 0.9.3, kept so
+       that no disk that mounted yesterday stops mounting today. */
+    for(int pass = 0; pass < 2; pass++){
+        for(int i = 0; i < 4; i++){
+            const uint8_t *p = mbr + 446 + i * 16;
+            uint8_t  type = p[4];
+            uint32_t lba  = ld32(p + 8);
+            uint32_t cnt  = ld32(p + 12);
+            if(!lba || !cnt) continue;
+            /* 0x0B is FAT32 with CHS addressing, 0x0C the same with LBA.
+               The byte is a hint only: fat32_mount_dev() re-derives the
+               type from the cluster count and will refuse a partition that
+               is labelled FAT32 and is not one. */
+            if(type != 0x0B && type != 0x0C) continue;
+            if(pass == 0){
+                if(!local_read(0, lba, bs) || !bpb_label_is_ours(bs)) continue;
+            }
+            if(fat32_mount_system(local_read, local_write, 0, lba)) return 1;
+        }
     }
     return 0;
 }

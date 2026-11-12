@@ -1511,7 +1511,7 @@ static void ed_save_prompt(void){
         int pr = vga_rows() - 2;
         for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,pr,VGA_BLACK,VGA_CYAN);
         vga_puts_at("Saved.",0,pr,VGA_BLACK,VGA_CYAN);
-        if(!vfs_using_fat16())
+        if(!vfs_using_disk())   /* v0.9.3: was !fat16, wrong on FAT32 */
             vga_puts_at("(RAMFS - lost on reboot, no persistent disk)",10,23,VGA_YELLOW,VGA_CYAN);
         sleep_ms(1400);
     } else {
@@ -2969,6 +2969,8 @@ static void notif_center(void){
            so it says the true thing it knows rather than guessing a bus. */
         if(vfs_using_disk())  notif_push("Disk mounted");
         if(vfs_using_fat16()) notif_push("FAT16 filesystem OK");
+        else { extern int vfs_using_fat32(void);
+               if(vfs_using_fat32()) notif_push("FAT32 filesystem OK"); }
         notif_push("Press N to open again");
     }
 
@@ -3424,7 +3426,14 @@ static void app_install(void){
 
     vga_puts_at("Sector 0        MBR and GRUB boot code",CX+2,INST_ROW(2),VGA_DARK_GREY,th->win_bg);
     vga_puts_at("Sectors 1-2047  GRUB core image",       CX+2,INST_ROW(3),VGA_DARK_GREY,th->win_bg);
-    vga_puts_at("Sector 2048+    FAT16 partition",       CX+2,INST_ROW(4),VGA_DARK_GREY,th->win_bg);
+    {   extern int      instadd_fs_for(uint64_t);
+        extern uint32_t havendos_wholedisk_sectors(uint64_t);
+        extern uint64_t inst_disk_sectors(int);
+        /* v0.9.3: FAT32 above 2047 MB -- asked, not assumed. */
+        int f = instadd_fs_for(havendos_wholedisk_sectors(inst_disk_sectors(sel)));
+        vga_puts_at(f == 32 ? "Sector 2048+    FAT32 partition"
+                            : "Sector 2048+    FAT16 partition",
+                    CX+2,INST_ROW(4),VGA_DARK_GREY,th->win_bg); }
     vga_puts_at("                  /boot/grub/grub.cfg", CX+2,INST_ROW(5),VGA_DARK_GREY,th->win_bg);
     vga_puts_at("                  /boot/havendos.elf",  CX+2,INST_ROW(6),VGA_DARK_GREY,th->win_bg);
     vga_puts_at("                  /havendos.txt",       CX+2,INST_ROW(7),VGA_DARK_GREY,th->win_bg);
@@ -3508,7 +3517,7 @@ static void app_install(void){
     else if(rc==-2) reason="disk is smaller than 15MB";
     else if(rc==-3) reason="could not write the MBR";
     else if(rc==-4) reason="could not write the GRUB core image";
-    else if(rc==-5) reason="could not format the FAT16 partition";
+    else if(rc==-5) reason="could not format the HavenDOS partition";
     else if(rc==-6) reason="could not create /boot";
     else if(rc==-7) reason="could not write grub.cfg";
     else if(rc==-8) reason="could not copy the kernel";
@@ -3520,7 +3529,7 @@ static void app_install(void){
     else if(rc==-13) reason="there is no write path to an NVMe namespace yet";
     else if(rc==-14) reason="this disk has a GPT -- use the additive install, "
                             "which adds a partition instead";
-    else if(rc==-15) reason="no FAT16 layout fits that disk";
+    else if(rc==-15) reason="no FAT16 or FAT32 layout fits that disk";
     vga_puts_at(reason,CX,INST_ROW(4),th->win_fg,th->win_bg);
     { char erc[8]; utoa((uint32_t)(-rc),erc,10);
       vga_puts_at("code",CX,INST_ROW(5),VGA_DARK_GREY,th->win_bg);
@@ -4618,7 +4627,10 @@ static void app_diskinfo(void){
         DROW("Sector Size:",  "512 bytes",      VGA_WHITE);
         char sec_s[16]; utoa(secs,sec_s,10);
         DROW("Total Sectors:",sec_s,            VGA_DARK_GREY);
-        DROW("Filesystem:",   "FAT16 (HavenDOS partition)", VGA_WHITE);
+        {   extern int vfs_using_fat32(void);
+            DROW("Filesystem:", vfs_using_fat32() ? "FAT32 (HavenDOS partition)"
+                                                  : "FAT16 (HavenDOS partition)",
+                 VGA_WHITE); }
         /* bus-label-ok: inside if(vready), so VirtIO really is there. */
         DROW("Interface:",    "VirtIO BLK (UTM SE)", VGA_LIGHT_CYAN);
         DROW("PCI ID:",       "VID:1AF4 DID:1001",   VGA_DARK_GREY);

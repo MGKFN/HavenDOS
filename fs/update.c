@@ -16,7 +16,8 @@
  * GRUB config already boots havendos.elf; a future recovery menu
  * entry will boot havendos.bak as fallback.
  *
- * Requires: FAT16 partition mounted (disk install), ATAPI CD present.
+ * Requires: a HavenDOS partition mounted -- FAT16, or FAT32 since 0.9.3
+ * (see include/sysvol.h) -- and an update source (include/update_src.h).
  */
 
 #include "../include/types.h"
@@ -27,6 +28,7 @@
 #include "../include/fat16.h"
 #include "../include/io.h"
 #include "../include/update_src.h"
+#include "../include/sysvol.h"
 extern uint32_t upd_image_crc(const uint8_t *buf, uint32_t len);
 extern int fat16_detected(void);  /* v0.7.5: was implicit */
 
@@ -235,7 +237,7 @@ static int do_restore(void) {
     step("Restoring /boot/havendos.bak to /boot/havendos.elf ...");
 
     /* Read backup into our buffer */
-    int bak_sz = fat16_read_path("/boot/havendos.bak", (char *)g_elf_buf, MAX_ELF_SIZE);
+    int bak_sz = sysvol_read("/boot/havendos.bak", (char *)g_elf_buf, MAX_ELF_SIZE);
     if (bak_sz < 4) {
         err("Backup read failed or too small.");
         return 0;
@@ -247,7 +249,7 @@ static int do_restore(void) {
         return 0;
     }
     /* Write back.  See the note on return conventions at the first write. */
-    if (fat16_write_path("/boot/havendos.elf", (const char *)g_elf_buf,
+    if (sysvol_write("/boot/havendos.elf", (const char *)g_elf_buf,
                     (uint32_t)bak_sz) <= 0) {
         err("Failed to write restored ELF to disk.");
         return 0;
@@ -283,8 +285,10 @@ static void cmd_update_inner(void) {
     vga_puts("\n");
 
     /* ── Prerequisite: must be running from disk install ── */
-    if (!fat16_detected()) {
-        err("No FAT16 partition found.");
+    /* v0.9.3: FAT16 or FAT32 -- an install above 2047 MB is FAT32, and
+       this line used to tell a disk install it was not one. */
+    if (sysvol_kind() == SYSVOL_NONE) {
+        err("No HavenDOS partition is mounted (no FAT16, no FAT32).");
         UC_DIM;
         vga_puts("  You must be running from a disk install to use 'update'.\n");
         vga_puts("  Boot the new ISO and use 'install' instead.\n\n");
@@ -447,17 +451,17 @@ static void cmd_update_inner(void) {
        of a backup. */
     step("Backing up current kernel to /boot/havendos.bak ...");
 
-    if (fat16_exists_path("/boot/havendos.elf")) {
-        int cur_sz = fat16_read_path("/boot/havendos.elf", (char *)g_elf_buf, MAX_ELF_SIZE);
+    if (sysvol_exists("/boot/havendos.elf")) {
+        int cur_sz = sysvol_read("/boot/havendos.elf", (char *)g_elf_buf, MAX_ELF_SIZE);
         if (cur_sz < 4) {
             warn("Could not read current kernel for backup - continuing anyway.");
         } else {
-            if (fat16_exists_path("/boot/havendos.bak"))
-                fat16_delete_path("/boot/havendos.bak");
+            if (sysvol_exists("/boot/havendos.bak"))
+                sysvol_delete("/boot/havendos.bak");
 
             /* v0.7.19 FIX — the third reason 'update' never worked.
 
-               Both fat16_write() and fat16_write_path() return the NUMBER OF BYTES
+               Both fat16_write() and fat16_write_path() -- and so sysvol_write() -- return the NUMBER OF BYTES
                WRITTEN on success and a negative value on failure.  Every call here tested
                `!= 0`, so a successful write of a 1.2 MB kernel returned 1230708 and was
                read as a failure.  The update manager printed "FAT16 write failed" and
@@ -465,7 +469,7 @@ static void cmd_update_inner(void) {
 
                Failure is < 0.  A zero return means zero bytes written, which for a kernel
                is also not success, so both are treated as failure below. */
-            if (fat16_write_path("/boot/havendos.bak", (const char *)g_elf_buf,
+            if (sysvol_write("/boot/havendos.bak", (const char *)g_elf_buf,
                             (uint32_t)cur_sz) <= 0) {
                 warn("Backup write failed. Continuing without backup.");
             } else {
@@ -531,16 +535,17 @@ static void cmd_update_inner(void) {
         warn("This source carries no checksum - ELF magic only.");
     }
 
-    /* ── Step 7: Write the new kernel to FAT16 ── */
+    /* ── Step 7: Write the new kernel to the system volume ── */
     step("Writing new kernel to disk...");
 
-    if (fat16_exists_path("/boot/havendos.elf"))
-        fat16_delete_path("/boot/havendos.elf");
+    if (sysvol_exists("/boot/havendos.elf"))
+        sysvol_delete("/boot/havendos.elf");
 
     wrote_kernel = 1;
-    if (fat16_write_path("/boot/havendos.elf", (const char *)g_elf_buf,
+    if (sysvol_write("/boot/havendos.elf", (const char *)g_elf_buf,
                          man.size) <= 0) {
-        err("FAT16 write failed.");
+        err(sysvol_kind() == SYSVOL_FAT32 ? "FAT32 write failed."
+                                          : "FAT16 write failed.");
         goto rollback;
     }
 
@@ -548,7 +553,7 @@ static void cmd_update_inner(void) {
     step("Verifying disk write...");
     {
         uint8_t check[4] = {0,0,0,0};
-        int chk = fat16_read_path("/boot/havendos.elf", (char *)check, 4);
+        int chk = sysvol_read("/boot/havendos.elf", (char *)check, 4);
         if (chk < 4 || check[0] != 0x7F || check[1] != 'E' ||
             check[2] != 'L' || check[3] != 'F') {
             err("Disk verify FAILED. Written file is corrupt.");
@@ -608,13 +613,13 @@ static void cmd_rollback_inner(void) {
     UC_NORM;
     vga_puts("\n");
 
-    if (!fat16_detected()) {
-        err("No FAT16 partition. Must be on a disk install.");
+    if (sysvol_kind() == SYSVOL_NONE) {
+        err("No HavenDOS partition mounted. Must be on a disk install.");
         vga_puts("\n");
         return;
     }
 
-    if (!fat16_exists_path("/boot/havendos.bak")) {
+    if (!sysvol_exists("/boot/havendos.bak")) {
         err("No backup found at /boot/havendos.bak.");
         UC_DIM; vga_puts("  Run 'update' first to create a backup.\n\n"); UC_NORM;
         return;

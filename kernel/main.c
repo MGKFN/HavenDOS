@@ -1500,10 +1500,20 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
        into the installer on the one machine we are trying to protect. */
     if(g_live) live_shell = 1;
 
-    if((!vfs_using_fat16() && !live_shell) || force_install){
-        /* fat16_init() (called earlier in vfs_init) already tried
-           both buses.  If it failed, we're running from ISO with no
-           formatted HavenDOS partition — go to installer.            */
+    /* v0.9.3: FAT16 OR FAT32. This read `!vfs_using_fat16()`, which was
+       "not installed" for as long as every install was FAT16. An install
+       above 2047 MB is FAT32 now, and with the old test every one of them
+       would have booted, mounted its own volume, and then been put in
+       front of the installer as though the disk were empty -- with the
+       "reinstall" offer one keypress from formatting the system it had
+       just booted. The suite that boots a FAT32 install in QEMU checks
+       this line by reaching the desktop. */
+    extern int vfs_using_fat32(void);
+    int installed = vfs_using_fat16() || vfs_using_fat32();
+    if((!installed && !live_shell) || force_install){
+        /* vfs_init() already tried every bus for FAT16 and then FAT32.
+           If both failed, we're running from ISO with no formatted
+           HavenDOS partition — go to installer.                      */
         iso_install_wizard();
         vga_clear();
         for(int y=0;y<25;y++) for(int x=0;x<80;x++)

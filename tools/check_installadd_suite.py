@@ -139,12 +139,14 @@ BUGS = [
      "    if(havendos_find_existing(disk) >= 0)       return INSTADD_E_ALREADY;",
      "    ;"),
 
-    ("the existing-install check runs after the gap search",
+    # v0.9.3: was "runs after the gap search", matching a blank line and
+    # the gap search directly below it -- the ESP survey has sat between
+    # the two since 0.8.8.8, so the injection matched nothing for five
+    # releases. Skipping the check is the same bug on a disk with room.
+    ("the existing-install check is skipped",
      "a disk with room gets a second HavenDOS and two HAVENDOS labels",
-     "    if(havendos_find_existing(disk) >= 0)       return INSTADD_E_ALREADY;\n"
-     "\n"
-     "    r = gpt_find_free(add_disk_rd, (void *)(long)disk,",
-     "    r = gpt_find_free(add_disk_rd, (void *)(long)disk,"),
+     "    if(havendos_find_existing(disk) >= 0)       return INSTADD_E_ALREADY;\n",
+     ""),
 
     ("the existing install is matched on anything but the type GUID",
      "every partition on the disk looks like ours, so nothing installs ever",
@@ -155,13 +157,10 @@ BUGS = [
     # ── the order of operations ─────────────────────────────────────
     ("the boot files go on the ESP before the partition is filled",
      "a reboot in the middle leaves the firmware pointing at an empty volume",
-     "    if(cb) cb(step, total, \"Formatting the new partition...\");\n"
-     "    if(!fat16_format(add_wr, 0, &s_geom, (uint32_t)first, \"HAVENDOS\"))\n"
-     "        return INSTADD_E_FORMAT;",
+     "    /* ── 6: format and fill ──",
      "    rep->esp_rc = esp_install(disk, &rep->esp, entry, 0);\n"
      "    if(rep->esp_rc != ESP_OK)                   return INSTADD_E_ESP;\n"
-     "    if(!fat16_format(add_wr, 0, &s_geom, (uint32_t)first, \"HAVENDOS\"))\n"
-     "        return INSTADD_E_FORMAT;"),
+     "    /* ── 6: format and fill ──"),
 
     ("the volume is addressed from sector 2048 instead of its own start",
      "the format lands 500 GB away from the partition, inside Windows",
@@ -170,14 +169,18 @@ BUGS = [
 
     ("the geometry computed for the gap is not the one used to format",
      "a BPB describing one layout and a FAT written in another",
-     "    s_geom         = rep->geom;",
-     "    ;"),
+     "    if(!vol_plan((uint32_t)want))               return INSTADD_E_GEOM;\n"
+     "\n"
+     "    /* ── 6: format and fill",
+     "    if(!vol_plan((uint32_t)want + INSTADD_ALIGN)) return INSTADD_E_GEOM;\n"
+     "\n"
+     "    /* ── 6: format and fill"),
 
     ("the cluster counter is not reset between installs",
      "the second install allocates clusters the first one used",
      "    s_next_cluster = 2;\n"
-     "    s_geom         = rep->geom;",
-     "    s_geom         = rep->geom;"),
+     "    s_add_dry      = 0;",
+     "    s_add_dry      = 0;"),
 
     # ── the ESP ─────────────────────────────────────────────────────
     ("the boot files are never put on the ESP",
@@ -199,13 +202,45 @@ BUGS = [
     ("nothing is read back at the end",
      "\"the writes returned success\" is a different claim from \"it is there\"",
      "        if(!inst_rd(0, v))                      return INSTADD_E_VERIFY;\n"
-     "        if(v[510] != 0x55 || v[511] != 0xAA)    return INSTADD_E_VERIFY;",
+     "        if(!vol_bpb_ok(v))                      return INSTADD_E_VERIFY;",
      "        ;"),
 
     ("the kernel's write result is ignored",
      "an install that reports success with a truncated kernel on the disk",
      "        if(!r)                                  return INSTADD_E_FILES;",
      "        ;"),
+
+    # ── v0.9.3 "Gaia": the FAT32 volume ─────────────────────────────
+    ("every volume is FAT16, whatever its size",
+     "the 2047 MB cap back, as a refusal: no FAT16 geometry fits 3 GB",
+     "    s_fs32 = (instadd_fs_for(sectors) == 32);",
+     "    s_fs32 = 0;"),
+
+    ("the FAT32 volume is not labelled HAVENDOS",
+     "GRUB's search --label finds nothing and the menu entry boots nothing",
+     "                         vol_serial(first), \"HAVENDOS\"))",
+     "                         vol_serial(first), \"NO NAME\"))"),
+
+    ("the FAT32 volume is mounted at sector 2048, not at its own start",
+     "the files go into whatever is at LBA 2048 -- on a GPT disk, Windows",
+     "static int  v32_open(void)  { return fat32_mount_dev(v32_rd, v32_wr, 0, s_part_lba); }",
+     "static int  v32_open(void)  { return fat32_mount_dev(v32_rd, v32_wr, 0, PART_START_SECT); }"),
+
+    ("the FAT32 write bound is the first 32 MB, not the volume",
+     "a bound that refuses good writes fails every install -- the bound must be the volume",
+     "    if(lba < s_part_lba || lba >= s_part_lba + s_vol_sectors) return 0;",
+     "    if(lba < s_part_lba || lba >= s_part_lba + 65536u) return 0;"),
+
+    ("the FAT32 directories are not made",
+     "the kernel write fails with nowhere to go, or lands in the root",
+     "        if(!fat32_mkdir(\"/BOOT\") || !fat32_mkdir(\"/BOOT/GRUB\")\n"
+     "           || !v32_put(",
+     "        if(!v32_put("),
+
+    ("the FAT32 kernel is written to the root",
+     "GRUB's multiboot /boot/havendos.elf finds nothing",
+     "        if(!v32_put(\"/BOOT/HAVENDOS.ELF\", kernel_elf_data, kernel_elf_size)",
+     "        if(!v32_put(\"/HAVENDOS.ELF\", kernel_elf_data, kernel_elf_size)"),
 ]
 
 

@@ -600,7 +600,12 @@ static int screen_additive_preview(int drive, int writable)
     vga_puts_at("MB)",22+(int)strlen(b1)+(int)strlen(b2)+(int)strlen(b3),
                 row,VGA_LIGHT_GREY,BODY_BG);
     row++;
-    vga_puts_at("formatted FAT16, labelled HAVENDOS, holding the kernel",
+    /* v0.9.3: the type the install will actually make, from the plan --
+       FAT32 above 2047 MB. A preview that said FAT16 over a FAT32 plan
+       would be the one sentence on this screen that is not true. */
+    vga_puts_at(pl->fs_type == 32
+                ? "formatted FAT32, labelled HAVENDOS, holding the kernel"
+                : "formatted FAT16, labelled HAVENDOS, holding the kernel",
                 8,row,VGA_LIGHT_GREY,BODY_BG); row += 2;
 
     /* 2 -- THE FOUR SECTORS. The reason this screen exists. */
@@ -777,7 +782,18 @@ static int screen_confirm(int drive, uint32_t mb){
     box(10,5,60,13);
     vga_puts_at("Sector 0          MBR + GRUB bootloader",12,6,BODY_FG,BODY_BG);
     vga_puts_at("Sectors 1-2047    GRUB core image",12,7,BODY_FG,BODY_BG);
-    vga_puts_at("Sector 2048+      FAT16 partition (type 0x0E)",12,8,BODY_FG,BODY_BG);
+    {   /* v0.9.3: what the installer will make on THIS disk, asked of
+           the same two functions it calls -- not a line of text that was
+           true of every install until this release. */
+        uint32_t ps = havendos_wholedisk_sectors(inst_disk_sectors(drive));
+        char line[64], n[12];
+        strcpy(line, instadd_fs_for(ps) == 32
+                     ? "Sector 2048+      FAT32 (type 0x0C), "
+                     : "Sector 2048+      FAT16 (type 0x0E), ");
+        utoa(ps / 2048u, n, 10);
+        strcat(line, n); strcat(line, " MB");
+        vga_puts_at(line,12,8,BODY_FG,BODY_BG);
+    }
     for(int x=11;x<69;x++) vga_putchar_at('-',x,9,VGA_DARK_GREY,BODY_BG);
     vga_puts_at("  /boot/grub/grub.cfg  GRUB config",12,10,VGA_LIGHT_GREY,BODY_BG);
     vga_puts_at("  /boot/havendos.elf   HavenDOS kernel",12,11,VGA_LIGHT_GREY,BODY_BG);
@@ -887,7 +903,7 @@ static void screen_error(int code){
         case -8:  why = "This build carries no installable image."; break;
         case -13: why = "The disk reports itself as read-only."; break;
         case -14: why = "Disk has a GPT -- use the additive install.";  break;
-        case -15: why = "No FAT16 geometry fits this partition size."; break;
+        case -15: why = "No FAT geometry fits this partition size."; break;
         default:  why = "See the code above; dmesg has the detail.";    break;
     }
     puts_center(why,14,BODY_FG,BODY_BG);

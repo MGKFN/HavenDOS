@@ -86,6 +86,8 @@ int ahci_write_sector(int i, uint64_t l, const uint8_t *b){
    this suite compiles -- see tests/kpollguard.inc. */
 #include "kpollguard.inc"
 
+/* v0.9.3: fat32_init() reads a GPT, so fs/gpt.c is linked, not stubbed. */
+#include "../fs/gpt.c"
 #include "../fs/fat32.c"
 #include "fat32_fixture.inc"
 

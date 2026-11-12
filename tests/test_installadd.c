@@ -268,6 +268,29 @@ int esp_install(int disk, esp_report_t *rep, int part, int dry){
 
 #include "install_add.h"
 #include "uninstall.h"
+/* v0.9.4: the system volume, for the self-hosting install. NONE by
+   default -- the ISO case; a section below stands one up with a kernel
+   on it and the embedded image switched off. */
+#include "sysvol.h"
+static int         g_sys_kind = SYSVOL_NONE;
+static const uint8_t *g_sys_elf;
+static uint32_t    g_sys_elf_n;
+static int         g_sys_reads;
+static int         g_boot_disk = -1;
+int sysvol_kind(void){ return g_sys_kind; }
+int sysvol_exists(const char *p){
+    return g_sys_kind && g_sys_elf && strcmp(p, "/boot/havendos.elf") == 0;
+}
+int sysvol_read(const char *p, char *b, uint32_t m){
+    uint32_t n;
+    if(!sysvol_exists(p)) return -1;
+    g_sys_reads++;
+    n = g_sys_elf_n < m ? g_sys_elf_n : m;
+    memcpy(b, g_sys_elf, n);
+    return (int)n;
+}
+int inst_disk_is_boot(int i){ return i == g_boot_disk; }
+
 #include "../fs/instsize.c"
 #include "../fs/install.c"
 
@@ -1100,6 +1123,97 @@ int main(void)
             ck("and LBA 1, the GPT header",
                v32_wr(0, 1, sb) == 0, 0);
         }
+    }
+
+    head("PROMETHEUS: an installed system installs its own /boot/havendos.elf");
+    {
+        /* The running kernel is pass 1 and carries no image: the embedded
+           one is switched off. The system volume holds a kernel of a
+           different size and pattern, so the bytes on the new volume can
+           only have come from there. */
+        static uint8_t sysk[400000];
+        inst_add_t r2;
+        int r;
+        uint32_t k;
+        uint64_t elo, ehi;
+        for(k = 0; k < sizeof sysk; k++) sysk[k] = (uint8_t)(k * 13u + 5u);
+        sysk[0] = 0x7F; sysk[1] = 'E'; sysk[2] = 'L'; sysk[3] = 'F';
+        kernel_elf_size = 0;                       /* a pass-1 kernel */
+        g_sys_elf = sysk; g_sys_elf_n = sizeof sysk;
+        havendos_install_image_release();
+
+        build_disk_gap(1024ull * 1024 * 1024 * 1024 / 512 / 2, 128,
+                       3ull * 1024 * 1024 * 1024 / 512);
+        ck("rebuild with a 3 GB gap", reset_esp(&elo, &ehi), 0);
+
+        g_sys_kind = SYSVOL_NONE;
+        g_logging = 1; g_nwlog = 0;
+        r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
+        g_logging = 0;
+        ck("from live media with no image: refused as NOIMAGE",
+           r == INSTADD_E_NOIMAGE, r);
+        ck("having written nothing", g_nwlog == 0, g_nwlog);
+        ck("and the source says none",
+           havendos_install_image_source() == HAVENDOS_IMG_NONE, 0);
+
+        g_sys_kind = SYSVOL_FAT32; g_boot_disk = 0; g_sys_reads = 0;
+        ck("on an installed system the source is the system volume",
+           havendos_install_image_source() == HAVENDOS_IMG_SYSTEM, 0);
+        r = havendos_install_additive(MODEL_DISK, 1, &r2, 0);
+        ck("the preview succeeds", r == INSTADD_OK, r);
+        ck("and says the image comes from the system", r2.image_from_system, 0);
+        ck("at the system kernel's size", r2.kernel_bytes == sizeof sysk,
+           (long)r2.kernel_bytes);
+        g_logging = 1; g_nwlog = 0;
+        r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
+        g_logging = 0;
+        ck("the install succeeds", r == INSTADD_OK, r);
+        ck("the kernel was read off the system volume once, not per call",
+           g_sys_reads == 1, g_sys_reads);
+        ck("extract the new volume",
+           extract_sparse(r2.part_first, r2.part_sectors, "/tmp/hd_ia_p4.img"), 0);
+        {
+            FILE *w = fopen("/tmp/hd_ia_sysk.bin", "wb");
+            if(w){ fwrite(sysk, 1, sizeof sysk, w); fclose(w); }
+        }
+        ck("its kernel is byte-for-byte the system's",
+           system("mcopy -n -i /tmp/hd_ia_p4.img ::/boot/havendos.elf "
+                  "/tmp/hd_ia_k4.bin > /dev/null 2>&1") == 0
+           && system("cmp -s /tmp/hd_ia_k4.bin /tmp/hd_ia_sysk.bin") == 0, 0);
+        ck("fsck.fat accepts the volume",
+           system("fsck.fat -n /tmp/hd_ia_p4.img > /dev/null 2>&1") == 0, 0);
+
+        /* not over itself */
+        build_disk_gap(1024ull * 1024 * 1024 * 1024 / 512 / 2, 128,
+                       3ull * 1024 * 1024 * 1024 / 512);
+        reset_esp(0, 0);
+        g_boot_disk = MODEL_DISK;
+        g_logging = 1; g_nwlog = 0;
+        r = havendos_install_additive(MODEL_DISK, 1, &r2, 0);
+        ck("onto the disk it is running from: refused as SELF, even to preview",
+           r == INSTADD_E_SELF, r);
+        r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
+        g_logging = 0;
+        ck("and for real", r == INSTADD_E_SELF, r);
+        ck("having written nothing", g_nwlog == 0, g_nwlog);
+        ck("the refusal says so",
+           strstr(havendos_install_add_strerror(INSTADD_E_SELF), "running") != 0, 0);
+        ck("whole-disk too, before step 1",
+           havendos_install_to_drive(MODEL_DISK, 0) == -16, 0);
+
+        /* a system file that is not a kernel */
+        g_boot_disk = 0;
+        havendos_install_image_release();
+        sysk[0] = 'M';
+        ck("a /boot/havendos.elf without ELF magic is no image",
+           havendos_install_image_source() == HAVENDOS_IMG_NONE, 0);
+        sysk[0] = 0x7F;
+
+        havendos_install_image_release();
+        g_sys_kind = SYSVOL_NONE; g_sys_elf = 0; g_boot_disk = -1;
+        kernel_elf_size = FAKE_KERNEL_SZ;
+        ck("and with the embedded image back, the source is embedded",
+           havendos_install_image_source() == HAVENDOS_IMG_EMBEDDED, 0);
     }
 
     head("a gap that alignment shrinks below the floor is refused");

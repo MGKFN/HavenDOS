@@ -34,7 +34,7 @@
 
 #define HAVENDOS_VER_MAJOR  0
 #define HAVENDOS_VER_MINOR  9
-#define HAVENDOS_VER_PATCH  3
+#define HAVENDOS_VER_PATCH  4
 /* A fourth number, for a patch release that fixes the release before it
    without adding a feature.  ver_cmp() in fs/update.c already parses four
    components, so 0.8.5.1 compares as newer than 0.8.5 and `update`
@@ -75,7 +75,7 @@
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.3"
+#define HAVENDOS_VER_NUM    "0.9.4"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"
@@ -83,7 +83,9 @@
    all of it rather than the first 2047 MB. RM-1003 named it for 0.9.1;
    the display series ("Janus", 0.9.0-0.9.2.2) took those numbers first,
    so the road-to-1.0 releases each move up by two. */
-#define HAVENDOS_CODENAME   "Gaia"
+/* "Prometheus", v0.9.4: the one who carried fire to make more of it -- an
+   installed system that installs itself. */
+#define HAVENDOS_CODENAME   "Prometheus"
 #define HAVENDOS_FULL       HAVENDOS_NAME " " HAVENDOS_VER " " HAVENDOS_CHANNEL \
                             " \"" HAVENDOS_CODENAME "\""
 #define HAVENDOS_VENDOR     "TechHaven Studios"

@@ -102,7 +102,13 @@ def main():
         if hit: break
     try:
         ck("the installer came up", hit is not None, s[:300])
-        q.key("ret"); time.sleep(2)                  # welcome -> picker
+        # The welcome screen draws before its keyboard loop starts, and a
+        # key in between is lost: ENTER until the picker is up.
+        for _ in range(6):
+            time.sleep(2)
+            q.key("ret")                             # welcome -> picker
+            if wait_any(q, ["Picking a disk"], 15)[0]:
+                break
         q.key("ret"); time.sleep(2)                  # the only disk
         s = q.screen()
         ck(f"the layout preview says FAT{want}",

@@ -92,6 +92,17 @@ static int      disk_is_readonly(int i){ return blk_readonly(i); }
 #define DMODE_NOROOM   3   /* GPT, and nowhere to put a partition           */
 #define DMODE_SMALL    4   /* too small for either                          */
 #define DMODE_DONE     5   /* HavenDOS is already on it -- not an error     */
+#define DMODE_SELF     6   /* v0.9.4: the disk this installed system runs on */
+
+/* v0.9.4 "Prometheus": this wizard runs from an installed system as well as
+   from the ISO -- `install`, or the desktop's Install icon. Then it copies
+   the system's own /boot/havendos.elf, refuses the disk it is running from,
+   and returns instead of rebooting. */
+#include "../include/sysvol.h"
+static int from_system(void){
+    extern int boot_is_live(void);
+    return !boot_is_live() && sysvol_kind() != SYSVOL_NONE;
+}
 
 /* Sized from the registry, not from a local constant. The old table held
    8 and these three held 8; fs/blkdev.c holds 16, because a hub of sticks
@@ -113,6 +124,10 @@ static void plan_disks(void)
         g_dplan_rc[i] = INSTADD_E_DISK;
         memset(&g_dplan[i], 0, sizeof g_dplan[i]);
 
+        if(havendos_install_target_is_self(i)){
+            g_dmode[i] = DMODE_SELF;
+            continue;
+        }
         if(!inst_disk_has_gpt(i)){
             g_dmode[i] = (mb < 15) ? DMODE_SMALL : DMODE_WIPE;
             continue;
@@ -186,6 +201,10 @@ int      inst_disk_scan(void)                { return disk_scan(); }
 int      inst_disk_is_ata(int i)             { return blk_kind(i) == BLK_BUS_ATA; }
 int      inst_disk_is_nvme(int i)            { return blk_kind(i) == BLK_BUS_NVME; }
 int      inst_disk_is_readonly(int i)        { return disk_is_readonly(i); }
+/* v0.9.4: the disk the system volume was mounted from -- the one an
+   installed system must not install over. blk_boot_dev() is the question
+   fat16_init() and fat32_init() asked, so the answers cannot differ. */
+int      inst_disk_is_boot(int i)            { return i == blk_boot_dev(); }
 
 /* Does this disk carry a GUID Partition Table?  Checked by reading LBA 1,
    so it works on any bus the scan found. */
@@ -281,18 +300,28 @@ static void prog_cb(int step, int total, const char *msg){
 /* ── Screen 1: Welcome ───────────────────────────────────────────── */
 static void screen_welcome(void){
     cls(); hdr("Welcome",1,6);
-    footer("Press ENTER to continue  |  ESC to reboot");
+    footer(from_system() ? "Press ENTER to continue  |  ESC to go back"
+                         : "Press ENTER to continue  |  ESC to reboot");
 
     box(10,3,60,7);
     puts_center("HavenDOS " HAVENDOS_VER,5,ACC,BODY_BG);
     puts_center("TechHaven Studios",6,VGA_DARK_GREY,BODY_BG);
 
-    vga_puts_at("You have booted from the HavenDOS install ISO.",6,12,BODY_FG,BODY_BG);
-    vga_puts_at("This ISO is install media - live desktop is not available.",4,13,BODY_FG,BODY_BG);
-    vga_puts_at("The installer will:",6,15,BODY_FG,BODY_BG);
-    vga_puts_at(". Partition and format a disk of your choice",8,16,VGA_LIGHT_GREY,BODY_BG);
-    vga_puts_at(". Write the HavenDOS bootloader and kernel",8,17,VGA_LIGHT_GREY,BODY_BG);
-    vga_puts_at(". Reboot into the installed system automatically",8,18,VGA_LIGHT_GREY,BODY_BG);
+    if(from_system()){
+        vga_puts_at("You are running HavenDOS from this computer's disk.",6,12,BODY_FG,BODY_BG);
+        vga_puts_at("It can install itself onto ANOTHER disk.",6,13,BODY_FG,BODY_BG);
+        vga_puts_at("The installer will:",6,15,BODY_FG,BODY_BG);
+        vga_puts_at(". Partition and format a disk of your choice",8,16,VGA_LIGHT_GREY,BODY_BG);
+        vga_puts_at(". Copy this system's own kernel, /boot/havendos.elf",8,17,VGA_LIGHT_GREY,BODY_BG);
+        vga_puts_at(". Leave the disk it is running from alone",8,18,VGA_LIGHT_GREY,BODY_BG);
+    } else {
+        vga_puts_at("You have booted from the HavenDOS install ISO.",6,12,BODY_FG,BODY_BG);
+        vga_puts_at("This ISO is install media - live desktop is not available.",4,13,BODY_FG,BODY_BG);
+        vga_puts_at("The installer will:",6,15,BODY_FG,BODY_BG);
+        vga_puts_at(". Partition and format a disk of your choice",8,16,VGA_LIGHT_GREY,BODY_BG);
+        vga_puts_at(". Write the HavenDOS bootloader and kernel",8,17,VGA_LIGHT_GREY,BODY_BG);
+        vga_puts_at(". Reboot into the installed system automatically",8,18,VGA_LIGHT_GREY,BODY_BG);
+    }
 
     /* v0.8.5.4 -- what was actually found, named by the one function
        that knows every bus.
@@ -486,6 +515,9 @@ static int screen_drive_picker(int ndisks){
                    what made a working install look like a broken disk. */
                 vga_puts_at("HavenDOS already installed",42,8+i,OK_COL,bg);
                 break;
+            case DMODE_SELF:
+                vga_puts_at("running from this disk",42,8+i,OK_COL,bg);
+                break;
             case DMODE_NOROOM:
                 /* Why, not just no. "Refused" taught the user nothing; the
                    reason tells them whether shrinking a partition in
@@ -533,6 +565,11 @@ static int screen_drive_picker(int ndisks){
                 return sel;
             case DMODE_DONE:
                 screen_already_installed(sel);
+                break;
+            case DMODE_SELF:
+                vga_puts_at(havendos_install_add_strerror(INSTADD_E_SELF),
+                            6,hint_row+2,WARN,BODY_BG);
+                sleep_ms(2500);
                 break;
             case DMODE_NOROOM:
                 vga_puts_at(havendos_install_add_strerror(g_dplan_rc[sel]),
@@ -851,6 +888,15 @@ static void screen_progress(int drive){
 /* ── Screen 5: Done ─────────────────────────────────────────────── */
 static void screen_done(void){
     cls(); hdr("Installation Complete",5,6);
+    if(from_system()){
+        box(15,4,50,9);
+        puts_center("HavenDOS " HAVENDOS_VER " installed successfully!",7,OK_COL,BODY_BG);
+        puts_center("The new disk boots on its own; this system",9,BODY_FG,BODY_BG);
+        puts_center("keeps running from the one it was on.",10,BODY_FG,BODY_BG);
+        footer("Press any key to return");
+        keyboard_waitchar();
+        return;
+    }
 
     box(15,4,50,9);
     puts_center("HavenDOS " HAVENDOS_VER " installed successfully!",7,OK_COL,BODY_BG);
@@ -904,6 +950,8 @@ static void screen_error(int code){
         case -13: why = "The disk reports itself as read-only."; break;
         case -14: why = "Disk has a GPT -- use the additive install.";  break;
         case -15: why = "No FAT geometry fits this partition size."; break;
+        case -16: why = "This is the disk HavenDOS is running from."; break;
+        case -11: why = "No kernel to install: no image, no /boot/havendos.elf."; break;
         default:  why = "See the code above; dmesg has the detail.";    break;
     }
     puts_center(why,14,BODY_FG,BODY_BG);
@@ -937,6 +985,7 @@ void iso_install_wizard(void){
         }
         int c=keyboard_waitchar();
         if(c==27){
+            if(from_system()){ havendos_install_image_release(); return; }
             machine_reset();
         }
 

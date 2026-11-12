@@ -6,7 +6,14 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.3 Beta "Gaia"
+## Current version: 0.9.4 Beta "Prometheus"
+
+**0.9.4.** **An installed HavenDOS can install HavenDOS.** `install`, or
+the desktop's Install icon, opens the full installer. It copies the
+running system's own `/boot/havendos.elf` onto another disk, such as a
+USB stick, and refuses the disk it is running from. A UEFI boot entry is
+not needed: the HP's firmware adds one itself.
+[Changelog](changelogs/CHANGELOG-v0.9.4.md).
 
 **0.9.3.** **An install larger than 2047 MB is FAT32 now**, up to 32 GB.
 Before, every install was a 2047 MB FAT16 volume, whatever the size of the
@@ -144,11 +151,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.3.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.4.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.3.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.4.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

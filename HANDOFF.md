@@ -1,9 +1,40 @@
 # HavenDOS — handoff, 12 November 2026
 
-Current release: **v0.9.3** (channel Beta, codename "Gaia"). Paste
+Current release: **v0.9.4** (channel Beta, codename "Prometheus"). Paste
 this file into a new chat to pick up where this left off.
 
-## START HERE: 0.9.3 "GAIA" — FAT32 INSTALLS
+## START HERE: 0.9.4 "PROMETHEUS" — `install` FROM AN INSTALLED SYSTEM
+
+- **An installed system installs itself.** `fs/install.c`'s
+  `image_acquire()` uses the embedded image if this kernel has one;
+  otherwise it reads `/boot/havendos.elf` via `fs/sysvol.c` into a pmm
+  buffer, cached until `havendos_install_image_release()`.
+- **It refuses the disk it runs from:** `havendos_install_target_is_self()`
+  calls `inst_disk_is_boot()`, which is `blk_boot_dev()`. Additive returns
+  `INSTADD_E_SELF` (-18), whole-disk returns -16, and the picker shows
+  `DMODE_SELF`.
+- **The wizard knows where it is running.** `from_system()` gives it a
+  different welcome screen; ESC returns, and the done screen returns
+  instead of rebooting.
+- **The desktop Install app** now just runs `iso_install_wizard()`. Its
+  old whole-disk installer and progress bar are gone.
+- **Tests:**
+  - `test_installadd`: 200
+  - `check_installadd_suite.py`: 34/34
+  - `harness/selfhost.py` (new, QEMU): 14/14. A FAT32 system installs onto
+    a USB stick, the kernels match, and the stick boots.
+- **NVRAM boot entry: dropped.** Kyan's HP adds one by itself.
+- **Limits:**
+  - `drivers/ata.c` drives one IDE disk only.
+  - The system disk is chosen by bus preference, so a stick copy booted on
+    the HP mounts the NVMe's volume. The fix is a volume serial on the
+    kernel cmdline.
+- **Next:**
+  - Hephaestus (0.9.5): port the boxed apps to the real grid.
+  - Optimisations: the desktop's once-a-second full repaint; hub
+    hot-plug.
+
+## 0.9.3 "GAIA" — FAT32 INSTALLS
 
 Kyan had no monitor (12 Nov) and asked for the RM-1003 items: app port
 wave 2 (Hephaestus), the FAT32 formatter (Gaia) and Prometheus, plus
@@ -3097,9 +3128,11 @@ Left, and each has its reason:
 Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
-## Testing, as of 0.9.3
+## Testing, as of 0.9.4
 
-**6896 of 6896 checks across 65 suites** (0.9.3: `test_fat32sys` 112 new,
+**6916 of 6916 checks across 65 suites** (0.9.4: `test_installadd`
+180 -> 200; `check_installadd_suite.py` 34/34; QEMU `selfhost.py` 14/14).
+As of 0.9.3: **6896 of 6896 checks across 65 suites** (0.9.3: `test_fat32sys` 112 new,
 `test_installadd` 151 -> 180, `test_wholedisk_size` 76 -> 124,
 `test_fat16gpt` 44 -> 56; `check_fat32sys_suite.py` 18/18,
 `check_installadd_suite.py` 30/30; QEMU `uefi_dualboot.py` at 7/8/12 GB,

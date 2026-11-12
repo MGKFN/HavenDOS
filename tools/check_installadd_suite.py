@@ -237,10 +237,31 @@ BUGS = [
      "           || !v32_put(",
      "        if(!v32_put("),
 
+    # ── v0.9.4 "Prometheus": the self-hosting install ───────────────
+    ("an installed system may install over its own disk",
+     "the running system wipes the volume it reads its settings from",
+     "    if(havendos_install_target_is_self(disk))  return INSTADD_E_SELF;",
+     "    /* (no self check) */"),
+
+    ("the system's kernel is read again on every call",
+     "every disk the picker plans reads megabytes off the system volume",
+     "    if(s_img_heap && s_img) return 1;          /* already read this session */",
+     "    havendos_install_image_release();"),
+
+    ("a /boot/havendos.elf without ELF magic is installed anyway",
+     "the copy is a disk that GRUB loads and multiboot rejects",
+     "    if(n <= 0 || (uint32_t)n >= IMG_MAX || !elf_magic(s_img_heap, (uint32_t)n)){",
+     "    if(n <= 0 || (uint32_t)n >= IMG_MAX){"),
+
+    ("the embedded image wins even when there is none",
+     "a pass-1 kernel installs a 0-byte kernel instead of its own",
+     "    if(embedded_ok()) return HAVENDOS_IMG_EMBEDDED;",
+     "    if(1) return HAVENDOS_IMG_EMBEDDED;"),
+
     ("the FAT32 kernel is written to the root",
      "GRUB's multiboot /boot/havendos.elf finds nothing",
-     "        if(!v32_put(\"/BOOT/HAVENDOS.ELF\", kernel_elf_data, kernel_elf_size)",
-     "        if(!v32_put(\"/HAVENDOS.ELF\", kernel_elf_data, kernel_elf_size)"),
+     "        if(!v32_put(\"/BOOT/HAVENDOS.ELF\", s_img, s_img_size)",
+     "        if(!v32_put(\"/HAVENDOS.ELF\", s_img, s_img_size)"),
 ]
 
 

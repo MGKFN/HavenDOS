@@ -398,29 +398,109 @@ static void build_part_entry(uint8_t *e, uint8_t status, uint8_t type,
     e[15]=(uint8_t)((lba_count>>24)  &0xFF);
 }
 
-/* Can this copy of HavenDOS write a kernel onto a disk?
+/* ── WHERE THE KERNEL TO INSTALL COMES FROM (v0.9.4 "Prometheus") ──────
  *
- * Only the ISO's kernel can.  The build is two-pass: pass 1 produces a kernel
- * with no embedded image, pass 2 embeds that pass-1 kernel and is what ships
- * on the ISO - so the kernel the installer copies onto a disk, and therefore
- * the one an installed system runs, is the pass-1 one, which carries no image
- * of its own.  A second embedding would have to contain the first, which is
- * why it is not simply done.
+ * Until 0.9.4 only the ISO's kernel could install. The build is two-pass:
+ * pass 1 produces a kernel with no embedded image, pass 2 embeds that
+ * pass-1 kernel and is what ships on the ISO -- so the kernel an installed
+ * system runs carries no image of its own, and a second embedding would
+ * have to contain the first. Running `install` on an installed system
+ * once destroyed it and reported "code -8"; since then it refused.
  *
- * This used to be discovered at step 7 of 9, by which point the disk had been
- * repartitioned, formatted and written to.  Running `install` on an installed
- * system destroyed it and reported "code -8".  The check is a precondition
- * now, and havendos_install_to_drive() refuses before touching anything.
- */
-int havendos_install_image_available(void)
-{
+ * But an installed system HAS a kernel it can install: the one it booted
+ * from, /boot/havendos.elf on its own volume. RM-1003 asked for "a system
+ * that can install itself", and that file is the answer -- it is exactly
+ * what the ISO's installer would have written there, or what `update`
+ * wrote since. So there are two sources now, in this order:
+ *
+ *   IMG_EMBEDDED  the image this kernel carries (the ISO's kernel)
+ *   IMG_SYSTEM    /boot/havendos.elf, read off the system volume through
+ *                 fs/sysvol.c -- FAT16 or FAT32, and the system volume
+ *                 even while the installer has the ESP mounted
+ *
+ * The system copy is read ONCE into memory from the physical allocator,
+ * the way fs/update.c stages a kernel, checked for the ELF magic, and kept
+ * until havendos_install_image_release() -- the installer screens plan
+ * every disk with a dry run and each would otherwise read it again. */
+#include "sysvol.h"
+#define IMG_PATH     "/boot/havendos.elf"
+#define IMG_MAX      (8u * 1024u * 1024u)
+#define IMG_BLOCKS   (IMG_MAX / 4096u)
+
+extern void *pmm_alloc_contig(uint32_t nblocks);
+extern void  pmm_free_contig(void *p, uint32_t nblocks);
+
+static const uint8_t *s_img      = 0;
+static uint32_t       s_img_size = 0;
+static uint8_t       *s_img_heap = 0;      /* ours to free, when IMG_SYSTEM */
+
+static int elf_magic(const uint8_t *d, uint32_t n){
+    return n >= 52 && d[0] == 0x7F && d[1] == 'E' && d[2] == 'L' && d[3] == 'F';
+}
+
+static int embedded_ok(void){
 #if KERNEL_ELF_AVAILABLE
-    return (kernel_elf_size >= 52 &&
-            kernel_elf_data[0] == 0x7F && kernel_elf_data[1] == 'E' &&
-            kernel_elf_data[2] == 'L'  && kernel_elf_data[3] == 'F');
+    return elf_magic(kernel_elf_data, kernel_elf_size);
 #else
     return 0;
 #endif
+}
+
+void havendos_install_image_release(void){
+    if(s_img_heap) pmm_free_contig(s_img_heap, IMG_BLOCKS);
+    s_img_heap = 0; s_img = 0; s_img_size = 0;
+}
+
+/* Fill s_img/s_img_size. 1 if there is an image to install. */
+static int image_acquire(void){
+    int n;
+    if(embedded_ok()){
+#if KERNEL_ELF_AVAILABLE
+        havendos_install_image_release();
+        s_img = kernel_elf_data; s_img_size = kernel_elf_size;
+        return 1;
+#endif
+    }
+    if(s_img_heap && s_img) return 1;          /* already read this session */
+    if(sysvol_kind() == SYSVOL_NONE) return 0;
+    if(!sysvol_exists(IMG_PATH)) return 0;
+    s_img_heap = (uint8_t *)pmm_alloc_contig(IMG_BLOCKS);
+    if(!s_img_heap) return 0;
+    n = sysvol_read(IMG_PATH, (char *)s_img_heap, IMG_MAX);
+    /* == IMG_MAX could be a truncation: refused rather than installed. */
+    if(n <= 0 || (uint32_t)n >= IMG_MAX || !elf_magic(s_img_heap, (uint32_t)n)){
+        havendos_install_image_release();
+        return 0;
+    }
+    s_img = s_img_heap; s_img_size = (uint32_t)n;
+    return 1;
+}
+
+int havendos_install_image_source(void){
+    if(embedded_ok()) return HAVENDOS_IMG_EMBEDDED;
+    if(image_acquire()) return HAVENDOS_IMG_SYSTEM;
+    return HAVENDOS_IMG_NONE;
+}
+
+/* Kept for its callers: "is there anything to install?" */
+int havendos_install_image_available(void){
+    return havendos_install_image_source() != HAVENDOS_IMG_NONE;
+}
+
+/* ── NOT ONTO THE DISK THE SYSTEM IS RUNNING FROM ──────────────────────
+   An installed system can install now, and the disk it is most likely to
+   be pointed at is the one in front of it. A whole-disk install there
+   wipes the volume the running kernel reads its settings from, mid-run;
+   an additive one on a GPT disk is already refused as INSTADD_E_ALREADY,
+   but an MBR system disk would reach the whole-disk path. So both refuse,
+   by asking fs/blkdev.c which disk the system volume was mounted from --
+   the same question fat16_init() and fat32_init() ask. */
+int havendos_install_target_is_self(int disk){
+    extern int inst_disk_is_boot(int);
+    extern int boot_is_live(void);
+    if(boot_is_live()) return 0;
+    if(sysvol_kind() == SYSVOL_NONE) return 0;
+    return inst_disk_is_boot(disk);
 }
 
 /* The whole-disk install's grub.cfg, shared by the FAT16 and FAT32 paths.
@@ -464,7 +544,9 @@ int havendos_install_to_drive(int disk_idx,
 
     if(disk_idx<0||disk_idx>=inst_disk_count()) return -1;
     /* Before the disk is touched, not after it has been formatted. */
-    if(!havendos_install_image_available()) return -11;
+    if(!image_acquire()) return -11;
+    /* v0.9.4: an installed system may install -- not over itself. */
+    if(havendos_install_target_is_self(disk_idx)) return -16;
     /* A live session repartitions nothing, and this is the lowest point it
        can be stopped -- below every UI, so a new caller cannot reach the
        destructive path by forgetting to ask.  The ISO's ordinary entries
@@ -675,15 +757,10 @@ int havendos_install_to_drive(int disk_idx,
                     (uint32_t)strlen(s_wd_cfg))){ v32_close(); return -7; }
         step++;
         if(cb) cb(step,total,"Copying HavenDOS kernel (please wait)...");
-#if KERNEL_ELF_AVAILABLE
-        if(kernel_elf_size<52||kernel_elf_data[0]!=0x7F||kernel_elf_data[1]!='E'
-           ||kernel_elf_data[2]!='L'||kernel_elf_data[3]!='F'
-           ||!v32_put("/BOOT/HAVENDOS.ELF",kernel_elf_data,kernel_elf_size)){
+        if(!elf_magic(s_img,s_img_size)
+           ||!v32_put("/BOOT/HAVENDOS.ELF",s_img,s_img_size)){
             v32_close(); return -8;
         }
-#else
-        v32_close(); return -8;
-#endif
         v32_close();     /* flushes the FAT and FSInfo before step 8 reads */
         step++;
     } else {
@@ -716,9 +793,8 @@ int havendos_install_to_drive(int disk_idx,
         /* ── 7: havendos.elf ─────────────────────────────────────────── */
         if(cb) cb(step,total,"Copying HavenDOS kernel (please wait)...");
         {
-#if KERNEL_ELF_AVAILABLE
-            const uint8_t *kdata=kernel_elf_data;
-            uint32_t ksize=kernel_elf_size;
+            const uint8_t *kdata=s_img;
+            uint32_t ksize=s_img_size;
             if(ksize<52||kdata[0]!=0x7F||kdata[1]!='E'||
                kdata[2]!='L'||kdata[3]!='F') return -8;
             /* Enable sub-step progress so the screen updates during the
@@ -730,9 +806,7 @@ int havendos_install_to_drive(int disk_idx,
             int wok=write_file(boot_clust,"HAVENDOS","ELF",kdata,ksize);
             s_progress_cb = 0;
             if(!wok) return -8;
-#else
-            return -8;
-#endif
+
         }
         step++;
     }
@@ -866,6 +940,8 @@ const char *havendos_install_add_strerror(int code)
     case INSTADD_E_ALREADY:  return "HavenDOS is already installed on this "
                                     "disk -- boot it instead, or use "
                                     "`update` to upgrade it";
+    case INSTADD_E_SELF:     return "this is the disk HavenDOS is running "
+                                    "from -- install onto another disk";
     default:                 return "unknown error";
     }
 }
@@ -892,6 +968,7 @@ const char *havendos_install_add_shortstr(int code)
     case INSTADD_E_VERIFY:   return "read back wrong";
     case INSTADD_E_VOLSPACE: return "too small for the kernel";
     case INSTADD_E_ALREADY:  return "HavenDOS already installed";
+    case INSTADD_E_SELF:     return "running from this disk";
     default:                 return "unknown error";
     }
 }
@@ -948,8 +1025,10 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
     rep->disk = disk;
 
     if(disk < 0 || disk >= inst_disk_count())  return INSTADD_E_DISK;
-    if(!havendos_install_image_available())    return INSTADD_E_NOIMAGE;
-    rep->kernel_bytes = kernel_elf_size;
+    if(!image_acquire())                       return INSTADD_E_NOIMAGE;
+    rep->kernel_bytes = s_img_size;
+    rep->image_from_system = (s_img_heap != 0);
+    if(havendos_install_target_is_self(disk))  return INSTADD_E_SELF;
 
     /* A live session may look. It may not write -- same rule as the
        whole-disk path, and placed the same way: below every UI, so a new
@@ -1183,7 +1262,7 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
             v32_close();                        return INSTADD_E_FILES;
         }
         if(cb) cb(step, total, "Copying HavenDOS kernel (please wait)...");
-        if(!v32_put("/BOOT/HAVENDOS.ELF", kernel_elf_data, kernel_elf_size)
+        if(!v32_put("/BOOT/HAVENDOS.ELF", s_img, s_img_size)
            || !v32_put("/HAVENDOS.TXT", s_add_marker,
                        (uint32_t)strlen(s_add_marker))){
             v32_close();                        return INSTADD_E_FILES;
@@ -1212,8 +1291,7 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
         s_progress_step  = step;
         s_progress_total = total;
         s_progress_label = "Copying HavenDOS kernel...";
-        r = write_file(boot_clust, "HAVENDOS", "ELF",
-                       kernel_elf_data, kernel_elf_size);
+        r = write_file(boot_clust, "HAVENDOS", "ELF", s_img, s_img_size);
         s_progress_cb = 0;
         if(!r)                                  return INSTADD_E_FILES;
 

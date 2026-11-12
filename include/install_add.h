@@ -131,6 +131,7 @@ typedef struct {
     int          disk_n_unused;    /* unknown, empty partitions seen   */
 
     uint32_t kernel_bytes;
+    int      image_from_system;   /* v0.9.4: copied from /boot, not embedded */
 } inst_add_t;
 
 #define INSTADD_OK            0
@@ -163,6 +164,20 @@ typedef struct {
    and the install into it was refused. Two different problems with
    two different answers, so two codes. */
 #define INSTADD_E_ESPMAKE  (-17)
+/* v0.9.4: an installed system is installing, and this is its own disk. */
+#define INSTADD_E_SELF     (-18)
+
+/* v0.9.4 "Prometheus": where the kernel an install writes comes from.
+   EMBEDDED is the image the ISO's kernel carries; SYSTEM is the running
+   system's own /boot/havendos.elf, read through fs/sysvol.c. See
+   fs/install.c. */
+#define HAVENDOS_IMG_NONE      0
+#define HAVENDOS_IMG_EMBEDDED  1
+#define HAVENDOS_IMG_SYSTEM    2
+int  havendos_install_image_source(void);
+int  havendos_install_image_available(void);
+void havendos_install_image_release(void);   /* the SYSTEM copy's memory */
+int  havendos_install_target_is_self(int disk);
 
 /* dry_run != 0: every check, the whole report, not one byte written.
    rep may not be NULL -- the report is the deliverable, not a courtesy. */

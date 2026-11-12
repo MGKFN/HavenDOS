@@ -2879,38 +2879,9 @@ static void app_dashboard(void){
 }
 
 /* ── Install App ─────────────────────────────────────────────── */
-/* Where the progress block is drawn.  The installer window moved and resized
-   in the 0.8 redesign, and a callback with the old coordinates baked in would
-   have painted its bar across the middle of the new one. */
-static int g_prog_x = 27, g_prog_y = 17, g_prog_w = 30;
-
-static void install_progress_gui(int step, int total, const char *msg){
-    theme_t *th=ui_theme();
-    int bar_w = g_prog_w; if(bar_w > 60) bar_w = 60; if(bar_w < 8) bar_w = 8;
-    int filled = (total>0) ? (step*bar_w/total) : 0;
-    char bar[61];
-    for(int i=0;i<bar_w;i++) bar[i]=(i<filled)?'=':(i==filled?'>':'.');
-    bar[bar_w]=0;
-    vga_puts_at(bar, g_prog_x, g_prog_y, th->accent, th->win_bg);
-
-    /* Status line, padded so a shorter message erases the one before it */
-    char line[61];
-    int ml=(int)strlen(msg); if(ml>bar_w) ml=bar_w;
-    for(int i=0;i<bar_w;i++) line[i]=(i<ml)?msg[i]:' ';
-    line[bar_w]=0;
-    vga_puts_at(line, g_prog_x, g_prog_y-1, th->win_fg, th->win_bg);
-
-    /* step / total */
-    char sc[16]; char sa[8]; char sb[8];
-    utoa((uint32_t)step,sa,10); utoa((uint32_t)total,sb,10);
-    int pi=0;
-    for(int i=0;sa[i];i++) sc[pi++]=sa[i];
-    sc[pi++]='/';
-    for(int i=0;sb[i];i++) sc[pi++]=sb[i];
-    sc[pi++]=' '; sc[pi++]=' ';
-    sc[pi]=0;
-    vga_puts_at(sc, g_prog_x, g_prog_y+1, VGA_DARK_GREY, th->win_bg);
-}
+/* v0.9.4: the progress bar that lived here went with the app's own
+   whole-disk installer; app_install() hands over to the ISO's wizard,
+   which draws its own. */
 
 /* ── Notification Center ──────────────────────────────────────────────────
    v0.8.8.7: THE GEOMETRY IS DERIVED NOW.
@@ -3331,9 +3302,9 @@ static void app_install(void){
     if(!havendos_install_image_available()){
         vga_puts_at("This copy cannot install HavenDOS.",CX,INST_ROW(1),
                     VGA_YELLOW,th->win_bg);
-        vga_puts_at("An installed system runs a kernel that does",CX,INST_ROW(3),th->win_fg,th->win_bg);
-        vga_puts_at("not carry an image of itself, so there is",CX,INST_ROW(4),th->win_fg,th->win_bg);
-        vga_puts_at("nothing here to write onto a disk.",CX,INST_ROW(5),th->win_fg,th->win_bg);
+        vga_puts_at("There is no kernel image in this kernel and",CX,INST_ROW(3),th->win_fg,th->win_bg);
+        vga_puts_at("no readable /boot/havendos.elf on the",CX,INST_ROW(4),th->win_fg,th->win_bg);
+        vga_puts_at("system volume to copy.",CX,INST_ROW(5),th->win_fg,th->win_bg);
         vga_puts_at("Boot the HavenDOS ISO to install or",CX,INST_ROW(7),th->win_fg,th->win_bg);
         vga_puts_at("reinstall; it starts the installer itself.",CX,INST_ROW(8),th->win_fg,th->win_bg);
         vga_puts_at("Your disk has not been touched.",CX,INST_ROW(10),VGA_LIGHT_GREEN,th->win_bg);
@@ -3341,204 +3312,21 @@ static void app_install(void){
         keyboard_waitchar(); return;
     }
 
-    int n = inst_disk_scan();
-    if(n <= 0){
-        vga_puts_at("No disk found.",CX,INST_ROW(1),VGA_LIGHT_RED,th->win_bg);
-        vga_puts_at("Nothing was detected on either bus:",CX,INST_ROW(3),th->win_fg,th->win_bg);
-        vga_puts_at("  .  VirtIO block",CX,INST_ROW(4),VGA_DARK_GREY,th->win_bg);
-        vga_puts_at("  .  ATA / SATA on the legacy ports",CX,INST_ROW(5),VGA_DARK_GREY,th->win_bg);
-        vga_puts_at("Attach a disk, or set the controller to",CX,INST_ROW(7),th->win_fg,th->win_bg);
-        vga_puts_at("Legacy IDE in firmware setup, and reboot.",CX,INST_ROW(8),th->win_fg,th->win_bg);
-        vga_puts_at("Press any key to return.",CX,INST_ROW(10),VGA_DARK_GREY,th->win_bg);
-        keyboard_waitchar(); return;
+    /* ── v0.9.4 "Prometheus": THE ISO'S INSTALLER, FROM HERE ─────────
+       This app used to carry its own whole-disk installer: a disk list,
+       a YES prompt, havendos_install_to_drive(). It could not install
+       beside Windows (the additive path never reached it), it labelled
+       every non-ATA disk "(VirtIO)", and it could only ever run on the
+       ISO, because an installed system had nothing to install. Now an
+       installed system installs its own /boot/havendos.elf, so the app
+       hands over to the one installer -- the same previews, the same
+       refusals (including the disk it is running from), both paths. */
+    {
+        extern void iso_install_wizard(void);
+        extern void havendos_install_image_release(void);
+        iso_install_wizard();
+        havendos_install_image_release();
     }
-
-    /* ── 1: pick a disk ─────────────────────────────────────────── */
-    int sel=0;
-    if(n>8) n=8;
-    while(1){
-        vga_puts_at("Choose a disk to install on.",CX,INST_ROW(0),th->win_fg,th->win_bg);
-        vga_puts_at("Everything on it will be erased.",CX,INST_ROW(1),VGA_LIGHT_RED,th->win_bg);
-        vga_puts_at("  #  Size      Bus        Location",CX,INST_ROW(3),VGA_DARK_GREY,th->win_bg);
-        for(int x=CX;x<WX+WW-2;x++)
-            vga_putchar_at('-',x,INST_ROW(4),VGA_DARK_GREY,th->win_bg);
-
-        for(int i=0;i<n;i++){
-            int s=(i==sel);
-            vga_color_t fg = s?th->win_bg:th->win_fg;
-            vga_color_t bg = s?th->accent:th->win_bg;
-            char row[48]; int p=0;
-            for(int k=0;k<44;k++) row[k]=' ';
-            row[p++]= s?'>':' '; row[p++]=' ';
-            char ns[6]; utoa((uint32_t)i,ns,10);
-            for(int k=0;ns[k];k++) row[p++]=ns[k];
-            p=5;
-            uint32_t mb=(uint32_t)(inst_disk_sectors(i)/2048);
-            char ms[12]; utoa(mb,ms,10);
-            for(int k=0;ms[k];k++) row[p++]=ms[k];
-            row[p++]='M'; row[p++]='B';
-            p=15;
-            /* v0.8.5.4 -- this knew about legacy ATA and called
-               everything else VirtIO, so an NVMe or AHCI disk was
-               announced as "(VirtIO)" on the screen that asks for YES
-               before writing. One function names a bus now; see
-               include/instdisk.h. */
-            const char *bus = inst_disk_bus_name(i);
-            for(int k=0;bus[k];k++) row[p++]=bus[k];
-            p=26;
-            const char *bl="bus "; for(int k=0;bl[k];k++) row[p++]=bl[k];
-            char bs[6]; utoa(inst_disk_bus(i),bs,10);
-            for(int k=0;bs[k];k++) row[p++]=bs[k];
-            const char *dl=" dev "; for(int k=0;dl[k];k++) row[p++]=dl[k];
-            char ds[6]; utoa(inst_disk_dev(i),ds,10);
-            for(int k=0;ds[k];k++) row[p++]=ds[k];
-            while(p<44) row[p++]=' ';
-            row[44]=0;
-            vga_puts_at(row,CX,INST_ROW(5+i),fg,bg);
-        }
-
-        uint32_t selmb=(uint32_t)(inst_disk_sectors(sel)/2048);
-        INST_WIPE(6+n, 8+n);
-        if(selmb<15)
-            vga_puts_at("Too small - HavenDOS needs 15MB.",CX,INST_ROW(6+n),
-                        VGA_LIGHT_RED,th->win_bg);
-        else
-            /* 48 columns is all that fits between the window borders; the
-               longer wording spilled past the right edge and left its tail
-               on screen, outside every area this app ever clears. */
-            vga_puts_at("Up/Down choose   Enter continue   ESC cancel",
-                        CX,INST_ROW(6+n),VGA_DARK_GREY,th->win_bg);
-
-        int k=keyboard_waitchar();
-        if(k==27) return;
-        if(k==0x148 && sel>0) sel--;
-        else if(k==0x150 && sel<n-1) sel++;
-        else if((k=='\n'||k=='\r') && selmb>=15) break;
-    }
-
-    /* ── 2: confirm ─────────────────────────────────────────────── */
-    INST_WIPE(0, WH-4);
-    vga_puts_at("This will be written to disk ",CX,INST_ROW(0),th->win_fg,th->win_bg);
-    { char ns[6]; utoa((uint32_t)sel,ns,10);
-      vga_puts_at(ns,CX+29,INST_ROW(0),th->accent,th->win_bg); }
-    vga_puts_at(inst_disk_is_ata(sel)?"(ATA/SATA)":"(VirtIO)",CX+31,INST_ROW(0),
-                VGA_LIGHT_GREEN,th->win_bg);
-
-    vga_puts_at("Sector 0        MBR and GRUB boot code",CX+2,INST_ROW(2),VGA_DARK_GREY,th->win_bg);
-    vga_puts_at("Sectors 1-2047  GRUB core image",       CX+2,INST_ROW(3),VGA_DARK_GREY,th->win_bg);
-    {   extern int      instadd_fs_for(uint64_t);
-        extern uint32_t havendos_wholedisk_sectors(uint64_t);
-        extern uint64_t inst_disk_sectors(int);
-        /* v0.9.3: FAT32 above 2047 MB -- asked, not assumed. */
-        int f = instadd_fs_for(havendos_wholedisk_sectors(inst_disk_sectors(sel)));
-        vga_puts_at(f == 32 ? "Sector 2048+    FAT32 partition"
-                            : "Sector 2048+    FAT16 partition",
-                    CX+2,INST_ROW(4),VGA_DARK_GREY,th->win_bg); }
-    vga_puts_at("                  /boot/grub/grub.cfg", CX+2,INST_ROW(5),VGA_DARK_GREY,th->win_bg);
-    vga_puts_at("                  /boot/havendos.elf",  CX+2,INST_ROW(6),VGA_DARK_GREY,th->win_bg);
-    vga_puts_at("                  /havendos.txt",       CX+2,INST_ROW(7),VGA_DARK_GREY,th->win_bg);
-
-    vga_puts_at("EVERYTHING ALREADY ON THIS DISK IS LOST.",CX,INST_ROW(9),
-                VGA_LIGHT_RED,th->win_bg);
-    vga_puts_at("Type YES to confirm:",CX,INST_ROW(11),th->win_fg,th->win_bg);
-    for(int i=0;i<7;i++)
-        vga_putchar_at('_',CX+21+i,INST_ROW(11),VGA_DARK_GREY,th->win_bg);
-    vga_puts_at("ESC to go back.",CX,INST_ROW(13),VGA_DARK_GREY,th->win_bg);
-    vga_set_cursor(CX+21,INST_ROW(11));
-
-    char conf[8]; int ci=0; conf[0]=0;
-    while(1){
-        int k=keyboard_waitchar();
-        if(k==27) return;
-        if(k=='\n'||k=='\r') break;
-        if((k=='\b'||k==127)&&ci>0){
-            ci--; conf[ci]=0;
-            vga_putchar_at('_',CX+21+ci,INST_ROW(11),VGA_DARK_GREY,th->win_bg);
-            vga_set_cursor(CX+21+ci,INST_ROW(11));
-        } else if(ci<7){
-            char uc=(k>='a'&&k<='z')?(char)(k-32):(char)k;
-            if(uc>='A'&&uc<='Z'){
-                conf[ci++]=uc; conf[ci]=0;
-                vga_putchar_at(uc,CX+20+ci,INST_ROW(11),th->accent,th->win_bg);
-                vga_set_cursor(CX+21+ci,INST_ROW(11));
-            }
-        }
-    }
-    if(strcmp(conf,"YES")!=0){
-        INST_WIPE(13,13);
-        vga_puts_at("Cancelled.",CX,INST_ROW(13),VGA_DARK_GREY,th->win_bg);
-        sleep_ms(900); return;
-    }
-
-    /* ── 3: run it ──────────────────────────────────────────────── */
-    INST_WIPE(0, WH-4);
-    vga_puts_at("Installing HavenDOS",CX,INST_ROW(2),th->win_fg,th->win_bg);
-    vga_puts_at("Do not power the machine off.",CX,INST_ROW(3),VGA_DARK_GREY,th->win_bg);
-    g_prog_x = CX; g_prog_y = INST_ROW(6); g_prog_w = WW-6;
-    int rc = havendos_install_to_drive(sel, install_progress_gui);
-
-    /* ── 4: result ──────────────────────────────────────────────── */
-    INST_WIPE(0, WH-4);
-    if(rc==0){
-        vga_puts_at("Installed.",CX,INST_ROW(2),VGA_LIGHT_GREEN,th->win_bg);
-        vga_puts_at("HavenDOS is on the disk and the boot",CX,INST_ROW(4),th->win_fg,th->win_bg);
-        vga_puts_at("loader is written. Remove the install",CX,INST_ROW(5),th->win_fg,th->win_bg);
-        vga_puts_at("media before the next boot.",CX,INST_ROW(6),th->win_fg,th->win_bg);
-        vga_puts_at("S = shut down     any key = keep running",CX,INST_ROW(9),
-                    th->accent,th->win_bg);
-        int c=keyboard_waitchar();
-        if(c=='s'||c=='S'||c=='1'){
-            vga_puts_at("Shutting down...",CX,INST_ROW(11),VGA_DARK_GREY,th->win_bg);
-            sleep_ms(600);
-            machine_poweroff();
-        }
-        return;
-    }
-
-    vga_puts_at("Install failed.",CX,INST_ROW(2),VGA_LIGHT_RED,th->win_bg);
-    /* v0.8.5.4 -- this table stopped at -11 and the three codes past it
-       are the ones that matter most. fs/install.c puts them "below every
-       UI so a future caller cannot reach step 1 by forgetting to check":
-       a live session, an NVMe namespace with no write path, and a disk
-       carrying a GPT whose table this installer would zero. All three
-       came out as "unknown error", which is the one answer that helps
-       nobody -- a person watching -14 on a dual-boot laptop needs to be
-       told it REFUSED, not that something went wrong.
-
-       The whole-disk installer's codes and the additive installer's are
-       two different numberings that overlap. shell/iso_installer.c says
-       so in as many words and keeps them apart; this screen did not, and
-       -9 means "a file write failed" in one and "the disk did not read
-       back correctly" in the other. It serves the whole-disk path, so it
-       speaks only that numbering, and says which numbering it is using
-       for anything it does not recognise. */
-    const char *reason="unknown error";
-    if(rc==-1) reason="no such disk";
-    else if(rc==-2) reason="disk is smaller than 15MB";
-    else if(rc==-3) reason="could not write the MBR";
-    else if(rc==-4) reason="could not write the GRUB core image";
-    else if(rc==-5) reason="could not format the HavenDOS partition";
-    else if(rc==-6) reason="could not create /boot";
-    else if(rc==-7) reason="could not write grub.cfg";
-    else if(rc==-8) reason="could not copy the kernel";
-    else if(rc==-9) reason="the disk did not read back correctly";
-    else if(rc==-10) reason="the boot sector patch did not persist";
-    else if(rc==-11) reason="this copy carries no installable kernel image";
-    else if(rc==-12) reason="a live session can preview but not write -- "
-                            "boot without the 'live' option";
-    else if(rc==-13) reason="there is no write path to an NVMe namespace yet";
-    else if(rc==-14) reason="this disk has a GPT -- use the additive install, "
-                            "which adds a partition instead";
-    else if(rc==-15) reason="no FAT16 or FAT32 layout fits that disk";
-    vga_puts_at(reason,CX,INST_ROW(4),th->win_fg,th->win_bg);
-    { char erc[8]; utoa((uint32_t)(-rc),erc,10);
-      vga_puts_at("code",CX,INST_ROW(5),VGA_DARK_GREY,th->win_bg);
-      vga_puts_at("-",CX+5,INST_ROW(5),VGA_DARK_GREY,th->win_bg);
-      vga_puts_at(erc,CX+6,INST_ROW(5),VGA_DARK_GREY,th->win_bg); }
-    vga_puts_at("Nothing further was written.",CX,INST_ROW(7),VGA_DARK_GREY,th->win_bg);
-    vga_puts_at("Press any key to return.",CX,INST_ROW(9),VGA_DARK_GREY,th->win_bg);
-    keyboard_waitchar();
-
     #undef INST_ROW
     #undef INST_WIPE
 }

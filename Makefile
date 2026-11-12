@@ -446,7 +446,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tia tests/test_installadd.c && \
-	  python3 tools/run_suite.py --name test_installadd --min 180 -- /tmp/hd_tia
+	  python3 tools/run_suite.py --name test_installadd --min 200 -- /tmp/hd_tia
 	@echo "── test_xhci ──────────────────────────────"
 	@echo "  xHCI against a controller that executes its commands"
 	@# -no-pie so a static ring's address still fits the uint32_t a

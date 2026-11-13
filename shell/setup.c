@@ -359,7 +359,9 @@ static void screen_addons(void){
 
 /* ── Screen 5: Summary ────────────────────────────────────────── */
 static void screen_summary(const char *uname, int is_admin, int theme_sel){
-    cls(); hdr("Ready",5);
+    /* 4, not 5: the screens are 0..4 here, 3..7 shown. 5 drew "Step 8 of
+       7" on the last screen of every first boot (v0.9.4.1). */
+    cls(); hdr("Ready",4);
 
     vga_puts_at("Setup complete. Here is your configuration:",17,4,VGA_LIGHT_CYAN,VGA_BLACK);
     for(int x=10;x<70;x++) vga_putchar_at('-',x,6,VGA_DARK_GREY,VGA_BLACK);

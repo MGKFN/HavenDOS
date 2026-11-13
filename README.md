@@ -6,7 +6,16 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.4 Beta "Prometheus"
+## Current version: 0.9.4.1 Beta "Prometheus"
+
+**0.9.4.1.** Fixes found while taking the 1.0 screenshots. On a FAT32
+install (anything over 2047 MB), files can now be saved in your home
+directory, and failed saves no longer report success. Also fixed:
+`edit` opens files in the current directory; `sysinfo`'s uptime and
+other padded numbers print correctly; `calc` understands `^`; the setup
+wizard no longer says "Step 8 of 7"; and Snake no longer warns about a
+working timer.
+[Changelog](changelogs/CHANGELOG-v0.9.4.1.md).
 
 **0.9.4.** **An installed HavenDOS can install HavenDOS.** `install`, or
 the desktop's Install icon, opens the full installer. It copies the
@@ -151,11 +160,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.4.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.4.1.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.4.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.4.1.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

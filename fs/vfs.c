@@ -59,6 +59,7 @@ extern int  fat32_exists(const char*);
 extern int  fat32_is_dir(const char*);
 extern int  fat32_mkdir(const char*);
 extern int  fat32_rename(const char*, const char*);
+extern int  fat32_exists(const char*);
 extern int  fat32_sys_begin(void);
 extern void fat32_sys_end(void);
 
@@ -73,6 +74,30 @@ extern void fat32_sys_end(void);
 
    A route refuses (-1) if there is no system volume to take a turn with,
    which is the same answer fs_borrowed() gives FAT16. */
+/* ── v0.9.4.1: PARENTS ARE MADE, AS ON FAT16 ───────────────────────
+   fat16_write_path() creates missing intermediate directories -- "the
+   shell hands us HOME/<user>/<file> for a home directory that may not
+   exist yet". fat32_write() does not, and nothing else creates HOME/<user>
+   on disk (kernel/main.c's setup_user_home() writes to the RAM disk). So
+   on every FAT32 install -- every install over 2047 MB since 0.9.3 --
+   `write notes.txt ...`, `mkdir projects` and the editor's save all
+   failed, because HOME/kyan did not exist. Found taking the 1.0 promo
+   screenshots: `ls` in a home directory where three files had just been
+   written showed nothing. Called with the system volume's turn held. */
+static void f32_make_parents(const char *path)
+{
+    char buf[128];
+    int i;
+    for (i = 0; path[i] && i < (int)sizeof buf - 1; i++) {
+        buf[i] = path[i];
+        if (path[i] == '/' && i > 0) {
+            buf[i] = 0;
+            if (!fat32_exists(buf)) fat32_mkdir(buf);
+            buf[i] = '/';
+        }
+    }
+}
+
 #define F32_SYS(call) do {                     \
         int r_;                                \
         if (!fat32_sys_begin()) return -1;     \
@@ -226,7 +251,20 @@ void vfs_refresh_fat32(void) {
  * target, bpkg installing into /apps.  It looked like a write that "worked"
  * and a read that came back empty. */
 int vfs_write(const char *name, const char *data, uint32_t size) {
-    if (using_fat32) { F32_SYS(fat32_write(name, data, size)); }
+    /* v0.9.4.1: the byte count on success, -1 on failure -- fs/fat16.c's
+       convention, which every caller of vfs_write() is written against.
+       fat32_write() returns 1 or 0, and this route passed that through:
+       on a FAT32 system a FAILED write returned 0, which the editor and
+       bpkg test as `>= 0` and so reported as saved, and `selftest` failed
+       "write returns byte count". Found by the 1.0 promo screenshots. */
+    if (using_fat32) {
+        int ok_;
+        if (!fat32_sys_begin()) return -1;
+        f32_make_parents(name);
+        ok_ = fat32_write(name, data, size) == 1;
+        fat32_sys_end();
+        return ok_ ? (int)size : -1;
+    }
     if (using_fat16 && fs_borrowed()) return -1;
     if (using_fat16) return has_dir(name) ? fat16_write_path(name, data, size)
                                           : fat16_write(name, data, size);
@@ -282,7 +320,14 @@ int vfs_rename(const char *old, const char *newname) {
 }
 
 int vfs_mkdir(const char *name) {
-    if (using_fat32) { F32_SYS(fat32_mkdir(name)); }
+    if (using_fat32) {
+        int r_;
+        if (!fat32_sys_begin()) return -1;
+        f32_make_parents(name);
+        r_ = fat32_mkdir(name);
+        fat32_sys_end();
+        return r_;
+    }
     if (using_fat16 && fs_borrowed()) return -1;
     if (using_fat16) return fat16_mkdir(name);
     if (using_fat12) return 0; /* FAT12 mkdir not implemented */

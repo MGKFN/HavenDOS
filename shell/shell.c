@@ -825,13 +825,28 @@ static int calc_number(void){
     while(*calc_p>='0'&&*calc_p<='9') v=v*10+(*calc_p++)-'0';
     return neg?-v:v;
 }
+/* v0.9.4.1: '^' is a power, right-associative (2^3^2 = 2^9), binding
+   tighter than * and /. It used to be an unknown character, and an unknown
+   character simply ended the expression: "(2 + 3) * 7 ^ 2" printed 35. */
+static int calc_power(void){
+    int b=calc_number();
+    while(*calc_p==' ') calc_p++;
+    if(*calc_p=='^'){
+        calc_p++;
+        int e=calc_power(), v=1;
+        if(e<0) return 0;
+        while(e-- > 0) v*=b;
+        return v;
+    }
+    return b;
+}
 static int calc_term(void){
-    int v=calc_number();
+    int v=calc_power();
     while(1){
         while(*calc_p==' ') calc_p++;
         if(*calc_p=='*'||*calc_p=='/'||*calc_p=='%'){
             char op=*calc_p++;
-            int r=calc_number();
+            int r=calc_power();
             if(op=='*') v*=r;
             else if(op=='/') v=(r?v/r:0);
             else v=(r?v%r:0);
@@ -851,9 +866,17 @@ static int calc_expr(void){
     }
     return v;
 }
+/* Where parsing stopped, if it stopped before the end: anything left is a
+   character the calculator does not understand, and the answer says so
+   rather than printing the value of the part before it. */
+static const char *calc_left;
 static int do_calc(const char *expr){
+    int v;
     calc_p=expr;
-    return calc_expr();
+    v=calc_expr();
+    while(*calc_p==' ') calc_p++;
+    calc_left = *calc_p ? calc_p : 0;
+    return v;
 }
 
 /* ================================================================
@@ -3534,13 +3557,16 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
             char expr[64]; strncpy(expr,arg1,63);
             if(arg2[0]){strncat(expr," ",63);strncat(expr,arg2,63);}
             int result=do_calc(expr);
-            vga_printf("%s = %d\n",expr,result);
+            if(calc_left)
+                vga_printf("calc: cannot read '%s' -- supports + - * / %% ^ ( )\n",calc_left);
+            else
+                vga_printf("%s = %d\n",expr,result);
         } else {
             vga_clear(); toast_clear();
             for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_CYAN);
             vga_puts_at(" HavenDOS Calculator  |  type expression, 'q' to quit ",
                         13,0,VGA_BLACK,VGA_CYAN);
-            vga_puts_at("Supports: + - * / % ( )",2,2,VGA_DARK_GREY,VGA_BLACK);
+            vga_puts_at("Supports: + - * / % ^ ( )",2,2,VGA_DARK_GREY,VGA_BLACK);
             vga_puts_at("Example:  3 + 4 * (2 - 1)",2,3,VGA_DARK_GREY,VGA_BLACK);
             vga_set_color(VGA_WHITE,VGA_BLACK);
             char cbuf[64]; int cy=5;
@@ -3693,7 +3719,12 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"man"))      cmd_man(arg1[0]?arg1:arg2);
     else if(!strcmp(cmd,"edit")||!strcmp(cmd,"notepad")){
         extern void shell_launch_editor(const char *fname);
-        shell_launch_editor(arg1);
+        /* v0.9.4.1: resolved against the working directory like every
+           other file command. `edit notes.txt` in HOME/kyan opened an
+           empty buffer for /notes.txt and saved it there -- next to
+           `cat notes.txt` showing the real file in the home directory. */
+        if(arg1[0]){ char fp[64]; make_path(fp,arg1); shell_launch_editor(fp); }
+        else shell_launch_editor(arg1);
     }
 
     else if(!strcmp(cmd,"notify")){
@@ -3796,7 +3827,7 @@ void shell_run(void){
     vga_set_color(VGA_DARK_GREY,VGA_BLACK);
     vga_set_color(VGA_DARK_GREY,VGA_BLACK);
     vga_puts("  Tab=complete  Up/Dn=history  Left/Right/Home/End=edit  ^R=search\n");
-    vga_puts("  .=pipe   new in 0.7.6: selftest  netstat -s  tlsinfo\n\n");
+    vga_puts("  .=pipe   try: neofetch  disk  usb  selftest  help\n\n");
     vga_set_color(VGA_WHITE,VGA_BLACK);
     vga_set_color(VGA_WHITE,VGA_BLACK);
 

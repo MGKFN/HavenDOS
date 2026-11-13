@@ -1336,17 +1336,47 @@ void vga_puts_at(const char *s, int x, int y, vga_color_t fg, vga_color_t bg){
 void vga_fill_row(int y, char c, vga_color_t fg, vga_color_t bg){
     for(int x=0;x<g_cols;x++)vga_putchar_at(c,x,y,fg,bg);
 }
+/* v0.9.4.1: flags and width. This handled exactly one character after the
+   '%', so "%02u" printed nothing for the '0', then the literal "2u" -- and
+   never consumed the argument, so every conversion after it printed the
+   wrong value. `sysinfo` showed "Uptime 0:2u:2u"; 18 format strings in the
+   tree use a width or a flag (%02u, %04x, %6d, %-16s, %02X ...). Found in
+   the 1.0 promo screenshots. Supported now: '-' and '0' flags, a width,
+   an ignored 'l', and %X. Precision is not used anywhere and not parsed. */
+static void pf_emit(const char *s, int width, int left, char pad){
+    int n = (int)strlen(s), i;
+    /* zero padding goes after a minus sign, not before it */
+    if(pad == '0' && !left && s[0] == '-' && n < width){
+        vga_putchar('-'); s++; width--; n--;
+    }
+    if(!left) for(i = n; i < width; i++) vga_putchar(pad);
+    vga_puts(s);
+    if(left)  for(i = n; i < width; i++) vga_putchar(' ');
+}
 void vga_printf(const char *fmt,...){
-    va_list args; va_start(args,fmt); char buf[32];
+    va_list args; va_start(args,fmt); char buf[34];
     while(*fmt){
-        if(*fmt=='%'){fmt++;
+        if(*fmt=='%'){
+            int left = 0, width = 0; char pad = ' ';
+            fmt++;
+            while(*fmt=='-' || *fmt=='0'){
+                if(*fmt=='-') left = 1; else pad = '0';
+                fmt++;
+            }
+            while(*fmt>='0' && *fmt<='9'){ width = width*10 + (*fmt-'0'); fmt++; }
+            while(*fmt=='l') fmt++;
+            if(left) pad = ' ';
             switch(*fmt){
-                case 'd':{ int v=va_arg(args,int); itoa(v,buf,10); vga_puts(buf); break;}
-                case 'u':{ uint32_t v=va_arg(args,uint32_t); utoa(v,buf,10); vga_puts(buf); break;}
-                case 'x':{ uint32_t v=va_arg(args,uint32_t); utoa(v,buf,16); vga_puts(buf); break;}
-                case 's':{ char *s=va_arg(args,char*); vga_puts(s?s:"(null)"); break;}
-                case 'c':{ vga_putchar((char)va_arg(args,int)); break;}
+                case 'd':{ int v=va_arg(args,int); itoa(v,buf,10); pf_emit(buf,width,left,pad); break;}
+                case 'u':{ uint32_t v=va_arg(args,uint32_t); utoa(v,buf,10); pf_emit(buf,width,left,pad); break;}
+                case 'x':{ uint32_t v=va_arg(args,uint32_t); utoa(v,buf,16); pf_emit(buf,width,left,pad); break;}
+                case 'X':{ uint32_t v=va_arg(args,uint32_t); utoa(v,buf,16);
+                           for(char *c=buf;*c;c++) if(*c>='a'&&*c<='f') *c=(char)(*c-32);
+                           pf_emit(buf,width,left,pad); break;}
+                case 's':{ char *s=va_arg(args,char*); pf_emit(s?s:"(null)",width,left,' '); break;}
+                case 'c':{ buf[0]=(char)va_arg(args,int); buf[1]=0; pf_emit(buf,width,left,' '); break;}
                 case '%': vga_putchar('%'); break;
+                case 0:   va_end(args); return;          /* a lone '%' at the end */
             }
         } else vga_putchar(*fmt);
         fmt++;

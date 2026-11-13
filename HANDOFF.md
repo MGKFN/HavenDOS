@@ -1,7 +1,27 @@
 # HavenDOS — handoff, 12 November 2026
 
-Current release: **v0.9.4** (channel Beta, codename "Prometheus"). Paste
+Current release: **v0.9.4.1** (channel Beta, codename "Prometheus"). Paste
 this file into a new chat to pick up where this left off.
+
+## 0.9.4.1 (13 Nov): FIXES FOUND TAKING THE 1.0 SCREENSHOTS
+
+Kyan asked for screenshots of the working features for the 1.0 trailer.
+53 shots were taken in QEMU on an 8 GB FAT32 install; the driver scripts
+were in `/home/claude/promo` (not in the repo). Fixes:
+- **FAT32 homes:** VFS write and mkdir now create parent directories.
+  Before this, nothing could be saved in `~` on FAT32.
+- **`vfs_write` on FAT32** returns the byte count on success and -1 on
+  failure.
+- **`edit`** resolves paths against the working directory.
+- **`vga_printf`** handles flags and widths.
+- **`calc`** has `^` and reports input it can't read.
+- **Setup** says "Step 7 of 7".
+- **Snake's** tick check waits for a tick.
+
+Still open:
+- A new install pins only the Shell to the desktop.
+- `dashboard` says "Multitasking: planned v0.8.x".
+- `sysinfo` says "80x25 VGA Text Mode" on a framebuffer.
 
 ## START HERE: 0.9.4 "PROMETHEUS" — `install` FROM AN INSTALLED SYSTEM
 

@@ -2781,8 +2781,16 @@ static void app_snake(void){
     vga_clear(); ui_draw_taskbar("Snake");
     /* Quick tick sanity check */
     {
+        /* v0.9.4.1: waits FOR a tick, up to a bound, instead of for a
+           fixed 500 thousand pauses. A pause is ten cycles on some CPUs and
+           a hundred on others, so the old loop could finish inside one
+           10 ms tick on a fast machine and call a working timer broken --
+           it did, in every 1.0 promo run, under QEMU. 200 million pauses
+           is seconds on anything; a timer that has not ticked by then is
+           really stopped. */
         uint32_t t0=get_ticks();
-        volatile int w=500000; while(w--) __asm__ volatile("pause");
+        volatile uint32_t w=200000000u;
+        while(w && get_ticks()==t0){ w--; __asm__ volatile("pause"); }
         if(get_ticks()==t0){
             /* Ticks not advancing - PIT issue, show warning */
             vga_set_color(VGA_YELLOW,VGA_BLACK);

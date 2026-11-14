@@ -91,6 +91,11 @@ const char *current_username(void){ return "admin"; }
 int  current_user_admin(void){ return 1; }
 int  notif_get_unread(void){ return 0; }
 int  bpkg_is_installed(const char *n){ (void)n; return g_extra_installed; }
+/* v0.9.5: the wallpaper switch lives in kernel/config.c. */
+static int g_cfg_pattern = 1, g_cfg_saves;
+int  cfg_desk_pattern(void){ return g_cfg_pattern; }
+void cfg_set_desk_pattern(int v){ g_cfg_pattern = v; }
+void cfg_save(void){ g_cfg_saves++; }
 
 /* ── the code under test, as it ships ─────────────────────────────── */
 #include "../shell/ui.c"
@@ -206,12 +211,96 @@ int main(void)
             if(i == n - 1)
                 ck("every theme index survives a save/load", 1, 0);
         }
-        /* The base table is exactly 10, so indices 0..9 only -- the
-           two-digit branch of ui_set_theme() is unreachable until the
-           extras are unlocked. It is checked in the extras section
-           below, which is where an index >= 10 exists at all. */
-        ck("the base table is single-digit, as the encoding assumes",
-           n <= 10, n);
+        /* v0.9.5: saved by name, so reordering the table can never swap
+           someone's theme again. */
+        fs_reset();
+        ui_set_theme(4);
+        ck("the file holds the theme's name",
+           strncmp(g_file, ui_theme_name(4), strlen(ui_theme_name(4))) == 0, g_filelen);
+        ck("and not a number", !(g_file[0] >= '0' && g_file[0] <= '9'), g_file[0]);
+        ck("the base table is twelve themes", n == 12, n);
+    }
+
+    head("a number from 0.9.4 or older is migrated once, by meaning");
+    {
+        static const struct { const char *old; const char *want; } mig[] = {
+            {"0\n", "Midnight"},   /* Midnight Cyan  */
+            {"1\n", "Haven"},      /* Classic Blue   */
+            {"2\n", "Terminal"},
+            {"3\n", "Amber CRT"},
+            {"4\n", "Slate"},      /* Dark           */
+            {"7\n", "Forest"},     /* Mint           */
+            {"9\n", "Retro"},
+            {"5\n", "Haven"},      /* Arctic: an extra now, not unlocked */
+            {"6\n", "Midnight"},   /* Neon: likewise                     */
+        };
+        int ok = 1, bad = -1;
+        for(int i = 0; i < (int)(sizeof mig / sizeof mig[0]); i++){
+            fs_reset();
+            memcpy(g_file, mig[i].old, strlen(mig[i].old));
+            g_filelen = (int)strlen(mig[i].old);
+            ui_load_preview(0);
+            ui_load_theme();
+            if(strcmp(ui_theme_name(ui_current_theme()), mig[i].want)){ ok = 0; bad = i; break; }
+            if(g_file[0] >= '0' && g_file[0] <= '9'){ ok = 0; bad = 100 + i; break; }
+        }
+        ck("each old number lands on the theme most like it, and the file "
+           "is rewritten by name", ok, bad);
+        fs_reset();
+        memcpy(g_file, "Nonsense\n", 9); g_filelen = 9;
+        ui_load_preview(2);
+        ui_load_theme();
+        ck("an unknown name leaves the theme alone", ui_current_theme() == 2,
+           ui_current_theme());
+    }
+
+    head("every theme is a whole look, and a readable one");
+    {
+        int all = NTHEMES_ALL, bg_ok = 1, fg_ok = 1, pat_ok = 1, names = 1;
+        for(int i = 0; i < all; i++){
+            const theme_t *t = ui_theme_get(i);
+            /* 8-15 as a background blinks in VGA text mode. */
+            if(t->desk_bg > 7 || t->bar_bg > 7 || t->win_bg > 7) bg_ok = 0;
+            if(t->desk_fg == t->desk_bg || t->bar_fg == t->bar_bg) fg_ok = 0;
+            /* Window titles are drawn title_fg on win_bg (ui_draw_window),
+               the clock accent on bar_bg, icon dots icon_bg on desk_bg.
+               Haven shipped a black title on a black window in the first
+               0.9.5 build; the screenshot caught it, this keeps it caught. */
+            if(t->title_fg == t->win_bg || t->win_fg == t->win_bg ||
+               t->accent == t->bar_bg || t->icon_bg == t->desk_bg) fg_ok = 0;
+            if(t->pat_kind != UI_PAT_NONE){
+                int cells = 0;
+                for(int y = 1; y < 24; y++) for(int x = 0; x < 80; x++){
+                    char c; vga_color_t fg;
+                    if(ui_pattern_at_theme(i, x, y, &c, &fg)){
+                        cells++;
+                        if(fg == t->desk_bg) pat_ok = 0;
+                    }
+                }
+                if(cells < 8 || cells > 80*23/3) pat_ok = 0;
+            }
+            for(int j = 0; j < i; j++) if(!strcmp(ui_theme_get(j)->name, t->name)) names = 0;
+        }
+        ck("no background is a blinking colour (8-15)", bg_ok, 0);
+        ck("every text colour differs from what it is drawn on", fg_ok, 0);
+        ck("every wallpaper draws something, visibly, and leaves room", pat_ok, 0);
+        ck("every name is different", names, 0);
+        int desks = 0;
+        for(int i = 0; i < NTHEMES_BASE; i++)
+            for(int j = 0; j <= i; j++)
+                if(j == i){ desks++; }
+                else if(ui_theme_get(j)->desk_bg == ui_theme_get(i)->desk_bg) break;
+        ck("the base themes use at least five desktop colours", desks >= 5, desks);
+
+        int was = ui_desk_pattern(), saves = g_cfg_saves;
+        ui_set_desk_pattern(0);
+        int any = 0;
+        for(int y = 1; y < 24; y++) for(int x = 0; x < 80; x++){
+            char c; vga_color_t fg; if(ui_pattern_at(x, y, &c, &fg)) any = 1;
+        }
+        ck("wallpaper off draws nothing", !any, any);
+        ck("and the switch is saved", g_cfg_saves == saves + 1 && g_cfg_pattern == 0, g_cfg_saves);
+        ui_set_desk_pattern(was);
     }
 
     head("extra themes are gated until the package is installed");
@@ -237,28 +326,30 @@ int main(void)
         ck("and it survives a save/load", ui_current_theme() == all - 1,
            ui_current_theme());
 
-        /* The two-digit path. ui_set_theme() writes one byte for n < 10
-           and two for n >= 10, and ui_load_theme() decides which it is
-           by looking at buf[1]. An index >= 10 is therefore the only
-           thing that exercises either branch's second half, and it only
-           exists once the extras are unlocked. */
-        ck("there are more than ten themes once unlocked", all > 10, all);
-        if(all > 10){
-            for(int i = 10; i < all; i++){
+        ck("there are more than twelve themes once unlocked", all > 12, all);
+        {
+            int ok = 1;
+            for(int i = 12; i < all; i++){
                 fs_reset();
                 ui_set_theme(i);
-                ck("a two-digit index is written as two digits",
-                   g_filelen == 3, g_filelen);
                 ui_load_preview(0);
                 ui_load_theme();
-                if(ui_current_theme() != i){
-                    ck("every two-digit index survives a save/load", 0, i);
-                    break;
-                }
-                if(i == all - 1)
-                    ck("every two-digit index survives a save/load", 1, 0);
+                if(ui_current_theme() != i){ ok = 0; break; }
             }
+            ck("every extra survives a save/load by name", ok, 0);
         }
+        fs_reset();
+        memcpy(g_file, "12\n", 3); g_filelen = 3;
+        ui_load_preview(0);
+        ui_load_theme();
+        ck("an old two-digit number migrates too (12, Ocean)",
+           !strcmp(ui_theme_name(ui_current_theme()), "Ocean"), ui_current_theme());
+        fs_reset();
+        memcpy(g_file, "5\n", 2); g_filelen = 2;
+        ui_load_preview(0);
+        ui_load_theme();
+        ck("and old Arctic is Arctic again once the extras exist",
+           !strcmp(ui_theme_name(ui_current_theme()), "Arctic"), ui_current_theme());
     }
 
     printf("\n%d/%d passed\n", total - fails, total);

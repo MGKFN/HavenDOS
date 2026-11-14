@@ -1,447 +1,495 @@
-/*
- * man.c — HavenDOS v0.5.9.10 Manual Pages
- * Per-command help screens with paging
- */
-#include "../include/vga.h"
+/* ================================================================
+   shell/man.c  --  manual pages.  Rewritten for v0.9.5.
+
+   What was wrong with the old one, from Kyan's photos and a read of
+   the code:
+
+     * 46 hand-written pages for ~150 commands, kept apart from
+       help.c, and wrong in places that mattered: `ls` "lists all
+       files in the current filesystem" from "RAMFS", `help 2` showed
+       a second page that did not exist, `cd` "RAMFS supports basic
+       directory structure".
+     * Drawn on a fixed 80x25 canvas: every coordinate a literal, the
+       text wrapped at column 74 whatever the screen, and anything
+       below row 22 silently dropped. On a 160x50 console the page sat
+       in the top-left corner and still lost its notes.
+     * No scrolling: one screen, any key closes.
+
+   Now: the text comes from shell/cmddb.c, the one table that `help`
+   and the build check read too. The page is laid out for the
+   console it is shown on and scrolls -- Up/Down, PgUp/PgDn,
+   Home/End, Space -- so nothing is ever cut off. `man` with no
+   argument is a browser: every command by topic, arrow keys and
+   Enter. The desktop's Manual app is that browser.
+   ================================================================ */
+#include "vga.h"
 #include "version.h"
-#include "../include/string.h"
-#include "../include/types.h"
+#include "string.h"
+#include "types.h"
+#include "keys.h"
+#include "cmddb.h"
 
 extern int  keyboard_waitchar(void);
-extern void sleep_ms(uint32_t);
 
-/* ── Man page entry ─────────────────────────────────────── */
-typedef struct {
-    const char *cmd;
-    const char *synopsis;
-    const char *desc;
-    const char *usage;
-    const char *examples;
-    const char *notes;
-} manpage_t;
+/* ── The page, as laid-out lines ─────────────────────────────────── */
 
-static const manpage_t pages[] = {
-    {"help",    "help [page]",
-     "Display list of all available shell commands.\nOptional page number for multi-page help.",
-     "help\n  help 2",
-     "help        Show first page\n  help 2      Show second page",
-     "Use 'man <cmd>' for detailed help on any command."},
+#define ML_MAX 200
+#define ML_W   241                  /* 240 columns + NUL */
 
-    {"echo",    "echo <text>",
-     "Print text to the shell output.\nSupports $VAR expansion.",
-     "echo <text>",
-     "echo Hello World\n  echo OS is $OS\n  echo Version $VER",
-     "Text is printed as-is. $VAR is expanded before printing."},
+static char    ml_txt[ML_MAX][ML_W];
+static uint8_t ml_fg[ML_MAX];       /* colour up to ml_split            */
+static uint8_t ml_fg2[ML_MAX];      /* colour from ml_split on          */
+static uint8_t ml_split[ML_MAX];
+static int     ml_n;
+static int     ml_width;            /* text columns available           */
 
-    {"ls",      "ls / dir",
-     "List all files in the current filesystem.\nShows filename, size, and permissions.",
-     "ls\n  dir",
-     "ls\n  dir",
-     "Both 'ls' and 'dir' are equivalent."},
+static void ml_reset(void){
+    int cols = vga_cols();
+    if (cols > ML_W - 1) cols = ML_W - 1;
+    ml_width = cols - 3;            /* a column of margin each side     */
+    ml_n = 0;
+}
 
-    {"cat",     "cat <file>",
-     "Display the contents of a file.",
-     "cat <filename>",
-     "cat README.TXT\n  cat HELLO.BSH",
-     "File must exist in RAMFS. Binary files may display garbage."},
+/* One physical line: `indent` spaces, then `len` chars of `s`. */
+static int ml_line(uint8_t fg, int indent, const char *s, int len){
+    if (ml_n >= ML_MAX) return -1;
+    int i = ml_n++, p = 0;
+    while (p < indent && p < ML_W - 1) ml_txt[i][p++] = ' ';
+    for (int k = 0; k < len && p < ML_W - 1; k++) ml_txt[i][p++] = s[k];
+    ml_txt[i][p] = 0;
+    ml_fg[i] = ml_fg2[i] = fg;
+    ml_split[i] = 255;
+    return i;
+}
 
-    {"cd",      "cd <dir>",
-     "Change current directory.",
-     "cd <directory>",
-     "cd /home\n  cd ..",
-     "RAMFS supports basic directory structure."},
+static void ml_blank(void){ ml_line(VGA_LIGHT_GREY, 0, "", 0); }
 
-    {"mkdir",   "mkdir <dir>",
-     "Create a new directory.",
-     "mkdir <dirname>",
-     "mkdir mydir\n  mkdir projects",
-     NULL},
-
-    {"rm",      "rm <file>",
-     "Delete a file from the filesystem.",
-     "rm <filename>",
-     "rm oldfile.txt\n  rm TEMP.BSH",
-     "Cannot delete directories. This action is permanent."},
-
-    {"touch",   "touch <file>",
-     "Create an empty file, or update timestamp if it exists.",
-     "touch <filename>",
-     "touch newfile.txt",
-     NULL},
-
-    {"cp",      "cp <src> <dst>",
-     "Copy a file to a new location.",
-     "cp <source> <destination>",
-     "cp README.TXT BACKUP.TXT",
-     NULL},
-
-    {"mv",      "mv <src> <dst>",
-     "Move or rename a file.",
-     "mv <source> <destination>",
-     "mv OLD.TXT NEW.TXT",
-     "Alias: rename"},
-
-    {"wc",      "wc <file>",
-     "Count lines, words, and characters in a file.",
-     "wc <filename>",
-     "wc README.TXT",
-     NULL},
-
-    {"head",    "head <file>",
-     "Show the first 10 lines of a file.",
-     "head <filename>",
-     "head README.TXT",
-     NULL},
-
-    {"tail",    "tail <file>",
-     "Show the last 10 lines of a file.",
-     "tail <filename>",
-     "tail CHANGELOG.TXT",
-     NULL},
-
-    {"grep",    "grep <pattern> <file>",
-     "Search for lines matching a pattern in a file.",
-     "grep <pattern> <filename>",
-     "grep BOOT README.TXT\n  grep error LOG.TXT",
-     "Pattern matching is case-sensitive."},
-
-    {"find",    "find <name>",
-     "Search for a file by name in the filesystem.",
-     "find <filename>",
-     "find README.TXT\n  find .BSH",
-     "Partial name matching supported."},
-
-    {"sort",    "sort <file>",
-     "Sort lines of a file alphabetically.",
-     "sort <filename>",
-     "sort LIST.TXT",
-     NULL},
-
-    {"set",     "set <key> <value>",
-     "Set an environment variable.\nAlso available as 'export'.",
-     "set <key> <value>\n  export <key> <value>",
-     "set NAME TechHaven\n  export OS HavenDOS\n  echo $NAME",
-     "Variables persist for the session. Use 'env' to list all."},
-
-    {"unset",   "unset <key>",
-     "Remove an environment variable.",
-     "unset <key>",
-     "unset TEMP\n  unset MYVAR",
-     "Permanent for the session. Cannot unset OS or VER."},
-
-    {"env",     "env",
-     "List all current environment variables.",
-     "env",
-     "env",
-     "Variables set with 'set' or 'export' appear here."},
-
-    {"alias",   "alias <name>=<cmd>",
-     "Create a shortcut for a command. Saved to disk automatically\n"
-     "and reloaded on every boot/login.",
-     "alias <name>=<command>",
-     "alias ll=ls\n  alias q=exit\n  alias gs=guide",
-     "Saved to ETC/ALIASES.TXT. Built-ins: ll, q, h, ?, g. unalias also saves."},
-
-    {"history", "history",
-     "Show the list of previously entered commands.\nUse UP/DOWN arrows to navigate history.",
-     "history",
-     "history",
-     "History holds up to 64 entries. UP arrow recalls previous commands."},
-
-    {"run",     "run <script.bsh>",
-     "Execute a BSH shell script file.\n"
-     "Supports if/else/endif and while/endwhile for control flow,\n"
-     "plus $VAR expansion and pipes on every line.\n"
-     "Lines starting with # are comments.",
-     "run <filename>",
-     "run HOME/LOOP.BSH\n"
-     "  if $i == 3\n  echo three\n  else\n  echo not three\n  endif\n"
-     "  while $i <= 5\n  echo $i\n  set i $i+1\n  endwhile",
-     "Ops: == != < > <= >=. 'exit' inside a script stops it early.\n"
-     "Step limit 4000 guards against infinite loops."},
-
-    {"date",    "date",
-     "Show the current date from the RTC (Real Time Clock).",
-     "date",
-     "date",
-     "Format: DD/MM/YY. Read from CMOS RTC hardware."},
-
-    {"time",    "time",
-     "Show the current time from the RTC (Real Time Clock).",
-     "time",
-     "time",
-     "Format: HH:MM:SS. Read from CMOS RTC hardware."},
-
-    {"sysinfo", "sysinfo",
-     "Display full system information.\nShows OS version, CPU, RAM, disk, date/time, user, and session info.",
-     "sysinfo",
-     "sysinfo",
-     NULL},
-
-    {"uptime",  "uptime",
-     "Show how long the system has been running since boot.",
-     "uptime",
-     "uptime",
-     "Format: HH:MM:SS based on PIT timer ticks."},
-
-    {"disk",    "disk",
-     "Show disk and filesystem status.",
-     "disk",
-     "disk",
-     "Shows whether ATA disk or RAMFS is active."},
-
-    {"adduser", "adduser <name> <password>",
-     "Create a new user account. Admin only.",
-     "adduser <username> <password>",
-     "adduser alice Secret123",
-     "Max 8 users. Passwords are hashed. Admin account required."},
-
-    {"color",   "color <fg> [bg]",
-     "Set the shell text foreground and background colour.\nColour numbers 0-15.",
-     "color <fg> [bg]",
-     "color 10        Green text\n  color 14 1    Yellow on blue\n  color 7 0     Default",
-     "0=Black 1=Blue 2=Green 3=Cyan 4=Red 7=LGrey 10=LGreen 14=Yellow 15=White"},
-
-    {"cowsay",  "cowsay [message]",
-     "Display a message spoken by a cow.\nVery important system utility.",
-     "cowsay [message]",
-     "cowsay Hello World\n  cowsay HavenDOS rocks",
-     "If no message given, defaults to 'Moo!'"},
-
-    {"ping",    "ping <ip>",
-     "Send ICMP echo request to an IP address.",
-     "ping <ip-address>",
-     "ping 10.0.2.2\n  ping 8.8.8.8",
-     "Requires network card (RTL8139 or e1000). QEMU/UTM default GW: 10.0.2.2"},
-
-    {"ifconfig","ifconfig [ip] [mac]",
-     "Show or set network interface configuration.",
-     "ifconfig\n  ifconfig <ip> <mac>",
-     "ifconfig\n  ifconfig 10.0.2.15 AA:BB:CC:DD:EE:FF",
-     NULL},
-
-    {"netstat", "netstat",
-     "Show network status and statistics.",
-     "netstat",
-     "netstat",
-     NULL},
-
-    {"udpsend", "udpsend <ip> <port> <msg>",
-     "Send a UDP datagram to an IP address and port.",
-     "udpsend <ip> <port> <message>",
-     "udpsend 10.0.2.2 1234 hello",
-     "No connection required. Fire-and-forget UDP packet."},
-
-    {"edit",    "edit [filename]",
-     "Open the Notepad text editor.\nOptionally open an existing file.",
-     "edit\n  edit <filename>",
-     "edit\n  edit README.TXT\n  edit SCRIPT.BSH",
-     "Alias: notepad. Save with F2, quit with ESC."},
-
-    {"calc",    "calc",
-     "Open the calculator application.",
-     "calc",
-     "calc",
-     "Supports +, -, *, /. Coming in " HAVENDOS_VER "."},
-
-    {"reboot",  "reboot",
-     "Restart the system immediately.",
-     "reboot",
-     "reboot",
-     "Triggers PS/2 keyboard controller reset (port 0x64)."},
-
-    {"shutdown","shutdown",
-     "Power off the system.\nAlso available as 'poweroff'.",
-     "shutdown\n  poweroff",
-     "shutdown",
-     "Sends ACPI shutdown signal. Works in QEMU and UTM SE."},
-
-    {"man",     "man <command>",
-     "Display the manual page for a command.\nThis is the man command itself.",
-     "man <command>",
-     "man ls\n  man ping\n  man run",
-     "Press any key to close the man page. Type 'man man' for this page."},
-
-    {"ps1",
-     "ps1 - Shell Prompt Customisation",
-     "ps1 [format]",
-     "Show or set the shell prompt format string.\n"
-     "Without arguments, shows the current PS1 and available tokens.\n"
-     "With a format string, sets the prompt immediately.",
-     "Tokens: \\u=username  \\h=hostname  \\w=path  \\$=$/# \\t=HH:MM:SS  \\d=DD/MM/YYYY  \\n=newline",
-     "ps1 \\u@\\h:\\w\\$ \n  ps1 [\\t] \\u\\$ "},
-    {"fortune",
-     "fortune - Print a Random Quote",
-     "fortune",
-     "Prints a random inspirational or humorous quote from the built-in\n"
-     "quote database. Also shown automatically on every login.",
-     "No arguments. Quote is selected based on current tick count.",
-     "fortune"},
-    {"banner",
-     "banner - Large ASCII Art Text",
-     "banner <text>",
-     "Prints the given text in large 5x5 ASCII art block letters.\n"
-     "Supports A-Z, 0-9, and spaces. Maximum 12 characters.\n"
-     "Letters are rendered in light cyan.",
-     "Text is automatically uppercased. Longer text is truncated at 12 chars.",
-     "banner BOOT\n  banner Hello"},
-    {"theme",
-     "theme - Switch Colour Theme",
-     "theme [number]",
-     "List available colour themes or switch to one by number.\n"
-     "Themes affect the taskbar, desktop, windows, and shell prompt colour.\n"
-     "Changes take effect immediately.",
-     "10 built-in themes: Midnight Cyan, Classic Blue, Terminal Green,\n"
-     "Amber, Dark, Arctic, Neon, Mint, Sunset, Retro.",
-     "theme        (list all)\n  theme 0      (Midnight Cyan)\n  theme 4      (Dark)"},
-    {"tree",
-     "tree - Show Filesystem Tree",
-     "tree",
-     "Display all files and directories as a tree rooted at /.\n"
-     "Directories are shown in cyan, files in green, locked files in red.\n"
-     "Uses safe characters only (no box-drawing).",
-     "tree",
-     "+-- item = branch entry, .-- item = last entry in list."},
-
-    {"which",
-     "which - Locate a Command",
-     "which <command>",
-     "Check whether a command is a built-in shell command, an alias,\n"
-     "or a .BSH script in the filesystem.\n"
-     "Prints the type and location of the command.",
-     "which ls\n  which q\n  which myscript",
-     "Returns 'not found' if the command does not exist anywhere."},
-
-    {"guide",
-     "guide - Interactive User Guide",
-     "guide",
-     "Open the built-in multi-page user guide covering:\n"
-     "  Page 1: Welcome and navigation\n"
-     "  Page 2: Files and filesystem\n"
-     "  Page 3: Shell features and scripting\n"
-     "  Page 4: Users and security\n"
-     "  Page 5: Apps, games and screensavers\n"
-     "  Page 6: Network and pro tips",
-     "guide",
-     "Press any key to advance pages. 6 pages total."},
-
-    {NULL,NULL,NULL,NULL,NULL,NULL}
-};
-
-/* ── Render a man page ──────────────────────────────────── */
-static void man_render(const manpage_t *p){
-    vga_clear();
-    /* Header */
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_CYAN);
-    /* Pad title to centre */
-    char hdr[80]; int hl=0;
-    hdr[hl++]=' '; hdr[hl++]='M'; hdr[hl++]='A'; hdr[hl++]='N';
-    hdr[hl++]=' '; hdr[hl++]='P'; hdr[hl++]='A'; hdr[hl++]='G'; hdr[hl++]='E';
-    hdr[hl++]=' '; hdr[hl++]=' '; hdr[hl++]=' ';
-    const char *c=p->cmd; while(*c) hdr[hl++]=*c++;
-    hdr[hl]=0;
-    vga_puts_at(hdr, (80-hl)/2, 0, VGA_BLACK, VGA_CYAN);
-
-    int y=2;
-    /* NAME */
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts_at("NAME",2,y++,VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts_at(p->cmd,6,y++,VGA_WHITE,VGA_BLACK);
-
-    /* SYNOPSIS */
-    y++;
-    vga_puts_at("SYNOPSIS",2,y++,VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts_at(p->synopsis,6,y++,VGA_YELLOW,VGA_BLACK);
-
-    /* DESCRIPTION */
-    y++;
-    vga_puts_at("DESCRIPTION",2,y++,VGA_LIGHT_CYAN,VGA_BLACK);
-    /* Word-wrap desc at col 74 */
-    const char *d=p->desc; int x=6;
-    while(*d){
-        if(*d=='\n'){y++;x=6;d++;continue;}
-        vga_putchar_at(*d,x,y,VGA_LIGHT_GREY,VGA_BLACK);
-        x++; if(x>=74){y++;x=6;}
-        d++;
-    }
-    y+=2;
-
-    /* USAGE */
-    if(p->usage){
-        vga_puts_at("USAGE",2,y++,VGA_LIGHT_CYAN,VGA_BLACK);
-        const char *u=p->usage; x=6;
-        while(*u&&y<20){
-            if(*u=='\n'){y++;x=6;u++;continue;}
-            vga_putchar_at(*u,x,y,VGA_LIGHT_GREEN,VGA_BLACK);
-            x++; if(x>=74){y++;x=6;}
-            u++;
+/* Word-wrap `s` into lines of at most `width` columns after `indent`.
+   "\n" is a hard break, "\n\n" a blank line between paragraphs. */
+static void ml_wrap(uint8_t fg, int indent, const char *s){
+    int width = ml_width - indent;
+    if (width < 16) width = 16;
+    while (*s) {
+        if (*s == '\n') {
+            if (s[1] == '\n') { ml_blank(); s += 2; }
+            else s++;
+            continue;
         }
-        y+=2;
-    }
-
-    /* EXAMPLES */
-    if(p->examples&&y<20){
-        vga_puts_at("EXAMPLES",2,y++,VGA_LIGHT_CYAN,VGA_BLACK);
-        const char *e=p->examples; x=6;
-        while(*e&&y<20){
-            if(*e=='\n'){y++;x=6;e++;continue;}
-            vga_putchar_at(*e,x,y,VGA_LIGHT_GREY,VGA_BLACK);
-            x++; if(x>=74){y++;x=6;}
-            e++;
-        }
-        y+=2;
-    }
-
-    /* NOTES */
-    if(p->notes&&y<22){
-        vga_puts_at("NOTES",2,y++,VGA_LIGHT_CYAN,VGA_BLACK);
-        const char *n=p->notes; x=6;
-        while(*n&&y<22){
-            if(*n=='\n'){y++;x=6;n++;continue;}
-            vga_putchar_at(*n,x,y,VGA_DARK_GREY,VGA_BLACK);
-            x++; if(x>=74){y++;x=6;}
+        /* Take as many whole words as fit. */
+        int n = 0, last_space = -1;
+        while (s[n] && s[n] != '\n' && n < width) {
+            if (s[n] == ' ') last_space = n;
             n++;
         }
+        int take = n;
+        if (s[n] && s[n] != '\n' && s[n] != ' ' && last_space > 0)
+            take = last_space;              /* do not split a word      */
+        ml_line(fg, indent, s, take);
+        s += take;
+        while (*s == ' ') s++;
     }
+}
 
-    /* Footer */
-    for(int fx=0;fx<80;fx++) vga_putchar_at(' ',fx,24,VGA_BLACK,VGA_DARK_GREY);
-    vga_puts_at(" HavenDOS Manual  |  Press any key to close ",
-                18,24,VGA_LIGHT_GREY,VGA_DARK_GREY);
+static void ml_heading(const char *h){
+    ml_line(VGA_LIGHT_CYAN, 1, h, (int)strlen(h));
+}
 
-    keyboard_waitchar();
+/* "command\tcomment" lines: the command green, the comment grey and
+   lined up in a column when the screen is wide enough for that. */
+static void ml_examples(const char *ex){
+    int col = 0;
+    for (const char *p = ex; *p; ) {        /* widest command + 3       */
+        int n = 0;
+        while (p[n] && p[n] != '\t' && p[n] != '\n') n++;
+        if (n + 3 > col) col = n + 3;
+        while (*p && *p != '\n') p++;
+        if (*p) p++;
+    }
+    while (*ex) {
+        const char *c = ex; int cn = 0;
+        while (c[cn] && c[cn] != '\t' && c[cn] != '\n') cn++;
+        const char *m = 0; int mn = 0;
+        if (c[cn] == '\t') {
+            m = c + cn + 1;
+            while (m[mn] && m[mn] != '\n') mn++;
+        }
+        ex = (m ? m + mn : c + cn);
+        if (*ex == '\n') ex++;
+
+        if (m && 5 + col + mn <= ml_width) {
+            char buf[ML_W]; int p = 0;
+            for (int k = 0; k < cn && p < ML_W - 1; k++) buf[p++] = c[k];
+            while (p < col && p < ML_W - 1) buf[p++] = ' ';
+            for (int k = 0; k < mn && p < ML_W - 1; k++) buf[p++] = m[k];
+            int i = ml_line(VGA_LIGHT_GREEN, 5, buf, p);
+            if (i >= 0) { ml_split[i] = (uint8_t)(5 + col); ml_fg2[i] = VGA_DARK_GREY; }
+        } else {
+            ml_line(VGA_LIGHT_GREEN, 5, c, cn);
+            if (m) ml_line(VGA_DARK_GREY, 9, m, mn);
+        }
+    }
+}
+
+/* A space-separated word list, written as "a, b, c" and wrapped. */
+static void ml_list(uint8_t fg, int indent, const char *words){
+    char buf[512]; int p = 0;
+    for (const char *w = words; *w && p < (int)sizeof buf - 3; w++) {
+        if (*w == ' ') { if (p && buf[p-1] != ' ') { buf[p++] = ','; buf[p++] = ' '; } }
+        else buf[p++] = *w;
+    }
+    buf[p] = 0;
+    ml_wrap(fg, indent, buf);
+}
+
+static void ml_build_page(const cmddoc_t *d){
+    ml_reset();
+    ml_heading("NAME");
+    {
+        char buf[ML_W]; int p = 0;
+        for (const char *s = d->name; *s && p < 60; s++) buf[p++] = *s;
+        const char *dash = " - ";
+        for (const char *s = dash; *s; s++) buf[p++] = *s;
+        for (const char *s = d->summary; *s && p < ML_W - 1; s++) buf[p++] = *s;
+        buf[p] = 0;
+        ml_wrap(VGA_WHITE, 5, buf);
+    }
+    if (d->aliases) {
+        ml_blank();
+        ml_heading("ALSO TYPED AS");
+        ml_list(VGA_WHITE, 5, d->aliases);
+    }
+    ml_blank();
+    ml_heading("SYNOPSIS");
+    for (const char *s = d->synopsis; *s; ) {
+        int n = 0; while (s[n] && s[n] != '\n') n++;
+        ml_line(VGA_YELLOW, 5, s, n);
+        s += n; if (*s) s++;
+    }
+    ml_blank();
+    ml_heading("DESCRIPTION");
+    ml_wrap(VGA_LIGHT_GREY, 5, d->desc);
+    if (d->examples) {
+        ml_blank();
+        ml_heading("EXAMPLES");
+        ml_examples(d->examples);
+    }
+    if (d->see) {
+        ml_blank();
+        ml_heading("SEE ALSO");
+        ml_list(VGA_LIGHT_GREEN, 5, d->see);
+    }
+    ml_blank();
+    ml_heading("TOPIC");
+    {
+        char buf[96]; int p = 0;
+        const cmdcat_t *c = &cmddb_cats[d->cat];
+        for (const char *s = c->title; *s; s++) buf[p++] = *s;
+        const char *mid = "   (help ";
+        for (const char *s = mid; *s; s++) buf[p++] = *s;
+        for (const char *s = c->key; *s; s++) buf[p++] = *s;
+        buf[p++] = ')'; buf[p] = 0;
+        ml_line(VGA_DARK_GREY, 5, buf, p);
+    }
+}
+
+/* Every command in one topic, as a page of its own (`man network`). */
+static void ml_build_topic(int cat){
+    ml_reset();
+    ml_heading(cmddb_cats[cat].title);
+    ml_wrap(VGA_DARK_GREY, 5, cmddb_cats[cat].blurb);
+    ml_blank();
+    for (int i = 0; cmddb[i].name; i++) {
+        if (cmddb[i].cat != cat) continue;
+        char buf[ML_W]; int p = 0;
+        for (const char *s = cmddb[i].name; *s; s++) buf[p++] = *s;
+        while (p < 14) buf[p++] = ' ';
+        int i2 = -1;
+        int sp = p;
+        for (const char *s = cmddb[i].summary; *s && p < ML_W - 1; s++) buf[p++] = *s;
+        if (5 + p <= ml_width) {
+            i2 = ml_line(VGA_LIGHT_GREEN, 5, buf, p);
+            if (i2 >= 0) { ml_split[i2] = (uint8_t)(5 + sp); ml_fg2[i2] = VGA_LIGHT_GREY; }
+        } else {
+            ml_line(VGA_LIGHT_GREEN, 5, cmddb[i].name, (int)strlen(cmddb[i].name));
+            ml_wrap(VGA_LIGHT_GREY, 9, cmddb[i].summary);
+        }
+    }
+    ml_blank();
+    ml_wrap(VGA_DARK_GREY, 5, "man <command> opens a command's page.");
+}
+
+/* ── The viewer ──────────────────────────────────────────────────── */
+
+static void bar(int y, vga_color_t fg, vga_color_t bg){
+    vga_fill_row(y, ' ', fg, bg);
+}
+
+static void put_right(const char *s, int y, vga_color_t fg, vga_color_t bg){
+    int x = vga_cols() - 1 - (int)strlen(s);
+    if (x < 0) x = 0;
+    vga_puts_at(s, x, y, fg, bg);
+}
+
+static void utoa10(uint32_t v, char *out){
+    char t[12]; int n = 0;
+    do { t[n++] = (char)('0' + v % 10); v /= 10; } while (v);
+    for (int i = 0; i < n; i++) out[i] = t[n - 1 - i];
+    out[n] = 0;
+}
+
+/* npg > 1: a multi-page document (the guide). Left and Right then turn
+   pages and the return value says which: -1 back, +1 on, 0 closed. */
+static int ml_view_pg(const char *title, int pg, int npg){
+    int top = 0;
+    for (;;) {
+        int rows = vga_rows(), cols = vga_cols();
+        int body = rows - 2;
+        int maxtop = ml_n - body; if (maxtop < 0) maxtop = 0;
+        if (top > maxtop) top = maxtop;
+        if (top < 0) top = 0;
+
+        vga_begin_frame();
+        bar(0, VGA_BLACK, VGA_CYAN);
+        vga_puts_at(" ", 0, 0, VGA_BLACK, VGA_CYAN);
+        vga_puts_at(title, 1, 0, VGA_BLACK, VGA_CYAN);
+        if (cols >= 48) put_right("HavenDOS " HAVENDOS_VER " manual ", 0, VGA_BLACK, VGA_CYAN);
+
+        for (int r = 0; r < body; r++) {
+            int y = r + 1, li = top + r;
+            bar(y, VGA_LIGHT_GREY, VGA_BLACK);
+            if (li >= ml_n) continue;
+            const char *t = ml_txt[li];
+            for (int x = 0; t[x] && x + 1 < cols; x++) {
+                vga_color_t fg = (x >= ml_split[li]) ? ml_fg2[li] : ml_fg[li];
+                if (t[x] != ' ') vga_putchar_at(t[x], x + 1, y, fg, VGA_BLACK);
+            }
+        }
+
+        bar(rows - 1, VGA_LIGHT_GREY, VGA_DARK_GREY);
+        if (npg > 1) {
+            char pgs[48]; int p = 0; char a[8], n[8];
+            utoa10((uint32_t)(pg + 1), a); utoa10((uint32_t)npg, n);
+            for (const char *s2 = " page "; *s2; s2++) pgs[p++] = *s2;
+            for (const char *s2 = a; *s2; s2++) pgs[p++] = *s2;
+            pgs[p++] = '/';
+            for (const char *s2 = n; *s2; s2++) pgs[p++] = *s2;
+            for (const char *s2 = cols >= 64 ? "   Left/Right page  Up/Down scroll  ESC close"
+                                             : "  </> page  ESC"; *s2; s2++) pgs[p++] = *s2;
+            pgs[p] = 0;
+            vga_puts_at(pgs, 0, rows - 1, VGA_WHITE, VGA_DARK_GREY);
+        } else if (ml_n > body)
+            vga_puts_at(cols >= 60 ? " Up/Down PgUp/PgDn Home/End scroll   Q close"
+                                   : " arrows scroll  Q close",
+                        0, rows - 1, VGA_WHITE, VGA_DARK_GREY);
+        else
+            vga_puts_at(" Q or ESC closes", 0, rows - 1, VGA_WHITE, VGA_DARK_GREY);
+        if (ml_n > body && (npg <= 1 || cols >= 80)) {
+            char pos[40], a[12], b[12], n[12];
+            utoa10((uint32_t)(top + 1), a);
+            utoa10((uint32_t)((top + body < ml_n) ? top + body : ml_n), b);
+            utoa10((uint32_t)ml_n, n);
+            int p = 0;
+            for (const char *s = "lines "; *s; s++) pos[p++] = *s;
+            for (const char *s = a; *s; s++) pos[p++] = *s;
+            pos[p++] = '-';
+            for (const char *s = b; *s; s++) pos[p++] = *s;
+            for (const char *s = " of "; *s; s++) pos[p++] = *s;
+            for (const char *s = n; *s; s++) pos[p++] = *s;
+            pos[p++] = ' '; pos[p] = 0;
+            put_right(pos, rows - 1, VGA_LIGHT_GREY, VGA_DARK_GREY);
+        }
+        vga_end_frame();
+
+        int k = keyboard_waitchar();
+        if (k == 27 || k == 'q' || k == 'Q') break;
+        else if (npg > 1 && k == KEY_RIGHT) { if (pg + 1 < npg) { vga_clear(); return 1; } }
+        else if (npg > 1 && k == KEY_LEFT)  { if (pg > 0)       { vga_clear(); return -1; } }
+        else if (npg > 1 && (k == ' ' || k == '\n' || k == '\r') && top >= maxtop) {
+            if (pg + 1 < npg) { vga_clear(); return 1; }
+            break;
+        }
+        else if (k == KEY_DOWN || k == 'j' || k == '\n' || k == '\r') top++;
+        else if (k == KEY_UP || k == 'k') top--;
+        else if (k == KEY_PGDN || k == ' ') top += body - 1;
+        else if (k == KEY_PGUP || k == 'b') top -= body - 1;
+        else if (k == KEY_HOME || k == 'g') top = 0;
+        else if (k == KEY_END  || k == 'G') top = maxtop;
+        else if (ml_n <= body && npg <= 1) break;   /* nothing to scroll: any key */
+    }
+    vga_clear();
+    return 0;
+}
+static void ml_view(const char *title){ (void)ml_view_pg(title, 0, 0); }
+
+/* ── Light markup, for the guide ──────────────────────────────────
+     # Heading
+     - a bullet, wrapped with a hanging indent
+     > command<TAB>what it does      (a run of these lines up together)
+     plain lines                      joined into one wrapped paragraph
+     an empty line                    a gap                              */
+static void ml_build_markup(const char *t){
+    ml_reset();
+    static char para[1024];
+    static char ex[1024];
+    int pn = 0, en = 0;
+    while (*t) {
+        const char *e = t; while (*e && *e != '\n') e++;
+        int len = (int)(e - t);
+        int is_ex = (len >= 2 && t[0] == '>' && t[1] == ' ');
+        if (!is_ex && en) { ex[en] = 0; ml_examples(ex); en = 0; }
+        if (len == 0 || t[0] == '#' || t[0] == '-' || is_ex) {
+            if (pn) { para[pn] = 0; ml_wrap(VGA_LIGHT_GREY, 3, para); pn = 0; }
+        }
+        if (len == 0) {
+            ml_blank();
+        } else if (t[0] == '#') {
+            const char *h = t + 1; while (*h == ' ') h++;
+            ml_line(VGA_LIGHT_CYAN, 1, h, (int)(e - h));
+        } else if (t[0] == '-' && len > 1 && t[1] == ' ') {
+            char b[ML_W]; int k = 0;
+            for (const char *c = t + 2; c < e && k < ML_W - 1; c++) b[k++] = *c;
+            b[k] = 0;
+            int first = ml_n;
+            ml_wrap(VGA_LIGHT_GREY, 7, b);
+            if (first < ml_n) { ml_txt[first][5] = '-'; }
+        } else if (is_ex) {
+            for (const char *c = t + 2; c < e && en < (int)sizeof ex - 2; c++) ex[en++] = *c;
+            ex[en++] = '\n';
+        } else {
+            if (pn && pn < (int)sizeof para - 1) para[pn++] = ' ';
+            for (const char *c = t; c < e && pn < (int)sizeof para - 1; c++) para[pn++] = *c;
+        }
+        t = *e ? e + 1 : e;
+    }
+    if (en) { ex[en] = 0; ml_examples(ex); }
+    if (pn) { para[pn] = 0; ml_wrap(VGA_LIGHT_GREY, 3, para); }
+}
+
+/* A document of pages: the guide. */
+void man_pages_view(const char *const *titles, const char *const *texts, int n, int start){
+    int pg = (start >= 0 && start < n) ? start : 0;
+    for (;;) {
+        ml_build_markup(texts[pg]);
+        int r = ml_view_pg(titles[pg], pg, n);
+        if (r == 0) break;
+        pg += r;
+        if (pg < 0) pg = 0;
+        if (pg >= n) break;
+    }
     vga_clear();
 }
 
-/* ── Public entry: man <cmd> ────────────────────────────── */
-void cmd_man(const char *cmd){
-    if(!cmd||!cmd[0]){
-        /* List all available man pages */
-        vga_clear();
-        for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_CYAN);
-        vga_puts_at(" HavenDOS Manual - Available Pages ",23,0,VGA_BLACK,VGA_CYAN);
-        int y=2,col=0;
-        vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
-        vga_puts_at("Commands with man pages:",2,y++,VGA_LIGHT_CYAN,VGA_BLACK);
-        y++;
-        for(int i=0;pages[i].cmd;i++){
-            vga_puts_at(pages[i].cmd, 2+(col*20), y, VGA_LIGHT_GREEN,VGA_BLACK);
-            col++;
-            if(col>=4){col=0;y++;}
-            if(y>=23) break;
-        }
-        for(int x=0;x<80;x++) vga_putchar_at(' ',x,24,VGA_BLACK,VGA_DARK_GREY);
-        vga_puts_at(" Type 'man <command>' for details  |  Press any key ",
-                    14,24,VGA_LIGHT_GREY,VGA_DARK_GREY);
-        keyboard_waitchar();
-        vga_clear();
-        return;
+/* ── The browser: `man` with no argument, and the Manual app ─────── */
+
+#define BR_MAX 200
+static int16_t br_item[BR_MAX];     /* >= 0 command index, < 0 -(cat+1) */
+static int     br_n;
+
+static void br_build(void){
+    br_n = 0;
+    for (int c = 0; c < CDB_NCAT && br_n < BR_MAX; c++) {
+        br_item[br_n++] = (int16_t)(-(c + 1));
+        for (int i = 0; cmddb[i].name && br_n < BR_MAX; i++)
+            if (cmddb[i].cat == c) br_item[br_n++] = (int16_t)i;
     }
-    for(int i=0;pages[i].cmd;i++){
-        if(strcmp(pages[i].cmd,cmd)==0){
-            man_render(&pages[i]);
-            return;
+}
+
+static int br_next(int from, int dir){
+    for (int i = from + dir; i >= 0 && i < br_n; i += dir)
+        if (br_item[i] >= 0) return i;
+    return from;
+}
+
+void man_browse(void){
+    br_build();
+    int sel = br_next(-1, 1), top = 0;
+    for (;;) {
+        int rows = vga_rows(), cols = vga_cols();
+        int body = rows - 3;
+        if (sel < top + 1) top = sel - 1;
+        if (sel >= top + body) top = sel - body + 1;
+        if (top < 0) top = 0;
+
+        vga_begin_frame();
+        bar(0, VGA_BLACK, VGA_CYAN);
+        vga_puts_at(" Manual -- every HavenDOS command", 0, 0, VGA_BLACK, VGA_CYAN);
+        if (cols >= 64) put_right("HavenDOS " HAVENDOS_VER " ", 0, VGA_BLACK, VGA_CYAN);
+        bar(1, VGA_LIGHT_GREY, VGA_BLACK);
+        for (int r = 0; r < body; r++) {
+            int y = r + 2, li = top + r;
+            bar(y, VGA_LIGHT_GREY, VGA_BLACK);
+            if (li >= br_n) continue;
+            int it = br_item[li];
+            if (it < 0) {
+                const cmdcat_t *c = &cmddb_cats[-it - 1];
+                vga_puts_at(c->title, 2, y, VGA_LIGHT_CYAN, VGA_BLACK);
+                continue;
+            }
+            const cmddoc_t *d = &cmddb[it];
+            vga_color_t bg = (li == sel) ? VGA_CYAN : VGA_BLACK;
+            if (li == sel) for (int x = 3; x < cols - 1; x++) vga_putchar_at(' ', x, y, VGA_BLACK, bg);
+            vga_puts_at(d->name, 4, y, li == sel ? VGA_BLACK : VGA_LIGHT_GREEN, bg);
+            /* summary, cut to the screen */
+            int x = 19;
+            for (const char *s = d->summary; *s && x < cols - 2; s++, x++)
+                vga_putchar_at(*s, x, y, li == sel ? VGA_BLACK : VGA_LIGHT_GREY, bg);
+        }
+        bar(rows - 1, VGA_LIGHT_GREY, VGA_DARK_GREY);
+        vga_puts_at(cols >= 64 ? " Up/Down choose  Enter open  a-z jump  ESC close"
+                               : " arrows  Enter  ESC",
+                    0, rows - 1, VGA_WHITE, VGA_DARK_GREY);
+        vga_end_frame();
+
+        int k = keyboard_waitchar();
+        if (k == 27 || k == 'Q') break;
+        else if (k == KEY_DOWN) sel = br_next(sel, 1);
+        else if (k == KEY_UP)   sel = br_next(sel, -1);
+        else if (k == KEY_PGDN) { for (int i = 0; i < body - 1; i++) sel = br_next(sel, 1); }
+        else if (k == KEY_PGUP) { for (int i = 0; i < body - 1; i++) sel = br_next(sel, -1); }
+        else if (k == KEY_HOME) { sel = br_next(-1, 1); top = 0; }
+        else if (k == KEY_END)  { sel = br_next(br_n, -1); }
+        else if (k == '\n' || k == '\r') {
+            const cmddoc_t *d = &cmddb[br_item[sel]];
+            ml_build_page(d);
+            ml_view(d->name);
+        } else if (k >= 'a' && k <= 'z') {
+            /* next command starting with that letter, wrapping round */
+            for (int step = 1; step <= br_n; step++) {
+                int i = (sel + step) % br_n;
+                if (br_item[i] >= 0 && cmddb[br_item[i]].name[0] == (char)k) { sel = i; break; }
+            }
         }
     }
-    vga_printf("man: no manual entry for '%s'\n",cmd);
+    vga_clear();
+}
+
+/* ── man <command> ───────────────────────────────────────────────── */
+
+/* Names that start like `w`, for "did you mean". */
+static void suggest(const char *w){
+    int shown = 0, n = (int)strlen(w);
+    if (n > 2) n = 2;
+    for (int i = 0; cmddb[i].name && shown < 8; i++) {
+        if (!strncmp(cmddb[i].name, w, (size_t)n)) {
+            if (!shown) vga_puts("  Did you mean:");
+            vga_putchar(' ');
+            vga_puts(cmddb[i].name);
+            shown++;
+        }
+    }
+    if (shown) vga_putchar('\n');
+}
+
+void cmd_man(const char *word){
+    if (!word || !word[0]) { man_browse(); return; }
+    const cmddoc_t *d = cmddb_find(word);
+    if (d) { ml_build_page(d); ml_view(d->name); return; }
+    int cat = cmddb_cat_find(word);
+    if (cat >= 0) { ml_build_topic(cat); ml_view(cmddb_cats[cat].title); return; }
+    vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+    vga_printf("man: no page for '%s'\n", word);
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    suggest(word);
+    vga_puts("  'man' on its own lists every command; 'help' lists the topics.\n");
+    vga_set_color(VGA_WHITE, VGA_BLACK);
 }

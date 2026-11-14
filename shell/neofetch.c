@@ -222,45 +222,43 @@ void cmd_neofetch_v2(void)
         line("Display", buf, acc);
     }
 
-    /* ── disk: the bus that answered, and its size ── */
+    /* ── disk and filesystem: v0.9.5 asks the block layer which disk the
+          system runs from, and the volume how full it is. The old lines
+          checked VirtIO, then ATA, then NVMe ("read-only", which stopped
+          being true in 0.8.8), and never knew AHCI or USB existed. ── */
     {
+        extern int blk_boot_dev(void);
+        extern const char *blk_bus_name(int);
+        extern uint64_t blk_sectors(int);
+        extern int blk_count(void);
+        extern const char *sys_volume_space(uint32_t*, uint32_t*);
+        int b = blk_boot_dev();
         n = 0;
-        if(virtio_blk_ready()){
-            app_s(buf, &n, sizeof buf, "VirtIO ");
-            app_u(buf, &n, sizeof buf, mb_of_sectors(virtio_blk_sectors()));
+        if(boot_is_live())        app_s(buf, &n, sizeof buf, "live session -- no disk used");
+        else if(b >= 0){
+            app_s(buf, &n, sizeof buf, blk_bus_name(b));
+            app_s(buf, &n, sizeof buf, " ");
+            app_u(buf, &n, sizeof buf, mb_of_sectors(blk_sectors(b)));
             app_s(buf, &n, sizeof buf, " MB");
-        } else if(ata_detected()){
-            app_s(buf, &n, sizeof buf, ata_lba48() ? "ATA LBA48 " : "ATA LBA28 ");
-            app_u(buf, &n, sizeof buf, mb_of_sectors((uint64_t)ata_sectors()));
-            app_s(buf, &n, sizeof buf, " MB");
-        } else if(nvme_count() > 0){
-            app_s(buf, &n, sizeof buf, "NVMe ");
-            app_u(buf, &n, sizeof buf, mb_of_sectors(nvme_sectors(0)));
-            app_s(buf, &n, sizeof buf, " MB read-only");
-        } else {
-            app_s(buf, &n, sizeof buf, "none found");
-        }
+        } else if(blk_count() > 0){
+            app_u(buf, &n, sizeof buf, (uint32_t)blk_count());
+            app_s(buf, &n, sizeof buf, " disk(s), none is the system disk");
+        } else app_s(buf, &n, sizeof buf, "none found");
         line("Disk", buf, acc);
-    }
 
-    /* ── filesystem: what is actually mounted, which since 0.8.2 has three
-          possible answers and used to be assumed to be one ── */
-    {
+        uint32_t tk = 0, fk = 0;
+        const char *fs = sys_volume_space(&tk, &fk);
         n = 0;
-        if(boot_is_live()){
-            app_s(buf, &n, sizeof buf, "live - RAM only, no disk touched");
-        } else if(vfs_using_fat32()){
-            app_s(buf, &n, sizeof buf, "FAT32, ");
-            app_u(buf, &n, sizeof buf, fat32_total_clusters());
-            app_s(buf, &n, sizeof buf, " clusters of ");
-            app_u(buf, &n, sizeof buf, fat32_cluster_bytes());
-            app_s(buf, &n, sizeof buf, "B");
-        } else if(vfs_using_fat16()){
-            app_s(buf, &n, sizeof buf, "FAT16, mounted");
-        } else if(vfs_using_disk()){
-            app_s(buf, &n, sizeof buf, "FAT12, mounted");
-        } else {
-            app_s(buf, &n, sizeof buf, "RAMFS - nothing persists");
+        if(!fs) app_s(buf, &n, sizeof buf, boot_is_live() ? "RAM only, nothing persists" : "none mounted");
+        else{
+            app_s(buf, &n, sizeof buf, fs);
+            app_s(buf, &n, sizeof buf, ", ");
+            if(fk != 0xFFFFFFFFu){
+                app_u(buf, &n, sizeof buf, (tk - fk) / 1024u);
+                app_s(buf, &n, sizeof buf, " / ");
+            }
+            app_u(buf, &n, sizeof buf, tk / 1024u);
+            app_s(buf, &n, sizeof buf, " MB");
         }
         line("Filesystem", buf, acc);
     }
@@ -268,10 +266,13 @@ void cmd_neofetch_v2(void)
     /* ── network: the card that answered, and the address it holds ── */
     {
         n = 0;
-        if(e1000_found())        app_s(buf, &n, sizeof buf, "e1000");
-        else if(rtl8139_found()) app_s(buf, &n, sizeof buf, "RTL8139");
-        else                     app_s(buf, &n, sizeof buf, "no NIC");
-        if(e1000_found() || rtl8139_found()){
+        /* v0.9.5: through the netdev layer, so a USB adapter or a tethered
+           iPhone is named too, not reported as "no NIC". */
+        extern int netdev_count(void);
+        extern const char *netdev_bus_name(int);
+        if(netdev_count() > 0) app_s(buf, &n, sizeof buf, netdev_bus_name(0));
+        else                   app_s(buf, &n, sizeof buf, "no network adapter");
+        if(netdev_count() > 0){
             uint32_t ip = net_get_ip();
             app_s(buf, &n, sizeof buf, net_ready() ? ", " : ", link down, ");
             app_u(buf, &n, sizeof buf,  ip        & 0xFF); app_s(buf, &n, sizeof buf, ".");

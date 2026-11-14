@@ -331,7 +331,9 @@ def main():
             # not exist -- which reads nothing like an unread prompt.
             # Two different pagers, two different prompt strings, one
             # mistake.
-            scr = run_paged("help", settle=5.0)
+            # 0.9.5: `help` is an index of topics now (about twenty
+            # lines); `help all` is the long one.
+            scr = run_paged("help all", settle=5.0)
             ck("...and the grid is really 50 rows deep",
                len([ln for ln in scr.split("\n") if ln.strip()]) > 25,
                str(len(scr.split("\n"))))

@@ -118,13 +118,6 @@ void appx_calendar(void)
     appx_pause();
 }
 
-void appx_sysinfo_plus(void)
-{
-    vga_clear();
-    run_package_app("sysinfo-plus", "");
-    appx_pause();
-}
-
 void appx_fortune(void)
 {
     vga_clear();
@@ -214,16 +207,9 @@ void appx_guide(void)
 
 void appx_manual(void)
 {
-    char cmd[24];
-    vga_clear();
-    ui_draw_taskbar("Manual");
-    if (!appx_ask("Manual", "Command to look up (try: ls, usb, chat):",
-                  cmd, sizeof cmd))
-        return;
-    vga_clear();
-    vga_set_cursor(0, 0);
-    cmd_man(cmd);
-    appx_pause();
+    /* v0.9.5: the browser, not a one-word prompt. */
+    extern void man_browse(void);
+    man_browse();
 }
 
 void appx_legal(void)
@@ -255,48 +241,8 @@ void appx_stars(void)
    --------------------------------------------------------------- */
 void appx_themes(void)
 {
-    int n     = ui_theme_count();
-    int sel   = ui_current_theme();
-    if (sel < 0 || sel >= n) sel = 0;
-    /* v0.8.5.6: captured AFTER the clamp. It used to be taken before,
-       so an out-of-range current theme left `start` out of range too,
-       and ui_set_theme() -- which range-checks and does nothing --
-       silently left the previewed theme applied on cancel. */
-    int start = sel;
-
-    while (1) {
-        theme_t *th = ui_theme();
-        vga_clear();
-        ui_draw_taskbar("Themes");
-        int w = 34, h = n + 6;
-        if (h > vga_rows() - 3) h = vga_rows() - 3;
-        int x = (vga_cols() - w) / 2, y = 2;
-        ui_draw_window(x, y, w, h, "Theme");
-
-        for (int i = 0; i < n && i < h - 5; i++) {
-            int s = (i == sel);
-            vga_color_t bg = s ? th->accent : th->win_bg;
-            vga_color_t fg = s ? th->win_bg : th->win_fg;
-            char row[32];
-            int j = 0;
-            const char *nm = ui_theme_name(i);
-            row[j++] = s ? '>' : ' ';
-            row[j++] = ' ';
-            while (*nm && j < w - 4) row[j++] = *nm++;
-            while (j < w - 4) row[j++] = ' ';
-            row[j] = 0;
-            vga_puts_at(row, x + 2, y + 2 + i, fg, bg);
-        }
-        vga_puts_at("Enter applies  ESC cancels",
-                    x + 2, y + h - 2, VGA_DARK_GREY, th->win_bg);
-        vga_flush();
-
-        int c = keyboard_waitchar();
-        if (c == 0x148 && sel > 0)      { sel--; ui_load_preview(sel); }
-        else if (c == 0x150 && sel < n - 1) { sel++; ui_load_preview(sel); }
-        else if (c == '\n' || c == '\r') { ui_set_theme(sel); return; }
-        /* Cancel is in-memory: ui_set_theme() would write THEME_FILE,
-           so backing out of a theme picker used to cost a disk write. */
-        else if (c == 27)                { ui_load_preview(start); return; }
-    }
+    /* v0.9.5: the third theme picker is gone -- Settings > Appearance is
+       the one place a theme is chosen, with a preview of the desktop. */
+    extern void settings_open(const char *section);
+    settings_open("appearance");
 }

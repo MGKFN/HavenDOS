@@ -55,20 +55,106 @@ static int login_done    = 0;
 static int login_inited  = 0;
 
 /* ── Audit log ────────────────────────────────────────────────── */
-#define AUDIT_MAX 512
+/* v0.9.5: "[kyan] login OK", with no time, in a 512-byte buffer that
+   started empty every boot and overwrote the file -- so `log` showed
+   this boot's logins and nothing else, and nothing could say when an
+   account was last used. Now each line carries the date and time, the
+   file is read back at boot and appended to, and the oldest whole lines
+   go when it passes AUDIT_MAX.
+
+     2026-11-14 10:32  kyan  login OK
+
+   Lines in the old "[user] event" form are kept until they rotate out;
+   user_last_login() reads both. */
+#define AUDIT_MAX 2048
 static char audit_buf[AUDIT_MAX];
 static int  audit_len = 0;
+static int  audit_loaded = 0;
+
+static void audit_load(void){
+    if(audit_loaded) return;
+    audit_loaded=1;
+    int r=vfs_read(".loginlog",audit_buf,AUDIT_MAX-1);
+    audit_len = (r>0) ? r : 0;
+    audit_buf[audit_len]=0;
+}
+
+static void put2(char *d, int v){ d[0]=(char)('0'+(v/10)%10); d[1]=(char)('0'+v%10); }
 
 static void audit(const char *user, const char *event){
-    if(audit_len>=AUDIT_MAX-40) audit_len=0;
-    const char *parts[]={"[",user,"] ",event,"\n"};
-    for(int p=0;p<5;p++){
-        const char *s=parts[p];
-        while(*s&&audit_len<AUDIT_MAX-1) audit_buf[audit_len++]=*s++;
+    audit_load();
+    char line[96]; int n=0;
+    uint8_t h=0,mi=0,se=0,day=0,mon=0; uint16_t yr=0;
+    rtc_get_time(&h,&mi,&se); rtc_get_date(&day,&mon,&yr);
+    put2(line+n,yr/100); n+=2; put2(line+n,yr%100); n+=2; line[n++]='-';
+    put2(line+n,mon); n+=2; line[n++]='-'; put2(line+n,day); n+=2; line[n++]=' ';
+    put2(line+n,h); n+=2; line[n++]=':'; put2(line+n,mi); n+=2;
+    line[n++]=' '; line[n++]=' ';
+    for(const char *p=user; *p && n<40; p++) line[n++]=*p;
+    line[n++]=' '; line[n++]=' ';
+    for(const char *p=event; *p && n<94; p++) line[n++]=*p;
+    line[n++]='\n';
+
+    if(audit_len+n >= AUDIT_MAX){
+        /* Drop whole lines from the front until this one fits. */
+        int cut = audit_len + n - (AUDIT_MAX - 1);
+        while(cut < audit_len && audit_buf[cut-1] != '\n') cut++;
+        if(cut > audit_len) cut = audit_len;
+        memmove(audit_buf, audit_buf+cut, (size_t)(audit_len-cut));
+        audit_len -= cut;
     }
+    memcpy(audit_buf+audit_len, line, (size_t)n);
+    audit_len += n;
     audit_buf[audit_len]=0;
-    vfs_write(".loginlog",audit_buf,audit_len);
+    vfs_write(".loginlog",audit_buf,(uint32_t)audit_len);
 }
+
+/* Does this log line record `name` logging in? Fills `when` (16 chars,
+   "YYYY-MM-DD HH:MM") for the new format, "" for the old. */
+static int log_line_is_login(const char *l, int len, const char *name, char *when){
+    int nl=(int)strlen(name);
+    when[0]=0;
+    if(len>=18 && l[0]>='0' && l[0]<='9' && l[4]=='-'){
+        const char *u=l+18;
+        if(len-18 < nl+2 || strncmp(u,name,(size_t)nl) || u[nl]!=' ') return 0;
+        const char *ev=u+nl; while(*ev==' ') ev++;
+        if(strncmp(ev,"login OK",8) && strncmp(ev,"auto-login",10) &&
+           strncmp(ev,"account created + login",23)) return 0;
+        memcpy(when,l,16); when[16]=0;
+        return 1;
+    }
+    if(len>nl+2 && l[0]=='[' && !strncmp(l+1,name,(size_t)nl) && l[1+nl]==']'){
+        const char *ev=l+nl+3;
+        return !strncmp(ev,"login OK",8) || !strncmp(ev,"auto-login",10)
+            || !strncmp(ev,"account created",15);
+    }
+    return 0;
+}
+
+/* The most recent login for `name`: 1 and `out` filled ("YYYY-MM-DD
+   HH:MM", or "before 0.9.5" for an undated line), 0 if none on record.
+   `count` gets how many logins the log holds. */
+int user_last_login(const char *name, char *out, int max, int *count){
+    audit_load();
+    int found=0, c=0;
+    char when[20], best[20]; best[0]=0;
+    const char *p=audit_buf;
+    while(*p){
+        const char *e=p; while(*e && *e!='\n') e++;
+        if(log_line_is_login(p,(int)(e-p),name,when)){
+            c++; found=1;
+            int k=0; const char *w = when[0] ? when : "before 0.9.5";
+            while(w[k] && k<19){ best[k]=w[k]; k++; } best[k]=0;
+        }
+        p = *e ? e+1 : e;
+    }
+    if(count) *count=c;
+    if(found && out && max>0){ int k=0; while(best[k] && k<max-1){ out[k]=best[k]; k++; } out[k]=0; }
+    return found;
+}
+
+/* The whole log, for `log` and Settings > Accounts. */
+const char *audit_text(void){ audit_load(); return audit_buf; }
 
 static void accounts_load(void);
 static void accounts_save(void);
@@ -89,6 +175,36 @@ int         current_user_admin(void) { return users[logged_in_idx].admin; }
 int         get_user_count(void)     { return user_count; }
 const char *get_username(int i)      { return i<user_count?users[i].name:"";  }
 int         get_user_admin(int i)    { return i<user_count?users[i].admin:0;  }
+int         get_user_current(void)   { return logged_in_idx; }
+/* 0 no password, 1 a password of the user's own, 2 the built-in account
+   still on the password printed in this source file -- which anyone who
+   has read it can type. `users` says so in yellow. */
+int get_user_pwstate(int i){
+    if(i<0||i>=user_count) return 0;
+    if(users[i].pw_hash==pw_hash("")) return 0;
+    if(i==0 && users[i].pw_hash==pw_hash("Admin@123"))  return 2;
+    if(i==1 && users[i].pw_hash==pw_hash("BootOS2026")) return 2;
+    return 1;
+}
+int get_user_hidden(int i){
+    extern int cfg_acct_hidden(int);
+    return (i>=0 && i<3) ? cfg_acct_hidden(i) : 0;
+}
+/* Admins only; refuses to leave the machine without one. */
+int set_user_admin(const char *name, int admin){
+    if(!current_user_admin()) return -2;
+    int at=-1, admins=0;
+    for(int i=0;i<user_count;i++){
+        if(users[i].admin) admins++;
+        if(strcmp(users[i].name,name)==0) at=i;
+    }
+    if(at<0) return -1;
+    if(!admin && users[at].admin && admins<=1) return -3;
+    users[at].admin = admin ? 1 : 0;
+    audit(current_username(), admin ? "made an admin" : "made a standard user");
+    accounts_save();
+    return 0;
+}
 
 /* ── Account persistence ──────────────────────────────────────── */
 #define ACCOUNTS_FILE ".accounts"
@@ -168,6 +284,7 @@ int add_user(const char *name, const char *pass, int admin){
     user_count++;
     audit(current_username(),"added user");
     accounts_save();
+    setup_user_home(name);     /* v0.9.5: HOME/<name>, as setup does */
     return 1;
 }
 
@@ -203,6 +320,10 @@ int passwd_user(const char *name, const char *oldpass, const char *newpass){
                 if(pw_hash(oldpass)!=users[i].pw_hash) return -2;
             users[i].pw_hash=pw_hash(newpass);
             audit(name,"password changed");
+            /* v0.9.5: and saved. It never was: `passwd` reported
+               "Password changed." and the old password came back at
+               the next boot. */
+            accounts_save();
             return 0;
         }
     }
@@ -218,21 +339,18 @@ static void draw_theme_bg(void){
     theme_t *th = ui_theme();
     int t = ui_current_theme();
 
-    /* Full background with per-theme pattern (rows 1-23) */
+    /* Full background with the theme's wallpaper -- the same function the
+       desktop draws with, so the two can no longer disagree (they did:
+       this screen patterned themes 2, 3, 4 and 6, the desktop all ten). */
     for(int y=1;y<24;y++){
         for(int x=0;x<80;x++){
             char c=' ';
             vga_color_t fg=th->desk_bg;
-            if(t==2||t==4){
-                if((x*3+y*7)%29==0){ c='.'; fg=VGA_DARK_GREY; }
-            } else if(t==3){
-                if((x*5+y*3)%41==0){ c='+'; fg=VGA_BROWN; }
-            } else if(t==6){
-                if((x+y*2)%37==0){ c='|'; fg=VGA_DARK_GREY; }
-            }
+            ui_pattern_at(x,y,&c,&fg);
             vga_putchar_at(c,x,y,fg,th->desk_bg);
         }
     }
+    (void)t;
 
     /* Top strip: thin status bar */
     for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
@@ -282,11 +400,11 @@ static void draw_clock(void){
     wide[4]=ts[2]; wide[5]=' ';
     wide[6]=ts[3]; wide[7]=' '; wide[8]=ts[4];
     wide[9]=0;
-    vga_puts_at(wide, tx, 3, th->accent, th->desk_bg);
+    vga_puts_at(wide, tx, 3, th->desk_fg, th->desk_bg);
 
     /* Date below */
     int dx = (80-(int)strlen(ds))/2;
-    vga_puts_at(ds, dx, 5, th->bar_fg, th->desk_bg);
+    vga_puts_at(ds, dx, 5, th->desk_fg, th->desk_bg);
 }
 
 /* ================================================================

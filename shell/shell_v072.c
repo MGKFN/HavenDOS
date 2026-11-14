@@ -42,23 +42,36 @@ void cmd_motd_v2(const char *arg1, const char *arg2) {
 
 /* ── DF ───────────────────────────────────────────────────────── */
 void cmd_df_v2(void) {
+    /* v0.9.5: this printed "/dev/vda ... VirtIO block" and "ramfs 2MB
+       in-memory filesystem" on every machine since 0.7.2 -- a VirtIO disk
+       that real hardware does not have and a RAM filesystem an installed
+       system does not use. It reports the system volume now. */
+    extern const char *sys_volume_space(uint32_t *total_kb, uint32_t *free_kb);
+    extern int boot_is_live(void);
+    uint32_t tk=0, fk=0;
+    const char *fs = sys_volume_space(&tk, &fk);
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts("Filesystem       Size      Notes\n");
-    vga_set_color(VGA_DARK_GREY, VGA_BLACK);
-    vga_puts("------------------------------------------\n");
+    vga_puts("Volume   Type     Size        Used        Free       Use%\n");
     vga_set_color(VGA_WHITE, VGA_BLACK);
-    if (virtio_blk_ready()) {
-        uint32_t secs = (uint32_t)virtio_blk_sectors();
-        uint32_t total_mb = secs / 2048;
-        vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-        vga_printf("/dev/vda         %4dMB    VirtIO block\n", total_mb);
-        vga_set_color(VGA_WHITE, VGA_BLACK);
-    } else {
-        vga_set_color(VGA_DARK_GREY, VGA_BLACK);
-        vga_puts("/dev/vda         (not detected)\n");
-        vga_set_color(VGA_WHITE, VGA_BLACK);
+    if (!fs) {
+        vga_puts(boot_is_live() ? "(none)   live     -- a live session runs from RAM; nothing is kept\n"
+                                : "(none)   --       no system volume is mounted\n");
+        return;
     }
-    vga_puts("ramfs            2MB       in-memory filesystem\n");
+    uint32_t mb = tk / 1024u;
+    vga_printf("system   %-8s %5u MB  ", fs, mb);
+    if (fk == 0xFFFFFFFFu) {
+        vga_puts("  (the volume does not record its free space)\n");
+    } else {
+        uint32_t used = tk - fk;
+        uint32_t a = used, t = tk;           /* no 64-bit divide here */
+        while (t > 0x003FFFFFu) { a >>= 1; t >>= 1; }
+        uint32_t pct = t ? (a * 100u) / t : 0;
+        vga_printf("%5u MB    %5u MB    %3u%%\n", used / 1024u, fk / 1024u, pct);
+    }
+    vga_set_color(VGA_DARK_GREY, VGA_BLACK);
+    vga_puts("`disk` lists every disk; `system storage` draws it.\n");
+    vga_set_color(VGA_WHITE, VGA_BLACK);
 }
 
 /* ── NEOFETCH ─────────────────────────────────────────────────── */

@@ -28,7 +28,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
-          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/mines.c shell/mines_model.c shell/neofetch.c
+          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/mines.c shell/mines_model.c shell/neofetch.c
 
 SRCS_S  = boot/boot.S
 OBJS_C  = $(SRCS_C:.c=.o)
@@ -364,7 +364,12 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@echo "── test_accounts ──────────────────────────"
 	@$(TESTCC) -Iinclude -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tac tests/test_accounts.c && \
-	  python3 tools/run_suite.py --name test_accounts --min 27 -- /tmp/hd_tac
+	  python3 tools/run_suite.py --name test_accounts --min 50 -- /tmp/hd_tac
+	@echo "── test_cmddb ─────────────────────────────"
+	@echo "  the one command reference: help, man and the Manual app"
+	@$(TESTCC) -Iinclude -Wno-builtin-declaration-mismatch \
+	           -o /tmp/hd_tcdb tests/test_cmddb.c && \
+	  python3 tools/run_suite.py --name test_cmddb --min 22 -- /tmp/hd_tcdb
 	@echo "── test_tiles ─────────────────────────────"
 	@$(TESTCC) -o /tmp/hd_tti tests/test_tiles.c && \
 	  python3 tools/run_suite.py --name test_tiles --min 64 -- /tmp/hd_tti
@@ -499,7 +504,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tth tests/test_theme.c && \
-	  python3 tools/run_suite.py --name test_theme --min 41 -- /tmp/hd_tth
+	  python3 tools/run_suite.py --name test_theme --min 44 -- /tmp/hd_tth
 	@echo "── test_blkdev ────────────────────────────"
 	@echo "  one block layer, and the two orders it holds"
 	@$(TESTCC) -Iinclude -Wno-builtin-declaration-mismatch \

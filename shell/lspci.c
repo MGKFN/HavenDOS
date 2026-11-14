@@ -40,6 +40,7 @@ static void put_hex(uint32_t v, int digits)
 /* The classes this kernel has a driver for, so the listing says which line
    is the thing you are looking for rather than leaving you to decode a
    class code by hand. */
+const char *pci_describe(const pci_dev_t *d);   /* the System app reads it too */
 static const char *describe(const pci_dev_t *d)
 {
     switch (d->class) {
@@ -147,3 +148,5 @@ void cmd_lspci(const char *arg1)
         }
     }
 }
+
+const char *pci_describe(const pci_dev_t *d){ return describe(d); }

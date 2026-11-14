@@ -6,7 +6,25 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.4.1 Beta "Prometheus"
+## Current version: 0.9.5 Beta "Hephaestus"
+
+**0.9.5.** **The apps, rebuilt.**
+- `help`, `man` and the Manual app read one command reference that the
+  build checks against the shell. `help` is an index by topic; `man`
+  scrolls and fits any screen; `man` on its own is a browser.
+- `users` shows roles, passwords (and which are still the published
+  defaults), home folders and last logins.
+- Twenty new themes, each with its own desktop colour and wallpaper.
+- A real Settings app: appearance, display, desktop icons, shell,
+  accounts, network and startup.
+- One System app instead of four.
+- A ten-page guide written for 0.9.x.
+- `find` searches subfolders; `passwd` is saved; `ps` and `df` tell the
+  truth.
+
+The "multitasking planned" promise is gone; multitasking itself is
+0.9.6.
+[Changelog](changelogs/CHANGELOG-v0.9.5.md).
 
 **0.9.4.1.** Fixes found while taking the 1.0 screenshots. On a FAT32
 install (anything over 2047 MB), files can now be saved in your home
@@ -160,11 +178,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.4.1.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.5.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.4.1.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.5.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

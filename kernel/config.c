@@ -64,6 +64,15 @@ static char g_hostname[24]         = "HAVENDOS";
 static int  g_console_cols         = 0;
 static int  g_console_rows         = 0;
 
+/* v0.9.5: the settings the new Settings app added. Every one is read
+   by the code it describes -- a setting that does nothing is the
+   complaint ("settings isn't even useful") this release answers. */
+static int  g_desk_pattern         = 1;    /* the theme's wallpaper      */
+static int  g_shell_fg             = -1;   /* -1 = the theme's default   */
+static int  g_shell_bg             = -1;
+static char g_prompt[64]           = "";   /* "" = \u@havendos:\w\$     */
+static int  g_desk_info            = 1;    /* RAM/uptime strip           */
+
 /* Per-account hidden flags (index maps to login.c user order) */
 /* 0=admin 1=bootos 2=guest */
 static int  g_acct_hidden[3]       = {1, 1, 1};
@@ -119,6 +128,16 @@ void cfg_load(void){
             g_console_rows=cfg_val_int(line,"console_rows");
         else if(cfg_startswith(line,"hostname="))
             cfg_val_str(line,"hostname",g_hostname,24);
+        else if(cfg_startswith(line,"desk_pattern="))
+            g_desk_pattern=cfg_val_int(line,"desk_pattern");
+        else if(cfg_startswith(line,"desk_info="))
+            g_desk_info=cfg_val_int(line,"desk_info");
+        else if(cfg_startswith(line,"shell_fg="))
+            g_shell_fg=cfg_val_int(line,"shell_fg");
+        else if(cfg_startswith(line,"shell_bg="))
+            g_shell_bg=cfg_val_int(line,"shell_bg");
+        else if(cfg_startswith(line,"prompt="))
+            cfg_val_str(line,"prompt",g_prompt,64);
         else if(cfg_startswith(line,"account_hidden_admin="))
             g_acct_hidden[0]=cfg_val_int(line,"account_hidden_admin");
         else if(cfg_startswith(line,"account_hidden_bootos="))
@@ -157,6 +176,13 @@ void cfg_save(void){
     EMIT_KV("console_cols",         g_console_cols);
     EMIT_KV("console_rows",         g_console_rows);
     EMIT_KS("hostname",             g_hostname);
+    EMIT_KV("desk_pattern",         g_desk_pattern);
+    EMIT_KV("desk_info",            g_desk_info);
+    /* -1 does not survive utoa, so "unset" is written as 99 and read
+       back as out of range. */
+    EMIT_KV("shell_fg",             g_shell_fg<0?99:g_shell_fg);
+    EMIT_KV("shell_bg",             g_shell_bg<0?99:g_shell_bg);
+    EMIT_KS("prompt",               g_prompt);
     EMIT_KV("account_hidden_admin", g_acct_hidden[0]);
     EMIT_KV("account_hidden_bootos",g_acct_hidden[1]);
     EMIT_KV("account_hidden_guest", g_acct_hidden[2]);
@@ -195,3 +221,13 @@ const char *cfg_hostname(void)                { return g_hostname; }
 void        cfg_set_hostname(const char *h)   { strncpy(g_hostname,h,23); }
 int         cfg_acct_hidden(int idx)          { return (idx>=0&&idx<3)?g_acct_hidden[idx]:0; }
 void        cfg_set_acct_hidden(int idx,int v){ if(idx>=0&&idx<3)g_acct_hidden[idx]=v; }
+
+int         cfg_desk_pattern(void)            { return g_desk_pattern; }
+void        cfg_set_desk_pattern(int v)       { g_desk_pattern=v?1:0; }
+int         cfg_desk_info(void)               { return g_desk_info; }
+void        cfg_set_desk_info(int v)          { g_desk_info=v?1:0; }
+int         cfg_shell_fg(void)                { return (g_shell_fg>=0&&g_shell_fg<16)?g_shell_fg:-1; }
+int         cfg_shell_bg(void)                { return (g_shell_bg>=0&&g_shell_bg<16)?g_shell_bg:-1; }
+void        cfg_set_shell_colors(int fg,int bg){ g_shell_fg=fg; g_shell_bg=bg; }
+const char *cfg_prompt(void)                  { return g_prompt; }
+void        cfg_set_prompt(const char *p)     { strncpy(g_prompt,p?p:"",63); g_prompt[63]=0; }

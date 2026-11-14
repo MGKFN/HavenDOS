@@ -17,59 +17,106 @@ extern const char *current_username(void);
 extern int         current_user_admin(void);
 
 /* ================================================================
-   THEMES  — 10 modern palettes
+   THEMES -- redone for v0.9.5
+
+   The set this replaces was ten palettes from 0.6.x that differed in
+   the colour of a bar and nothing else: every one of the twenty had a
+   BLACK desktop, so switching theme changed the taskbar and left the
+   screen looking the same. Kyan's photo of `theme` made the point --
+   "themes old, and are never changed since we added them".
+
+   Now each theme is a whole look: a desktop colour, a wallpaper drawn
+   from one of nine shapes, and text colours picked to be readable on
+   that desktop (desk_fg, a new field -- the desktop used to draw its
+   text in bar_fg, which only worked because every desktop was black).
+
+   Backgrounds stay in colours 0-7. In VGA text mode colours 8-15 as a
+   background mean "blink" unless the attribute controller is told
+   otherwise, and the firmware's text mode is not ours to reprogram on
+   every machine; the framebuffer console does not care either way.
+
+   The first twelve are on every install; the last eight come with the
+   themes-extra package. The theme is saved by NAME now (".theme"), so
+   reordering this table can never silently swap someone's theme again;
+   a file from an older release holds a number and goes through
+   legacy_map[] once.
    ================================================================ */
+#define C(x) VGA_##x
 static theme_t themes[]={
- /* bar_bg         bar_fg       desk_bg       win_bg         win_fg
-    title_bg       title_fg     accent        icon_bg        icon_fg   name */
- /* ── Base 10 themes (always available) ─────────────────────────── */
- {VGA_DARK_GREY,  VGA_CYAN,    VGA_BLACK,    VGA_BLACK,     VGA_LIGHT_GREY,
-  VGA_DARK_GREY,  VGA_CYAN,    VGA_CYAN,     VGA_DARK_GREY, VGA_CYAN,    "Midnight Cyan"},
- {VGA_BLUE,       VGA_WHITE,   VGA_BLACK,    VGA_BLACK,     VGA_LIGHT_GREY,
-  VGA_BLUE,       VGA_WHITE,   VGA_LIGHT_CYAN,VGA_BLUE,     VGA_WHITE,   "Classic Blue"},
- {VGA_BLACK,      VGA_LIGHT_GREEN,VGA_BLACK, VGA_BLACK,     VGA_LIGHT_GREEN,
-  VGA_BLACK,      VGA_LIGHT_GREEN,VGA_GREEN, VGA_BLACK,     VGA_LIGHT_GREEN,"Terminal Green"},
- {VGA_BLACK,      VGA_YELLOW,  VGA_BLACK,    VGA_BLACK,     VGA_YELLOW,
-  VGA_BLACK,      VGA_YELLOW,  VGA_YELLOW,   VGA_BLACK,     VGA_YELLOW,  "Amber"},
- {VGA_DARK_GREY,  VGA_WHITE,   VGA_BLACK,    VGA_BLACK,     VGA_LIGHT_GREY,
-  VGA_DARK_GREY,  VGA_WHITE,   VGA_LIGHT_GREY,VGA_DARK_GREY,VGA_WHITE,   "Dark"},
- {VGA_LIGHT_BLUE, VGA_WHITE,   VGA_BLACK,    VGA_BLACK,     VGA_WHITE,
-  VGA_LIGHT_BLUE, VGA_WHITE,   VGA_LIGHT_CYAN,VGA_LIGHT_BLUE,VGA_WHITE,  "Arctic"},
- {VGA_BLACK,      VGA_MAGENTA, VGA_BLACK,    VGA_BLACK,     VGA_LIGHT_CYAN,
-  VGA_BLACK,      VGA_MAGENTA, VGA_MAGENTA,  VGA_BLACK,     VGA_CYAN,    "Neon"},
- {VGA_GREEN,      VGA_BLACK,   VGA_BLACK,    VGA_BLACK,     VGA_LIGHT_GREY,
-  VGA_GREEN,      VGA_BLACK,   VGA_LIGHT_GREEN,VGA_GREEN,   VGA_BLACK,   "Mint"},
- {VGA_RED,        VGA_WHITE,   VGA_BLACK,    VGA_BLACK,     VGA_LIGHT_GREY,
-  VGA_RED,        VGA_WHITE,   VGA_LIGHT_RED, VGA_RED,      VGA_WHITE,   "Sunset"},
- {VGA_BROWN,      VGA_WHITE,   VGA_BLACK,    VGA_BLACK,     VGA_LIGHT_GREY,
-  VGA_RED,        VGA_WHITE,   VGA_RED,      VGA_BROWN,     VGA_WHITE,   "Retro"},
- /* ── Extra 10 themes (unlocked by themes-extra package) ─────────── */
- {VGA_BLACK,      VGA_LIGHT_RED,VGA_BLACK,   VGA_BLACK,     VGA_LIGHT_RED,
-  VGA_BLACK,      VGA_LIGHT_RED,VGA_RED,     VGA_BLACK,     VGA_LIGHT_RED,"Blood"},
- {VGA_LIGHT_GREY, VGA_BLACK,   VGA_BLACK,    VGA_DARK_GREY, VGA_BLACK,
-  VGA_LIGHT_GREY, VGA_BLACK,   VGA_DARK_GREY,VGA_LIGHT_GREY,VGA_BLACK,   "Monochrome"},
- {VGA_CYAN,       VGA_BLACK,   VGA_BLACK,    VGA_BLACK,     VGA_CYAN,
-  VGA_CYAN,       VGA_BLACK,   VGA_LIGHT_CYAN,VGA_CYAN,     VGA_BLACK,   "Ocean"},
- {VGA_DARK_GREY,  VGA_MAGENTA, VGA_BLACK,    VGA_BLACK,     VGA_MAGENTA,
-  VGA_DARK_GREY,  VGA_MAGENTA, VGA_LIGHT_MAGENTA,VGA_DARK_GREY,VGA_MAGENTA,"Purple Haze"},
- {VGA_BLACK,      VGA_WHITE,   VGA_BLACK,    VGA_BLACK,     VGA_WHITE,
-  VGA_BLACK,      VGA_WHITE,   VGA_WHITE,    VGA_DARK_GREY, VGA_WHITE,   "Ghost"},
- {VGA_BROWN,      VGA_YELLOW,  VGA_BLACK,    VGA_BLACK,     VGA_YELLOW,
-  VGA_BROWN,      VGA_YELLOW,  VGA_YELLOW,   VGA_BROWN,     VGA_YELLOW,  "Desert"},
- {VGA_BLUE,       VGA_CYAN,    VGA_BLACK,    VGA_BLACK,     VGA_CYAN,
-  VGA_BLUE,       VGA_CYAN,    VGA_LIGHT_CYAN,VGA_BLUE,     VGA_CYAN,    "Sapphire"},
- {VGA_GREEN,      VGA_YELLOW,  VGA_BLACK,    VGA_BLACK,     VGA_YELLOW,
-  VGA_GREEN,      VGA_YELLOW,  VGA_LIGHT_GREEN,VGA_GREEN,   VGA_YELLOW,  "Matrix Gold"},
- {VGA_DARK_GREY,  VGA_LIGHT_RED,VGA_BLACK,   VGA_BLACK,     VGA_LIGHT_RED,
-  VGA_RED,        VGA_WHITE,   VGA_LIGHT_RED,VGA_DARK_GREY, VGA_LIGHT_RED,"Volcano"},
- {VGA_LIGHT_BLUE, VGA_BLACK,   VGA_BLACK,    VGA_BLACK,     VGA_LIGHT_BLUE,
-  VGA_LIGHT_BLUE, VGA_BLACK,   VGA_CYAN,     VGA_LIGHT_BLUE,VGA_BLACK,   "Ice"},
+ /* bar_bg bar_fg  desk_bg  win_bg win_fg  title_bg title_fg  accent  icon_bg icon_fg
+      name            desk_fg   wallpaper                         */
+ {C(BLACK),C(WHITE),       C(BLUE),   C(BLACK),C(LIGHT_GREY), C(CYAN),   C(LIGHT_CYAN),  C(LIGHT_CYAN),   C(LIGHT_CYAN),   C(WHITE),
+   "Haven",          C(WHITE),      UI_PAT_GRID,   '.', C(LIGHT_BLUE)},
+ {C(BLACK),C(LIGHT_CYAN),  C(BLACK),  C(BLACK),C(LIGHT_GREY), C(BLACK),  C(LIGHT_CYAN),  C(CYAN),         C(CYAN),         C(LIGHT_CYAN),
+   "Midnight",       C(LIGHT_GREY), UI_PAT_GRID,   '.', C(DARK_GREY)},
+ {C(BLACK),C(LIGHT_GREEN), C(BLACK),  C(BLACK),C(LIGHT_GREEN),C(BLACK),  C(LIGHT_GREEN), C(GREEN),        C(GREEN),        C(LIGHT_GREEN),
+   "Terminal",       C(LIGHT_GREEN),UI_PAT_RAIN,   '.', C(GREEN)},
+ {C(BLACK),C(YELLOW),      C(BLACK),  C(BLACK),C(YELLOW),     C(BLACK),  C(YELLOW),      C(YELLOW),       C(BROWN),        C(YELLOW),
+   "Amber CRT",      C(YELLOW),     UI_PAT_HATCH,  '.', C(BROWN)},
+ {C(BLUE), C(WHITE),       C(CYAN),   C(BLACK),C(LIGHT_GREY), C(BLUE),   C(WHITE),       C(LIGHT_CYAN),   C(BLUE),         C(WHITE),
+   "Ocean",          C(BLACK),      UI_PAT_WAVE,   '~', C(LIGHT_CYAN)},
+ {C(BLACK),C(LIGHT_GREEN), C(GREEN),  C(BLACK),C(LIGHT_GREY), C(GREEN),  C(LIGHT_GREEN), C(YELLOW),       C(YELLOW),       C(WHITE),
+   "Forest",         C(WHITE),      UI_PAT_TREES,  '^', C(LIGHT_GREEN)},
+ {C(BLACK),C(YELLOW),      C(RED),    C(BLACK),C(LIGHT_GREY), C(RED),    C(YELLOW),      C(YELLOW),       C(YELLOW),       C(WHITE),
+   "Sunset",         C(WHITE),      UI_PAT_BANDS,  '-', C(LIGHT_RED)},
+ {C(BLACK),C(LIGHT_MAGENTA),C(MAGENTA),C(BLACK),C(LIGHT_GREY),C(MAGENTA), C(WHITE),       C(LIGHT_MAGENTA),C(LIGHT_MAGENTA),C(WHITE),
+   "Grape",          C(WHITE),      UI_PAT_SCATTER,'+', C(LIGHT_MAGENTA)},
+ {C(BLACK),C(WHITE),       C(BLACK),  C(BLACK),C(LIGHT_GREY), C(BLACK),  C(LIGHT_BLUE),  C(LIGHT_BLUE),   C(LIGHT_BLUE),   C(WHITE),
+   "Slate",          C(LIGHT_GREY), UI_PAT_COLUMNS,'|', C(DARK_GREY)},
+ {C(BLACK),C(WHITE),       C(LIGHT_GREY),C(BLACK),C(LIGHT_GREY),C(BLACK), C(LIGHT_RED),   C(RED),          C(BLUE),         C(BLACK),
+   "Paper",          C(BLACK),      UI_PAT_GRID,   '.', C(DARK_GREY)},
+ {C(BLACK),C(YELLOW),      C(BROWN),  C(BLACK),C(LIGHT_GREY), C(BROWN),  C(YELLOW),      C(YELLOW),       C(YELLOW),       C(WHITE),
+   "Retro",          C(WHITE),      UI_PAT_CHECK,  '.', C(YELLOW)},
+ {C(BLACK),C(WHITE),       C(BLACK),  C(BLACK),C(WHITE),      C(BLACK),  C(YELLOW),      C(YELLOW),       C(WHITE),        C(WHITE),
+   "High Contrast",  C(WHITE),      UI_PAT_NONE,   ' ', C(BLACK)},
+ /* ── themes-extra ── */
+ {C(BLACK),C(LIGHT_MAGENTA),C(BLACK), C(BLACK),C(LIGHT_CYAN), C(BLACK),  C(LIGHT_MAGENTA),C(LIGHT_CYAN),  C(MAGENTA),      C(LIGHT_CYAN),
+   "Neon",           C(LIGHT_CYAN), UI_PAT_COLUMNS,'|', C(MAGENTA)},
+ {C(BLUE), C(WHITE),       C(BLUE),   C(BLACK),C(WHITE),      C(BLUE),   C(WHITE),       C(WHITE),        C(LIGHT_CYAN),   C(WHITE),
+   "Arctic",         C(WHITE),      UI_PAT_SCATTER,'*', C(WHITE)},
+ {C(BLACK),C(LIGHT_RED),   C(BLACK),  C(BLACK),C(LIGHT_GREY), C(RED),    C(WHITE),       C(LIGHT_RED),    C(RED),          C(YELLOW),
+   "Volcano",        C(LIGHT_RED),  UI_PAT_TREES,  '^', C(RED)},
+ {C(BLACK),C(YELLOW),      C(BROWN),  C(BLACK),C(YELLOW),     C(BROWN),  C(YELLOW),      C(YELLOW),       C(YELLOW),       C(WHITE),
+   "Desert",         C(YELLOW),     UI_PAT_WAVE,   '~', C(YELLOW)},
+ {C(BLACK),C(LIGHT_CYAN),  C(CYAN),   C(BLACK),C(LIGHT_GREY), C(CYAN),   C(WHITE),       C(LIGHT_CYAN),   C(BLUE),         C(WHITE),
+   "Lagoon",         C(BLACK),      UI_PAT_SCATTER,'o', C(WHITE)},
+ {C(BLACK),C(LIGHT_GREY),  C(BLACK),  C(BLACK),C(LIGHT_GREY), C(BLACK),  C(WHITE),       C(WHITE),        C(DARK_GREY),    C(LIGHT_GREY),
+   "Mono",           C(LIGHT_GREY), UI_PAT_HATCH,  '.', C(DARK_GREY)},
+ {C(BLACK),C(YELLOW),      C(BLUE),   C(BLACK),C(LIGHT_GREY), C(BLUE),   C(YELLOW),      C(YELLOW),       C(YELLOW),       C(WHITE),
+   "Royal",          C(YELLOW),     UI_PAT_CHECK,  '+', C(YELLOW)},
+ {C(BLACK),C(LIGHT_RED),   C(MAGENTA),C(BLACK),C(LIGHT_GREY), C(MAGENTA),C(WHITE),       C(LIGHT_RED),    C(LIGHT_RED),    C(WHITE),
+   "Rose",           C(WHITE),      UI_PAT_GRID,   '.', C(LIGHT_RED)},
 };
-#define NTHEMES_BASE  10
-#define NTHEMES_EXTRA 20   /* total when themes-extra installed */
-#define NTHEMES_ALL   20
+#undef C
+#define NTHEMES_BASE  12
+#define NTHEMES_ALL   ((int)(sizeof(themes)/sizeof(themes[0])))
 static int cur_theme    = 0;
 static int g_extra_themes = 0;   /* set to 1 when themes-extra is installed */
+static int g_pattern_on   = 1;
+
+/* Old index (0.6 to 0.9.4) to the new theme most like it. */
+static const uint8_t legacy_map[20] = {
+    1,  /* Midnight Cyan  -> Midnight      */
+    0,  /* Classic Blue   -> Haven         */
+    2,  /* Terminal Green -> Terminal      */
+    3,  /* Amber          -> Amber CRT     */
+    8,  /* Dark           -> Slate         */
+    13, /* Arctic         -> Arctic        */
+    12, /* Neon           -> Neon          */
+    5,  /* Mint           -> Forest        */
+    6,  /* Sunset         -> Sunset        */
+    10, /* Retro          -> Retro         */
+    14, /* Blood          -> Volcano       */
+    17, /* Monochrome     -> Mono          */
+    4,  /* Ocean          -> Ocean         */
+    7,  /* Purple Haze    -> Grape         */
+    11, /* Ghost          -> High Contrast */
+    15, /* Desert         -> Desert        */
+    18, /* Sapphire       -> Royal         */
+    2,  /* Matrix Gold    -> Terminal      */
+    14, /* Volcano        -> Volcano       */
+    13, /* Ice            -> Arctic        */
+};
 
 extern int vfs_write(const char*, const char*, uint32_t);
 extern int vfs_read(const char*, char*, uint32_t);
@@ -79,36 +126,89 @@ extern int vfs_read(const char*, char*, uint32_t);
 static int nthemes_active(void){ return g_extra_themes ? NTHEMES_ALL : NTHEMES_BASE; }
 
 theme_t    *ui_theme(void)          { return &themes[cur_theme]; }
+const theme_t *ui_theme_get(int n)  { return (n>=0&&n<NTHEMES_ALL)?&themes[n]:&themes[0]; }
+int         ui_theme_base_count(void){ return NTHEMES_BASE; }
+int         ui_theme_total(void)     { return NTHEMES_ALL; }
 void        ui_set_theme(int n)     {
     int max = nthemes_active();
     if(n>=0&&n<max){
         cur_theme=n;
-        /* store as two-char decimal so we can handle n>=10 */
-        char buf[6];
-        if(n<10){ buf[0]='0'+n; buf[1]='\n'; buf[2]=0; vfs_write(THEME_FILE,buf,2); }
-        else    { buf[0]='0'+n/10; buf[1]='0'+n%10; buf[2]='\n'; buf[3]=0; vfs_write(THEME_FILE,buf,3); }
+        const char *nm=themes[n].name;
+        char buf[32]; int k=0;
+        while(nm[k]&&k<30){ buf[k]=nm[k]; k++; }
+        buf[k++]='\n';
+        vfs_write(THEME_FILE,buf,(uint32_t)k);
     }
 }
 int         ui_theme_count(void)    { return nthemes_active(); }
 int         ui_current_theme(void)  { return cur_theme; }
 const char *ui_theme_name(int n)    { int max=nthemes_active(); return (n>=0&&n<max)?themes[n].name:"?"; }
 
+/* ── The wallpaper ─────────────────────────────────────────────── */
+static int pat_cell(const theme_t *t, int x, int y, char *c, vga_color_t *fg){
+    int hit=0;
+    char ch=t->pat_ch;
+    switch(t->pat_kind){
+    case UI_PAT_GRID:    hit = (x%8==0 && y%4==0); break;
+    case UI_PAT_RAIN:
+        if((x*3+y*7)%17==0) hit=1;
+        else if((x*7+y*2)%31==0){ *c=(char)('0'+((x+y)%10)); *fg=VGA_DARK_GREY; return 1; }
+        break;
+    case UI_PAT_HATCH:   hit = ((x+y)%12==0 || (x-y+240)%12==0); break;
+    case UI_PAT_WAVE:    hit = ((y*4 + ((x/5)%2)*2) % 10 == 0 && x%5 != 4); break;
+    case UI_PAT_TREES:   hit = ((x*7+y*13)%37==0); break;
+    case UI_PAT_BANDS:   hit = (y%6==0 && (x/3)%2==0); break;
+    case UI_PAT_SCATTER: hit = ((x*5+y*11)%53==0); break;
+    case UI_PAT_COLUMNS:
+        if(x%16==0){ if(y%5==0){ *c='+'; *fg=t->accent; return 1; } hit=1; }
+        break;
+    case UI_PAT_CHECK:   hit = ((x/4+y/2)%2==0 && x%4==0 && y%2==0); break;
+    default: return 0;
+    }
+    if(!hit) return 0;
+    *c=ch; *fg=t->pat_fg;
+    return 1;
+}
+int ui_pattern_at_theme(int n, int x, int y, char *c, vga_color_t *fg){
+    return pat_cell(ui_theme_get(n), x, y, c, fg);
+}
+int ui_pattern_at(int x, int y, char *c, vga_color_t *fg){
+    if(!g_pattern_on) return 0;
+    return pat_cell(&themes[cur_theme], x, y, c, fg);
+}
+int  ui_desk_pattern(void){ return g_pattern_on; }
+void ui_set_desk_pattern(int on){
+    extern void cfg_set_desk_pattern(int); extern void cfg_save(void);
+    g_pattern_on = on ? 1 : 0;
+    cfg_set_desk_pattern(g_pattern_on); cfg_save();
+}
+void ui_toggle_desk_pattern(void){ ui_set_desk_pattern(!g_pattern_on); }
+
 void ui_unlock_extra_themes(void)  { g_extra_themes=1; }
 int  ui_extra_themes_unlocked(void){ return g_extra_themes; }
 
 void ui_load_theme(void){
     extern int bpkg_is_installed(const char*);
+    extern int cfg_desk_pattern(void);
     if(bpkg_is_installed("themes-extra")) g_extra_themes=1;
-    char buf[8];
+    g_pattern_on = cfg_desk_pattern();
+    char buf[40];
     int r=vfs_read(THEME_FILE, buf, sizeof(buf)-1);
-    if(r>0){
-        buf[r]=0;
-        int n=0;
-        if(buf[1]>='0'&&buf[1]<='9') n=(buf[0]-'0')*10+(buf[1]-'0');
-        else n=buf[0]-'0';
-        int max=nthemes_active();
-        if(n>=0&&n<max) cur_theme=n;
+    if(r<=0) return;
+    buf[r]=0;
+    while(r>0&&(buf[r-1]=='\n'||buf[r-1]=='\r'||buf[r-1]==' ')) buf[--r]=0;
+    int max=nthemes_active();
+    if(buf[0]>='0'&&buf[0]<='9'){
+        /* A number: written by 0.9.4 or older, indexing the old table. */
+        int n=buf[0]-'0';
+        if(buf[1]>='0'&&buf[1]<='9') n=n*10+(buf[1]-'0');
+        int m=(n>=0&&n<20)?legacy_map[n]:0;
+        if(m>=max) m=(n==5)?0:1;   /* an extra the package no longer unlocks */
+        ui_set_theme(m);           /* rewrite it by name, once */
+        return;
     }
+    for(int i=0;i<max;i++)
+        if(strcmp(themes[i].name,buf)==0){ cur_theme=i; return; }
 }
 
 /* Preview a theme in-memory only — no disk write; used by Settings live preview
@@ -240,53 +340,16 @@ void ui_draw_corner_clock(void){
 }
 
 /* ================================================================
-   DESKTOP BACKGROUND
-   Per-theme background using only safe ASCII chars (UTM SE safe).
-   Themes 0,1,5,7,8,9 = plain black.
-   Themes 2,4 = sparse dots '.', Themes 3 = sparse '+', 6 = sparse '|'
+   DESKTOP BACKGROUND -- the theme's colour and wallpaper
    ================================================================ */
 void ui_draw_desktop(void){
     theme_t *th=ui_theme();
-    for(int y=1;y<24;y++){
-        for(int x=0;x<80;x++){
+    int W=vga_cols(), H=vga_rows();
+    for(int y=1;y<H-1;y++){
+        for(int x=0;x<W;x++){
             char c=' ';
             vga_color_t fg=th->desk_bg;
-            switch(cur_theme){
-            case 0: /* Midnight Cyan — sparse dots in a grid */
-                if(x%8==0&&y%4==0){ c='.'; fg=VGA_DARK_GREY; }
-                break;
-            case 1: /* Classic Blue — horizontal rule every 6 rows */
-                if(y%6==0){ c='-'; fg=VGA_BLUE; }
-                break;
-            case 2: /* Terminal Green — matrix rain dots */
-                if((x*3+y*7)%17==0){ c='.'; fg=VGA_GREEN; }
-                else if((x*7+y*2)%31==0){ c='0'+((x+y)%10); fg=VGA_DARK_GREY; }
-                break;
-            case 3: /* Amber — diagonal hatching */
-                if((x+y)%12==0||(x-y+80)%12==0){ c='.'; fg=VGA_BROWN; }
-                break;
-            case 4: /* Dark — subtle corner brackets */
-                if((x%20==0&&y%10==0)||(x%20==1&&y%10==0)||(x%20==0&&y%10==1))
-                    { c='.'; fg=VGA_DARK_GREY; }
-                break;
-            case 5: /* Arctic — sparse snowflakes */
-                if((x*5+y*11)%53==0){ c='*'; fg=VGA_LIGHT_BLUE; }
-                else if((x*11+y*3)%47==0){ c='.'; fg=VGA_DARK_GREY; }
-                break;
-            case 6: /* Neon — vertical bar accents */
-                if(x%16==0){ c='|'; fg=VGA_DARK_GREY; }
-                if(x%16==0&&y%5==0){ c='+'; fg=VGA_MAGENTA; }
-                break;
-            case 7: /* Mint — horizontal wave */
-                { int wave=(x%16<8)?0:1; if((y+wave)%6==0){ c='-'; fg=VGA_GREEN; } }
-                break;
-            case 8: /* Sunset — diagonal rays */
-                if((x+y*2)%19==0){ c='/'; fg=VGA_RED; }
-                break;
-            case 9: /* Retro — checkerboard dots */
-                if((x/4+y/2)%2==0&&x%4==0&&y%2==0){ c='.'; fg=VGA_BROWN; }
-                break;
-            }
+            ui_pattern_at(x,y,&c,&fg);
             vga_putchar_at(c,x,y,fg,th->desk_bg);
         }
     }

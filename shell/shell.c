@@ -304,6 +304,12 @@ static void alias_load(void){
             int kl=(int)(eq-p); if(kl>15)kl=15;
             strncpy(k,p,kl); k[kl]=0;
             strncpy(v,eq+1,63); v[63]=0;
+            /* v0.9.5: `h` used to be a built-in alias for help, which
+               made the H language's own command unreachable -- typing
+               `h` opened the help screen. The default is gone; a copy
+               saved by an older release is dropped here so the command
+               comes back without anyone editing ETC/ALIASES.TXT. */
+            if(!strcmp(k,"h")&&!strcmp(v,"help")) k[0]=0;
             if(k[0]&&v[0]) alias_set(k,v);
         }
         p=end; if(saved) p++; else break;
@@ -399,8 +405,8 @@ static const char *shell_cmds[]={
     "neofetch","netstat","notepad","notify","nslookup","paint","pair","passwd","ping",
     "pipes","play","poweroff","ps","ps1","pwd","quit","quiz",
     "reboot","rename","repeat","res","resolution","rm","rollback","rsa","run",
-    "screensaver","script","selftest","seq","set","shutdown","snake","sort",
-    "source","stars","stat","sysinfo","sysinfo-plus","tail","tcpsend","tcptest",
+    "screensaver","script","selftest","seq","set","settings","shutdown","snake","sort",
+    "source","stars","stat","sysinfo","sysinfo-plus","sysmon","system","tail","tcpsend","tcptest",
     "tee","theme","time","timer","tls","tlsinfo","todo","touch",
     "tree","type","udpsend","unalias","uniq","unset","unzip","update",
     "lockdown","uptime","usb","users","ver","version","watch","wc","wget",
@@ -953,34 +959,87 @@ static void sort_buf(const char *buf, int len, int reverse, int unique){
 /* ================================================================
    FIND
    ================================================================ */
-#define MAX_FIND_FILES 64
-static char find_names[MAX_FIND_FILES][24];
-static int  find_count=0;
-static void find_collect(const char *name, int is_dir, uint32_t size){
-    (void)is_dir;(void)size;
-    if(find_count<MAX_FIND_FILES)
-        strncpy(find_names[find_count++],name,23);
-}
-static void do_find(const char *pattern){
-    find_count=0; vfs_list_dir(shell_cwd, find_collect);  /* v0.7.6: was root-only */
-    int plen=(int)strlen(pattern);
-    int found=0;
-    for(int i=0;i<find_count;i++){
-        int match=0;
-        if(pattern[0]=='*'){
-            int nlen=(int)strlen(find_names[i]);
-            int slen=plen-1;
-            if(nlen>=slen&&strcmp(find_names[i]+nlen-slen,pattern+1)==0) match=1;
-        } else {
-            const char *h=find_names[i];
-            while(*h){
-                if(strncmp(h,pattern,plen)==0){match=1;break;}
-                h++;
-            }
-        }
-        if(match){out_str("./");out_str(find_names[i]);out_char('\n');found++;}
+/* v0.9.5: find was "names in this folder that end with the pattern if
+   it starts with *, else contain it" -- `find *note*` found nothing,
+   and nothing below the current folder was ever searched. Now it is a
+   real glob (* and ?, any case) over the current folder and every
+   folder below it, breadth first. A pattern with no wildcard matches
+   anywhere in a name, which is what the old substring rule was for.
+
+   Only FAT32 and the RAM filesystem list subfolders; FAT16 and FAT12
+   list their root whatever folder they are asked for (see
+   vfs_list_dir), so on those there is one level and no descent --
+   descending would list the root forever. */
+#define FIND_QMAX 48
+static char find_q[FIND_QMAX][64];
+static int  find_qt, find_found, find_trunc;
+static char find_dir[64];
+static const char *find_pat;
+
+static char find_lc(char c){ return (c>='A'&&c<='Z')?(char)(c+32):c; }
+
+static int glob_ci(const char *p, const char *s){
+    const char *star=0, *back=0;
+    while(*s){
+        if(*p=='?' || (*p && *p!='*' && find_lc(*p)==find_lc(*s))){ p++; s++; continue; }
+        if(*p=='*'){ star=p++; back=s; continue; }
+        if(star){ p=star+1; s=++back; continue; }
+        return 0;
     }
-    if(!found&&!pipe_mode) vga_printf("No files matching '%s'\n",pattern);
+    while(*p=='*') p++;
+    return *p==0;
+}
+
+static void find_cb(const char *name, int is_dir, uint32_t size){
+    (void)size;
+    if(!name||!name[0]||!strcmp(name,".")||!strcmp(name,"..")) return;
+    char full[64]; int n=0;
+    for(const char *d=find_dir; *d && n<62; d++) full[n++]=*d;
+    if(n && n<62) full[n++]='/';
+    for(const char *d=name; *d && n<63; d++) full[n++]=*d;
+    full[n]=0;
+    if(glob_ci(find_pat,name)){
+        out_char('/'); out_str(full);
+        if(is_dir) out_char('/');
+        out_char('\n');
+        find_found++;
+    }
+    if(is_dir){
+        if(find_qt<FIND_QMAX){ strncpy(find_q[find_qt],full,63); find_q[find_qt][63]=0; find_qt++; }
+        else find_trunc=1;
+    }
+}
+
+static void do_find(const char *pattern){
+    extern int vfs_using_fat32(void);
+    char pat[48]; int n=0;
+    int wild=0;
+    for(const char *c=pattern;*c;c++) if(*c=='*'||*c=='?') wild=1;
+    if(!wild) pat[n++]='*';
+    for(const char *c=pattern;*c&&n<45;c++) pat[n++]=*c;
+    if(!wild) pat[n++]='*';
+    pat[n]=0;
+    find_pat=pat; find_found=0; find_trunc=0; find_qt=0;
+
+    int deep = vfs_using_fat32() || !vfs_using_disk();
+    strncpy(find_q[find_qt++], shell_cwd, 63);
+    for(int qh=0; qh<find_qt; qh++){
+        strncpy(find_dir, find_q[qh], 63); find_dir[63]=0;
+        vfs_list_dir(find_dir, find_cb);
+        if(!deep) break;
+    }
+    if(pipe_mode) return;
+    if(!find_found) vga_printf("No names matching '%s' here or below.\n",pattern);
+    else{
+        vga_set_color(VGA_DARK_GREY,VGA_BLACK);
+        vga_printf("%d found\n",find_found);
+        vga_set_color(VGA_WHITE,VGA_BLACK);
+    }
+    if(find_trunc){
+        vga_set_color(VGA_YELLOW,VGA_BLACK);
+        vga_printf("(stopped descending after %d folders -- cd lower down to search deeper)\n",FIND_QMAX);
+        vga_set_color(VGA_WHITE,VGA_BLACK);
+    }
 }
 
 /* ================================================================
@@ -1065,18 +1124,52 @@ static void cmd_adduser(const char *name, const char *pass){
     else       out_str("Failed (duplicate or limit reached).\n");
 }
 
+/* v0.9.5: the shell's own colours, kept and saved. Before this `color`
+   lasted exactly until the next command reset to white on black. */
+static int sh_fg = VGA_WHITE, sh_bg = VGA_BLACK;
+void shell_colors_load(void){
+    extern int cfg_shell_fg(void); extern int cfg_shell_bg(void);
+    extern void cfg_load(void);
+    cfg_load();
+    int f=cfg_shell_fg(), b=cfg_shell_bg();
+    sh_fg = (f>0) ? f : VGA_WHITE;
+    sh_bg = VGA_BLACK;   /* text colour only -- see cmd_color */
+    (void)b;
+}
+void shell_colors_set(int fg, int bg){
+    extern void cfg_set_shell_colors(int,int); extern void cfg_save(void);
+    if(fg<0||fg>15) fg=VGA_WHITE;
+    if(bg<0||bg>7)  bg=VGA_BLACK;
+    sh_fg=fg; sh_bg=bg;
+    cfg_set_shell_colors(fg,bg); cfg_save();
+    vga_set_color((vga_color_t)fg,(vga_color_t)bg);
+}
+void shell_colors_get(int *fg, int *bg){ *fg=sh_fg; *bg=sh_bg; }
+
 static void cmd_color(const char *fg_s, const char *bg_s){
+    if(fg_s[0] && !strcmp(fg_s,"reset")){
+        shell_colors_set(VGA_WHITE,VGA_BLACK);
+        vga_puts("Colours back to white on black.\n");
+        return;
+    }
     if(!fg_s[0]){
-        vga_puts("Usage: color <fg> [bg]  (0-15)\n");
+        vga_puts("Usage: color <0-15>   or   color reset\n");
         vga_puts("  0=Black 1=Blue 2=Green 3=Cyan 4=Red 5=Magenta\n");
         vga_puts("  6=Brown 7=LGrey 8=DGrey 9=LBlue 10=LGreen\n");
         vga_puts("  11=LCyan 12=LRed 13=LMagenta 14=Yellow 15=White\n");
         return;
     }
     int fg=atoi(fg_s); if(fg<0||fg>15) fg=7;
-    int bg=bg_s[0]?atoi(bg_s):0; if(bg<0||bg>15) bg=0;
-    vga_set_color((vga_color_t)fg,(vga_color_t)bg);
-    vga_printf("Color set: fg=%d bg=%d\n",fg,bg);
+    /* Text colour only. A background did not survive: most commands
+       draw their own highlights on black, so a blue background came out
+       as stripes. Better a setting that holds than one that half does. */
+    if(bg_s[0] && atoi(bg_s)!=0){
+        vga_puts("color sets the text colour; the background stays black, because\n"
+                 "most commands draw on black and anything else came out striped.\n");
+    }
+    if(fg==0){ vga_puts("Black text on black would be invisible.\n"); return; }
+    shell_colors_set(fg,VGA_BLACK);
+    vga_printf("Text colour set to %d (saved). 'color reset' undoes it.\n",fg);
 }
 
 static void cmd_cowsay(const char *msg){
@@ -2018,280 +2111,6 @@ static void run_snake(void){
 /* ================================================================
    GUIDE — built-in interactive user guide
    ================================================================ */
-static void guide_page(int pg, int total){
-    vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-    vga_puts("Page "); char pb[4]; itoa(pg,pb,10); vga_puts(pb);
-    vga_puts("/"); itoa(total,pb,10); vga_puts(pb);
-    vga_puts("  -- press any key --");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    keyboard_waitchar();
-    vga_puts("\r                                \r");
-}
-
-static void guide_header(const char *title){
-    vga_set_color(VGA_BLACK,VGA_LIGHT_CYAN);
-    for(int x=0;x<80;x++) vga_putchar(' ');
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("\r  HavenDOS Guide  -  ");
-    vga_puts(title);
-    vga_putchar('\n');
-    vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-    for(int i=0;i<80;i++) vga_putchar('-');
-    vga_putchar('\n');
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-}
-
-void cmd_guide(void){
-    vga_clear(); toast_clear();
-
-    /* === PAGE 1: Welcome === */
-    guide_header("Welcome");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Welcome to HavenDOS " HAVENDOS_VER "\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("  HavenDOS is a bare-metal 32-bit OS by TechHaven Studios.\n");
-    vga_puts("  It boots directly from GRUB2 with no Linux underneath.\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Getting around:\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    - At the desktop: the Windows key opens the start menu\n");
-    vga_puts("      (ESC does too), and TAB opens the shell\n");
-    vga_puts("    - In the shell: type commands and press ENTER\n");
-    vga_puts("    - Tab key completes commands and filenames\n");
-    vga_puts("    - Up/Down arrows scroll through command history\n");
-    vga_puts("    - Type 'exit' to return to the desktop\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Useful commands to start with:\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    help       "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("List all commands\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    man <cmd>  "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Detailed help for one command\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    sysinfo    "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Hardware and OS information\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    dashboard  "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Live system monitor\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_putchar('\n');
-    guide_page(1,7);
-
-    /* === PAGE 2: Files === */
-    vga_clear(); toast_clear();
-    guide_header("Files and Filesystem");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  HavenDOS uses RAMFS - a RAM-based filesystem.\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("  Files live in memory and are lost on reboot (by design).\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  File commands:\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    ls              "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("List files (cyan=dir, green=file, red=locked)\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    tree            "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Show filesystem as a tree\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    cat <file>      "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Show file contents\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    write <f> <txt> "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Write text to a file\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    edit <file>     "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Open the text editor\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    cp <src> <dst>  "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Copy a file\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    del <file>      "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Delete a file\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    find <pattern>  "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Search by name (* glob supported)\n");
-    vga_putchar('\n');
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Pipes and redirection:\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    cmd > file      "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Save output to file\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    cmd >> file     "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Append output to file\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    cmd1 . cmd2     "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Pipe output of cmd1 into cmd2\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    guide_page(2,7);
-
-    /* === PAGE 3: Shell features === */
-    vga_clear(); toast_clear();
-    guide_header("Shell Features");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Environment variables:\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    set KEY value   - store a variable\n");
-    vga_puts("    echo $KEY       - expand a variable\n");
-    vga_puts("    env             - list all variables\n");
-    vga_puts("    unset KEY       - remove a variable\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Aliases (persistent):\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    alias ll=ls     - create an alias (saved to disk)\n");
-    vga_puts("    alias           - list all aliases\n");
-    vga_puts("    unalias ll      - remove an alias (saved)\n");
-    vga_puts("    Built-in: ll=ls, q=exit, h=help, ?=help, g=guide\n");
-    vga_puts("    Saved to ETC/ALIASES.TXT - survives across runs\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Shell prompt (PS1):\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    ps1             - show current prompt format\n");
-    vga_puts("    ps1 \\u@\\h:\\w\\$  - set prompt format\n");
-    vga_puts("    Tokens: \\u user \\h host \\w path \\$ dollar \\t time \\d date\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    guide_page(3,7);
-
-    /* === PAGE 4: Pipes and BSH Scripting === */
-    vga_clear(); toast_clear();
-    guide_header("Pipes and BSH Scripting");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Pipes and redirection:\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    cmd > file        - save output to file\n");
-    vga_puts("    cmd >> file       - append output to file\n");
-    vga_puts("    cmd1 . cmd2       - pipe output of cmd1 into cmd2\n");
-    vga_puts("    cmd1 . cmd2 . cmd3   - chain multiple pipes\n");
-    vga_puts("    Example: ls . grep BOOT . sort\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  BSH scripts (.BSH files):\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    write ~/HELLO.BSH echo Hello\n");
-    vga_puts("    run ~/HELLO.BSH\n");
-    vga_puts("    Lines starting with # are comments.\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Control flow (if / while):\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    if $i == 3\n");
-    vga_puts("      echo three\n");
-    vga_puts("    else\n");
-    vga_puts("      echo not three\n");
-    vga_puts("    endif\n\n");
-    vga_puts("    while $i <= 5\n");
-    vga_puts("      echo $i\n");
-    vga_puts("      set i $i+1\n");
-    vga_puts("    endwhile\n");
-    vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-    vga_puts("    Ops: == != < > <= >=   Try: run ~/HELLO.BOOT\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_putchar('\n');
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  BOOT Language file I/O (new in " HAVENDOS_VER "):\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    readfile \"~/notes.txt\" v  - read file into var v\n");
-    vga_puts("    writefile \"~/out.txt\" v   - write var v to file\n");
-    vga_puts("    exists \"~/notes.txt\" ok   - ok=1 if found, 0 if not\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  H Language (HavenCode) - renamed from BOOT:\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    h              - start H interactive REPL\n");
-    vga_puts("    h <file.h>     - run an H language script\n");
-    vga_puts("    HavenCode icon on desktop opens the full IDE\n");
-    vga_puts("    H / H++ / H# are the three dialects\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    guide_page(4,7);
-
-    /* === PAGE 5: Users and Security === */
-    vga_clear(); toast_clear();
-    guide_header("Users and Security");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Built-in accounts:\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    admin   - Administrator (password: Admin@123)\n");
-    vga_puts("    bootos  - Standard user (password: BootOS2026)\n");
-    vga_puts("    guest   - Guest account (no password)\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  User management (admin only):\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    adduser <name> <pass>  "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Create a new user\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    deluser <name>         "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Delete a user\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    passwd [user]          "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Change password\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    users                  "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("List all accounts\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    whoami                 "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Current logged-in user\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    log                    "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Audit log (admin only)\n");
-    vga_putchar('\n');
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  File permissions:\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    chmod <file> lock    - restrict to admin only\n");
-    vga_puts("    chmod <file> unlock  - open to all users\n");
-    vga_puts("    chown <file> <user>  - change file owner\n");
-    vga_puts("    Locked files appear in RED in ls and tree.\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    guide_page(5,7);
-
-    /* === PAGE 6: Apps and Fun === */
-    vga_clear(); toast_clear();
-    guide_header("Apps, Games and Screensavers");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Screensavers (press any key to exit):\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    matrix   "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Falling green characters\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    pipes    "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Animated pipe network\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    stars    "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Starfield flythrough\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Games:\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    snake    "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Classic snake game\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Tools:\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    dashboard  "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Live CPU/RAM/network monitor (Q=quit S=stress)\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    edit       "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Text editor (Ctrl-S=save Ctrl-Q=quit)\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    calc       "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Expression calculator (calc 5+3*2)\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    theme      "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Switch desktop theme\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    cowsay     "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Important system utility\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    beep       "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Play a tone via PC speaker\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    play       "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Play the boot jingle\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    guide_page(6,7);
-
-    /* === PAGE 7: Network and Tips === */
-    vga_clear(); toast_clear();
-    guide_header("Network and Tips");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Network commands:\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    ifconfig              "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Show network config\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    ping <ip>             "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Ping an IP address\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    netstat               "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Network status\n");
-    vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_puts("    udpsend <ip> <p> <m>  "); vga_set_color(VGA_LIGHT_GREY,VGA_BLACK); vga_puts("Send UDP datagram\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Pro tips:\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    Use Tab to complete commands and filenames.\n");
-    vga_puts("    Use Up/Down arrows to recall previous commands.\n");
-    vga_puts("    Pipe commands: ls . grep BSH\n");
-    vga_puts("    Redirect: sysinfo > INFO.TXT\n");
-    vga_puts("    Run scripts: write GREET.BSH echo Hi && run GREET.BSH\n");
-    vga_puts("    which <cmd> tells you if a command is built-in.\n");
-    vga_puts("    tree shows the full filesystem layout.\n\n");
-    vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  About HavenDOS:\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("    Version:  " HAVENDOS_VER "\n");
-    vga_puts("    Arch:     32-bit x86, bare metal\n");
-    vga_puts("    Bootloader: GRUB2 Multiboot1\n");
-    vga_puts("    By TechHaven Studios\n");
-    vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-    vga_puts("\n  End of guide. Type 'help' for a command list.\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    guide_page(7,7);
-    vga_clear(); toast_clear();
-}
-
 /* ================================================================
    HELP — categorized command reference
    ================================================================ */
@@ -2592,160 +2411,26 @@ void cmd_dmesg_pager(void){
 static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     if(!cmd||!cmd[0]) return;
 
-    if(!strcmp(cmd,"dashboard")||!strcmp(cmd,"htop")){
-        while(1){
-            vga_clear(); toast_clear();
-            for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_CYAN);
-            vga_puts_at(" HavenDOS Dashboard  " HAVENDOS_VER,0,0,VGA_BLACK,VGA_CYAN);
-            vga_puts_at("Q=quit  R=refresh  S=stress test",46,0,VGA_BLACK,VGA_CYAN);
-
-            uint8_t h2,m2,s2; rtc_get_time(&h2,&m2,&s2);
-            uint8_t day2,mon2; uint16_t yr2; rtc_get_date(&day2,&mon2,&yr2);
-            char timebuf[10],datebuf[12];
-            timebuf[0]='0'+h2/10;timebuf[1]='0'+h2%10;timebuf[2]=':';
-            timebuf[3]='0'+m2/10;timebuf[4]='0'+m2%10;timebuf[5]=':';
-            timebuf[6]='0'+s2/10;timebuf[7]='0'+s2%10;timebuf[8]=0;
-            datebuf[0]='0'+day2/10;datebuf[1]='0'+day2%10;datebuf[2]='/';
-            datebuf[3]='0'+mon2/10;datebuf[4]='0'+mon2%10;datebuf[5]='/';
-            datebuf[6]='0'+(yr2/1000)%10;datebuf[7]='0'+(yr2/100)%10;
-            datebuf[8]='0'+(yr2/10)%10;datebuf[9]='0'+yr2%10;datebuf[10]=0;
-
-            vga_puts_at(" System ",0,1,VGA_WHITE,VGA_DARK_GREY);
-            for(int x=8;x<80;x++) vga_putchar_at(' ',x,1,VGA_BLACK,VGA_DARK_GREY);
-
-            vga_puts_at("  OS:",2,2,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at("HavenDOS " HAVENDOS_VER " (TechHaven Studios)",8,2,VGA_LIGHT_CYAN,VGA_BLACK);
-            vga_puts_at("  Date:",2,3,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at(datebuf,10,3,VGA_YELLOW,VGA_BLACK);
-            vga_puts_at("  Time:",30,3,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at(timebuf,38,3,VGA_YELLOW,VGA_BLACK);
-            uint32_t up=get_ticks()/100;
-            char upbuf[16]; char t1[8],t2[8],t3[8];
-            utoa(up/3600,t1,10); utoa((up%3600)/60,t2,10); utoa(up%60,t3,10);
-            strncpy(upbuf,t1,7); strcat(upbuf,"h "); strncat(upbuf,t2,3);
-            strcat(upbuf,"m "); strncat(upbuf,t3,3); strcat(upbuf,"s");
-            vga_puts_at("  Uptime:",2,4,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at(upbuf,12,4,VGA_LIGHT_GREEN,VGA_BLACK);
-            vga_puts_at("  User:",40,4,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at(current_username(),48,4,VGA_LIGHT_GREEN,VGA_BLACK);
-            if(current_user_admin()) vga_puts_at("[A]",48+(int)strlen(current_username())+1,4,VGA_YELLOW,VGA_BLACK);
-
-            for(int x=0;x<80;x++) vga_putchar_at('-',x,5,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at(" Memory ",0,6,VGA_WHITE,VGA_DARK_GREY);
-            for(int x=8;x<80;x++) vga_putchar_at(' ',x,6,VGA_BLACK,VGA_DARK_GREY);
-
-            uint32_t mfree=pmm_free_blocks()*4, mtotal=pmm_total_blocks()*4;
-            uint32_t mused=mtotal-mfree;
-            uint32_t mpct=mtotal?mused*100/mtotal:0;
-            char mfb[12],mub[12],mtb[12],mpb[6];
-            utoa(mfree,mfb,10); strcat(mfb," KB");
-            utoa(mused,mub,10); strcat(mub," KB");
-            utoa(mtotal,mtb,10);strcat(mtb," KB");
-            utoa(mpct,mpb,10);  strcat(mpb,"%");
-            vga_puts_at("  Free:",2,7,VGA_LIGHT_GREY,VGA_BLACK); vga_puts_at(mfb,10,7,VGA_LIGHT_GREEN,VGA_BLACK);
-            vga_puts_at("  Used:",28,7,VGA_LIGHT_GREY,VGA_BLACK); vga_puts_at(mub,36,7,VGA_YELLOW,VGA_BLACK);
-            vga_puts_at("  Total:",52,7,VGA_LIGHT_GREY,VGA_BLACK); vga_puts_at(mtb,61,7,VGA_WHITE,VGA_BLACK);
-            vga_puts_at("  [",2,8,VGA_DARK_GREY,VGA_BLACK);
-            int barw=58; int filled=(int)(mpct*barw/100);
-            for(int i=0;i<barw;i++){
-                vga_color_t bc=(i<filled)?(mpct>80?VGA_RED:mpct>50?VGA_YELLOW:VGA_LIGHT_GREEN):VGA_DARK_GREY;
-                vga_putchar_at(i<filled?'#':'.',5+i,8,bc,VGA_BLACK);
-            }
-            vga_puts_at("] ",63,8,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at(mpb,65,8,mpct>80?VGA_RED:mpct>50?VGA_YELLOW:VGA_LIGHT_GREEN,VGA_BLACK);
-
-            for(int x=0;x<80;x++) vga_putchar_at('-',x,9,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at(" Network ",0,10,VGA_WHITE,VGA_DARK_GREY);
-            for(int x=9;x<80;x++) vga_putchar_at(' ',x,10,VGA_BLACK,VGA_DARK_GREY);
-            vga_puts_at("  NIC:",2,11,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at("RTL8139/e1000",9,11,VGA_WHITE,VGA_BLACK);
-            vga_puts_at("  IP:",25,11,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at("10.0.2.15",31,11,VGA_LIGHT_CYAN,VGA_BLACK);
-            vga_puts_at("  GW:",45,11,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at("10.0.2.2",51,11,VGA_LIGHT_CYAN,VGA_BLACK);
-            vga_puts_at("  Status:",65,11,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at("UP",75,11,VGA_LIGHT_GREEN,VGA_BLACK);
-
-            for(int x=0;x<80;x++) vga_putchar_at('-',x,12,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at(" Processes ",0,13,VGA_WHITE,VGA_DARK_GREY);
-            for(int x=11;x<80;x++) vga_putchar_at(' ',x,13,VGA_BLACK,VGA_DARK_GREY);
-            vga_puts_at("  PID  Name           State      MEM",2,14,VGA_DARK_GREY,VGA_BLACK);
-            for(int x=0;x<80;x++) vga_putchar_at('-',x,15,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at("    0  kernel          running    4MB",2,16,VGA_WHITE,VGA_BLACK);
-            vga_puts_at("    1  desktop         sleeping   1MB",2,17,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at("    2  shell           running    512K",2,18,VGA_LIGHT_GREEN,VGA_BLACK);
-            vga_puts_at("  Multitasking: planned v0.8.x",2,19,VGA_DARK_GREY,VGA_BLACK);
-
-            for(int x=0;x<80;x++) vga_putchar_at(' ',x,24,VGA_BLACK,VGA_DARK_GREY);
-            vga_puts_at(" Q=quit  R=refresh  S=stress test",0,24,VGA_LIGHT_GREY,VGA_DARK_GREY);
-
-            int dc=keyboard_waitchar();
-            if(dc=='q'||dc=='Q'||dc==27) break;
-            if(dc=='s'||dc=='S'){
-                vga_clear(); toast_clear();
-                for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_RED);
-                vga_puts_at(" HavenDOS Stress Test",0,0,VGA_WHITE,VGA_RED);
-
-                /* CPU test - tight counter loop for exactly 1 second via PIT polling */
-                vga_puts_at("CPU test:   running 1 sec...",2,2,VGA_LIGHT_GREY,VGA_BLACK);
-                uint32_t t0=get_ticks();
-                volatile uint32_t cpu_cnt=0;
-                /* Use PIT-polled ticks, NOT hlt - safe on UTM SE */
-                while(get_ticks()-t0 < 100) { cpu_cnt++; }
-                char cpubuf[24]; utoa(cpu_cnt,cpubuf,10);
-                for(int x=30;x<72;x++) vga_putchar_at(' ',x,2,VGA_BLACK,VGA_BLACK);
-                vga_puts_at(cpubuf,30,2,VGA_LIGHT_GREEN,VGA_BLACK);
-                vga_puts_at(" iters/sec",30+(int)strlen(cpubuf),2,VGA_DARK_GREY,VGA_BLACK);
-
-                /* RAM test - write to a safe static buffer, no pmm_alloc needed */
-                vga_puts_at("RAM test:   writing pattern...",2,4,VGA_LIGHT_GREY,VGA_BLACK);
-                /* Use a 16KB static buffer in BSS - safe, no alloc needed */
-                static uint8_t ram_test_buf[16384];
-                uint32_t bsz=sizeof(ram_test_buf);
-                /* Write pattern */
-                for(uint32_t j=0;j<bsz;j++) ram_test_buf[j]=(uint8_t)(j^0xA5);
-                /* Verify */
-                uint32_t mok=0,mbad=0;
-                for(uint32_t j=0;j<bsz;j++){
-                    if(ram_test_buf[j]==(uint8_t)(j^0xA5)) mok++; else mbad++;
-                }
-                for(int x=30;x<72;x++) vga_putchar_at(' ',x,4,VGA_BLACK,VGA_BLACK);
-                char membuf[24]; utoa(mok/1024,membuf,10); strcat(membuf," KB verified");
-                vga_puts_at(membuf,30,4,mbad?VGA_YELLOW:VGA_LIGHT_GREEN,VGA_BLACK);
-
-                /* Free RAM available */
-                vga_puts_at("Free RAM:   ",2,6,VGA_LIGHT_GREY,VGA_BLACK);
-                uint32_t fkb=pmm_free_blocks()*4;
-                char fkbbuf[16]; utoa(fkb,fkbbuf,10); strcat(fkbbuf," KB free");
-                vga_puts_at(fkbbuf,14,6,VGA_WHITE,VGA_BLACK);
-
-                /* Summary */
-                for(int x=0;x<80;x++) vga_putchar_at('-',x,8,VGA_DARK_GREY,VGA_BLACK);
-                vga_puts_at("Results:",2,9,VGA_LIGHT_CYAN,VGA_BLACK);
-                vga_puts_at("CPU speed:",2,10,VGA_LIGHT_GREY,VGA_BLACK);
-                vga_puts_at(cpubuf,14,10,VGA_LIGHT_GREEN,VGA_BLACK);
-                vga_puts_at("iterations/sec",14+(int)strlen(cpubuf)+1,10,VGA_DARK_GREY,VGA_BLACK);
-                vga_puts_at("RAM test: ",2,11,VGA_LIGHT_GREY,VGA_BLACK);
-                vga_puts_at(mbad?"WARN - some errors":"PASS - all OK",13,11,
-                            mbad?VGA_YELLOW:VGA_LIGHT_GREEN,VGA_BLACK);
-                vga_puts_at("Note: RAM stress freeze is fixed - uses static buffer",2,13,VGA_DARK_GREY,VGA_BLACK);
-
-                for(int x=0;x<80;x++) vga_putchar_at(' ',x,24,VGA_BLACK,VGA_DARK_GREY);
-                vga_puts_at("  Press any key to return to dashboard",0,24,VGA_LIGHT_GREY,VGA_DARK_GREY);
-                keyboard_waitchar();
-                continue;
-            }
-            /* R or anything else = refresh */
-        }
-        vga_clear(); toast_clear();
+    /* v0.9.5: one System app (shell/sysapp.c) for what used to be a
+       full-screen dashboard drawn right here, three desktop apps and the
+       `sysinfo` text dump. Every old name opens it. */
+    if(!strcmp(cmd,"system")||!strcmp(cmd,"dashboard")||!strcmp(cmd,"htop")||
+       !strcmp(cmd,"sysmon")||!strcmp(cmd,"sysinfo")||!strcmp(cmd,"sysinfo-plus")){
+        extern void app_system_open(const char*);
+        app_system_open(arg1);
+        toast_clear();
     }
 
-    else if(!strcmp(cmd,"help")||!strcmp(cmd,"?"))
-        cmd_help();
+    else if(!strcmp(cmd,"help")||!strcmp(cmd,"?")){
+        extern void cmd_help_arg(const char*);
+        cmd_help_arg(arg1);
+    }
 
     else if(!strcmp(cmd,"ver")||!strcmp(cmd,"version")){
         vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-        vga_puts("HavenDOS " HAVENDOS_VER " (32-bit x86)\nTechHaven Studios\n");
+        vga_puts("HavenDOS " HAVENDOS_VER " " HAVENDOS_CHANNEL " \"" HAVENDOS_CODENAME "\"  (32-bit x86)\n");
+        vga_set_color(VGA_DARK_GREY,VGA_BLACK);
+        vga_puts(HAVENDOS_VENDOR "\n");
         vga_set_color(VGA_WHITE,VGA_BLACK);
     }
 
@@ -2774,9 +2459,12 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
             char newps1[64];
             strncpy(newps1,arg1,31);
             if(arg2[0]){ strncat(newps1," ",63); strncat(newps1,arg2,63); }
+            if(!strcmp(newps1,"reset")) strcpy(newps1,"\\u@havendos:\\w\\$ ");
             strncpy(ps1_format,newps1,63);
+            { extern void cfg_set_prompt(const char*); extern void cfg_save(void);
+              cfg_set_prompt(ps1_format); cfg_save(); }
             vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-            vga_puts("PS1 updated.\n");
+            vga_puts("Prompt updated and saved. 'ps1 reset' restores the default.\n");
             vga_set_color(VGA_WHITE,VGA_BLACK);
         }
     }
@@ -3012,50 +2700,6 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
         } else {
             vga_printf("Free: %u KB  Used: %u KB  Total: %u KB\n",f*4,(t-f)*4,t*4);
         }
-    }
-
-    else if(!strcmp(cmd,"sysinfo")){
-        char ts[9]; rtc_time_str(ts);
-        char ds[9]; rtc_date_str(ds);
-        uint32_t f2=pmm_free_blocks(),t2=pmm_total_blocks();
-        uint32_t up=get_ticks()/100;
-        int has_disk=vfs_using_disk();
-        vga_set_color(VGA_BLACK,VGA_CYAN);
-        vga_puts("                                                                                ");
-        vga_puts("   HavenDOS " HAVENDOS_VER "  --  System Information                                   ");
-        vga_puts("                                                                                ");
-        vga_set_color(VGA_WHITE,VGA_BLACK);
-        vga_puts("\n");
-        vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK); vga_puts("  System\n");
-        vga_set_color(VGA_DARK_GREY,VGA_BLACK);  vga_puts("  ------\n");
-        vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
-        vga_printf("  OS           HavenDOS " HAVENDOS_VER " (TechHaven Studios)\n");
-        vga_printf("  Arch         x86 32-bit Protected Mode\n");
-        vga_printf("  Bootloader   GRUB2 Multiboot1\n");
-        vga_printf("  Date         %s\n", ds);
-        vga_printf("  Time         %s\n", ts);
-        vga_printf("  Uptime       %u:%02u:%02u\n",up/3600,(up%3600)/60,up%60);
-        vga_puts("\n");
-        vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK); vga_puts("  Hardware\n");
-        vga_set_color(VGA_DARK_GREY,VGA_BLACK);  vga_puts("  --------\n");
-        vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
-        vga_printf("  CPU          Intel x86 32-bit\n");
-        vga_printf("  RAM Free     %u KB / %u KB\n", f2*4, t2*4);
-        vga_printf("  Display      80x25 VGA Text Mode\n");
-        { extern int vfs_using_fat32(void);
-          vga_printf("  Disk         %s\n", vfs_using_fat16()?"FAT16":
-                     vfs_using_fat32()?"FAT32":
-                     (has_disk?"FAT12":"RAMFS (no disk)")); }
-        vga_puts("\n");
-        vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK); vga_puts("  Session\n");
-        vga_set_color(VGA_DARK_GREY,VGA_BLACK);  vga_puts("  -------\n");
-        vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
-        vga_printf("  User         %s (%s)\n",current_username(),current_user_admin()?"Admin":"Standard");
-        vga_printf("  Shell        HavenDOS Shell " HAVENDOS_VER "\n");
-        vga_printf("  PS1          %s\n",ps1_format);
-        vga_printf("  Aliases      %d\n",alias_count);
-        vga_printf("  Env vars     %d\n\n",env_count);
-        vga_set_color(VGA_WHITE,VGA_BLACK);
     }
 
     else if(!strcmp(cmd,"uptime")){
@@ -3386,33 +3030,16 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     }
 
     else if(!strcmp(cmd,"theme")){
-        if(!arg1[0]){
-            vga_puts("Available themes:\n");
-            for(int i=0;i<ui_theme_count();i++){
-                vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-                vga_printf("  %d",i);
-                vga_set_color(VGA_WHITE,VGA_BLACK);
-                vga_printf(" - %s\n",ui_theme_name(i));
-            }
-            vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-            vga_puts("  Themes 2,3,4,6 have desktop patterns. Others: plain black.\n");
-            vga_set_color(VGA_WHITE,VGA_BLACK);
-        } else {
-            int n=atoi(arg1);
-            if(n<0||n>=ui_theme_count()) vga_puts("Invalid theme number\n");
-            else{ ui_set_theme(n); vga_printf("Theme: %s\n",ui_theme_name(n)); }
-        }
+        extern void cmd_theme(const char*);
+        cmd_theme(arg1);
     }
 
     else if(!strcmp(cmd,"whoami"))
         vga_printf("%s [%s]\n",current_username(),current_user_admin()?"admin":"user");
 
     else if(!strcmp(cmd,"users")){
-        vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-        vga_puts("  Username        Role\n  --------        ----\n");
-        vga_set_color(VGA_WHITE,VGA_BLACK);
-        for(int i=0;i<get_user_count();i++)
-            vga_printf("  %-16s %s\n",get_username(i),get_user_admin(i)?"admin":"user");
+        extern void cmd_users(const char*);
+        cmd_users(arg1);
     }
 
     else if(!strcmp(cmd,"passwd")){
@@ -3458,6 +3085,11 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"chmod")){
         if(!current_user_admin()){vga_puts("Admin only.\n");return;}
         if(!arg1[0]||!arg2[0]){vga_puts("Usage: chmod <file> <lock|unlock>\n");return;}
+        if(vfs_using_disk()){
+            vga_puts("chmod: file locks live in the RAM filesystem of a live session.\n"
+                     "FAT16 and FAT32 have nowhere to keep them, so nothing changed.\n");
+            return;
+        }
         int lock=(!strcmp(arg2,"lock"))?1:0;
         int r=ramfs_chmod(arg1,lock);
         if(r==0)vga_printf("%s %s.\n",arg1,lock?"locked":"unlocked");
@@ -3467,23 +3099,20 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"chown")){
         if(!current_user_admin()){vga_puts("Admin only.\n");return;}
         if(!arg1[0]||!arg2[0]){vga_puts("Usage: chown <file> <user>\n");return;}
+        if(vfs_using_disk()){
+            vga_puts("chown: owners live in the RAM filesystem of a live session.\n"
+                     "FAT16 and FAT32 have nowhere to keep them, so nothing changed.\n");
+            return;
+        }
         int r=ramfs_chown(arg1,arg2);
         if(r==0)vga_printf("%s owned by %s.\n",arg1,arg2);
         else vga_puts("File not found.\n");
     }
 
     else if(!strcmp(cmd,"log")){
-        if(!current_user_admin()){vga_puts("Admin only.\n");return;}
-        char lb[512];int lr=vfs_read(".loginlog",lb,511);
-        if(lr<=0){vga_puts("No login log.\n");return;}
-        lb[lr]=0;
-        vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-        vga_puts("-- Login Audit Log --\n");
-        vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
-        vga_puts(lb);
-        vga_set_color(VGA_WHITE,VGA_BLACK);
+        extern void cmd_loginlog(void);
+        cmd_loginlog();
     }
-
     else if(!strcmp(cmd,"set")||!strcmp(cmd,"export")){
         if(!arg1[0]){vga_puts("Usage: set <key> <value>\n");return;}
         /* If value is a pure arithmetic expression, evaluate it.
@@ -3591,16 +3220,25 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
 
     else if(!strcmp(cmd,"dmesg")) cmd_dmesg_pager();
     else if(!strcmp(cmd,"ps")){
+        /* v0.9.5: this printed three invented processes with invented CPU
+           and memory figures -- "kernel 98%, desktop 1%, shell 1%" -- and
+           "(multitasking not yet active - planned v0.8.x)", a promise
+           0.8 never kept. What is true: the kernel, its periodic jobs
+           (kpoll), and the one program in front of you. */
+        extern uint32_t boot_ms(void);
+        extern int kpoll_client_count(void);
+        uint32_t up=boot_ms()/1000u;
         vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-        vga_puts("  PID  NAME              STATE    CPU%  MEM\n");
-        vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-        vga_puts("  ---  ----              -----    ----  ---\n");
+        vga_puts("  WHAT             STATE      SINCE\n");
         vga_set_color(VGA_WHITE,VGA_BLACK);
-        vga_puts("    0  kernel            running   98%  4MB\n");
-        vga_puts("    1  desktop           sleeping   1%  1MB\n");
-        vga_puts("    2  shell             running    1%  512K\n");
+        vga_printf("  kernel           running    boot (%u:%02u:%02u ago)\n",up/3600,(up/60)%60,up%60);
+        vga_printf("  periodic jobs    %-10s %d registered -- `kpoll`\n",
+                   kpoll_client_count()>0?"waiting":"none",kpoll_client_count());
+        vga_printf("  shell            running    you are here (%s)\n",current_username());
         vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-        vga_puts("  (multitasking not yet active - planned v0.8.x)\n");
+        vga_puts("\n  HavenDOS runs one program at a time: the shell, or the app it\n"
+                 "  opened. The periodic jobs (DHCP retries, USB plug-in checks) run\n"
+                 "  in the gaps while you type.\n");
         vga_set_color(VGA_WHITE,VGA_BLACK);
     }
 
@@ -3652,7 +3290,6 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"calendar"))    { extern void run_package_app(const char*,const char*); run_package_app("calendar",""); }
     else if(!strcmp(cmd,"quiz"))        { extern void run_package_app(const char*,const char*); run_package_app("quiz",""); }
     else if(!strcmp(cmd,"hacker"))      { extern void run_package_app(const char*,const char*); run_package_app("hacker",""); }
-    else if(!strcmp(cmd,"sysinfo-plus")){ extern void run_package_app(const char*,const char*); run_package_app("sysinfo-plus",""); }
     else if(!strcmp(cmd,"ifconfig")) cmd_ifconfig(arg1,arg2);
     else if(!strcmp(cmd,"ping"))     cmd_ping(arg1);
     else if(!strcmp(cmd,"dns"))      cmd_dns(arg1);
@@ -3760,9 +3397,14 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"exit")||!strcmp(cmd,"quit"))
         return;
 
+    else if(!strcmp(cmd,"settings")){
+        extern void settings_open(const char*);
+        settings_open(arg1);
+        toast_clear();
+    }
     else if(!strcmp(cmd,"tree"))  cmd_tree();
     else if(!strcmp(cmd,"which")) cmd_which(arg1[0]?arg1:arg2);
-    else if(!strcmp(cmd,"guide")) cmd_guide();
+    else if(!strcmp(cmd,"guide")){ extern void cmd_guide_page(const char*); cmd_guide_page(arg1); }
 
     else
         {
@@ -3873,7 +3515,12 @@ void shell_run(void){
             strncpy(line,expanded,127); line[127]=0;   /* v0.7.6 */
         }
 
+        /* v0.9.5: every command starts in the user's colours, so `color`
+           and Settings > Shell actually stick. A command that sets its own
+           colours still does; it just no longer has the last word. */
+        vga_set_color((vga_color_t)sh_fg,(vga_color_t)sh_bg);
         run_pipeline(line);
+        vga_set_color((vga_color_t)sh_fg,(vga_color_t)sh_bg);
     }
 }
 
@@ -3889,7 +3536,11 @@ void shell_run(void){
 
 void shell_run_script(const char *filename){
     char buf[4096]; uint32_t sz=sizeof(buf)-1;
-    int rsz=vfs_read(filename,buf,sz);
+    /* v0.9.5: from the working directory, like every other file command;
+       `run count.bsh` in your home folder looked in the root. */
+    char fpath[64]; make_path(fpath,filename);
+    int rsz=vfs_read(fpath,buf,sz);
+    if(rsz<0) rsz=vfs_read(filename,buf,sz);
     if(rsz<0){
         vga_printf("run: cannot open '%s'\n",filename); return;
     }
@@ -4100,10 +3751,13 @@ void shell_init(void){
     env_set("PATH","/bin:/usr/bin");
     alias_set("ll","ls");
     alias_set("q","exit");
-    alias_set("h","help");
     alias_set("?","help");
     alias_set("g","guide");
     alias_load();  /* override/add user-saved aliases from ETC/ALIASES.TXT */
+    shell_colors_load();
+    { extern const char *cfg_prompt(void);
+      const char *pp=cfg_prompt();
+      if(pp&&pp[0]){ strncpy(ps1_format,pp,63); ps1_format[63]=0; } }
     /* v0.8.8.1: and the console grid the user last confirmed. Applied
        at the prompt by the re-apply a few hundred lines below, not
        here -- the desktop pins 25 rows and restores this on exit. */

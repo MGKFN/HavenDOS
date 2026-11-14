@@ -671,6 +671,33 @@ static int mount_at_part_lba(void)
 }
 
 int fat16_detected(void){ return fat16_ready; }
+
+/* v0.9.5: the volume's size and free space, for `df` and the System
+   app's Storage tab -- which until now said "ramfs 2MB" on every
+   machine. Free space counts the FAT's zero entries; the FAT is already
+   cached for writes, so this costs one load at most. While the volume
+   is lent out (see fat16_borrow) the globals describe the borrower's
+   volume, so both answer 0 rather than the wrong disk. */
+uint32_t fat16_cluster_bytes(void){
+    if(!fat16_ready || g_borrowed) return 0;
+    return (uint32_t)bpb_bytes_per_sect * bpb_sects_per_clust;
+}
+uint32_t fat16_total_clusters(void){
+    if(!fat16_ready || g_borrowed || !bpb_sects_per_clust) return 0;
+    uint32_t meta = (uint32_t)bpb_rsvd_sects + (uint32_t)bpb_num_fats * bpb_sects_per_fat
+                  + root_sects;
+    if(bpb_total_sects <= meta) return 0;
+    return (bpb_total_sects - meta) / bpb_sects_per_clust;
+}
+uint32_t fat16_free_clusters(void){
+    uint32_t total = fat16_total_clusters();
+    if(!total || !fat_load()) return 0;
+    uint32_t cap = (FAT_CACHE_MAX_SECTS * BYTES_PER_SECT) / 2;
+    uint32_t n = 0;
+    for(uint32_t c = 2; c < total + 2 && c < cap; c++)
+        if(fat_buf[c*2] == 0 && fat_buf[c*2+1] == 0) n++;
+    return n;
+}
 /* Which bus the mounted volume is actually on.  `disk` used to assume VirtIO,
    which was true when FAT16 only ever lived there; since the installer writes
    to IDE as well, saying so is the difference between a status line and a

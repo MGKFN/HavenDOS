@@ -249,11 +249,14 @@ static int screen_theme(void){
         vga_puts_at("HavenDOS",43,10,pv->bar_fg,pv->bar_bg);
         vga_puts_at("12:00",64,10,pv->accent,pv->bar_bg);
 
-        /* Desktop, with the icon-dot pattern the real one uses */
+        /* Desktop, with the theme's own wallpaper (v0.9.5: every theme
+           has one, drawn by the same function as the real desktop). */
         for(int y=11;y<18;y++)
-            for(int x=42;x<70;x++)
-                vga_putchar_at(((x+y)%8==0)?'.':' ',x,y,
-                               pv->icon_fg,pv->desk_bg);
+            for(int x=42;x<70;x++){
+                char c=' '; vga_color_t fg=pv->desk_bg;
+                ui_pattern_at_theme(sel,x-42,y-10,&c,&fg);
+                vga_putchar_at(c,x,y,fg,pv->desk_bg);
+            }
 
         /* A sample window: title row then body */
         for(int x=46;x<65;x++) vga_putchar_at(' ',x,13,pv->title_fg,pv->title_bg);

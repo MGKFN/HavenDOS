@@ -392,7 +392,7 @@ DESKTOP_APPS = [
     ("Apps",   "HavenCode",      "havencode",    "HavenCode, the H language environment"),
     ("Apps",   "Hex Viewer",     "hexviewer",    "The hex viewer"),
     ("System", "File Manager",   "file-manager", "The file manager"),
-    ("System", "System Monitor", "sysmon",       "The system monitor"),
+    ("System", "System",         "system",       "The System app"),
     ("System", "Network Info",   "netinfo",      "Network information"),
     ("System", "User Manager",   "usermgr",      "The user manager"),
     ("Fun",    "Tetris",         "tetris",       "Tetris"),

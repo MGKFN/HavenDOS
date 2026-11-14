@@ -70,11 +70,9 @@ static void app_shell(void);
 static void app_calculator(void);
 static void app_texteditor(void);
 static void app_filemanager(void);
-static void app_sysinfo(void);
-static void app_sysmonitor(void);
 static void app_clock(void);
 static void app_todo(void);
-static void app_settings(void);
+extern void app_settings_v2(void);   /* shell/settings.c, v0.9.5 */
 static void app_snake(void);
 static void app_tetris_wrap(void);
 static void app_screensaver(void);
@@ -117,7 +115,6 @@ static void app_logviewer(void);
 static void app_diskinfo(void);
 static void app_netinfo(void);
 static void app_usermanager(void);
-static void app_dashboard(void);
 static void app_pipes(void);
 static void app_matrix(void);
 
@@ -128,7 +125,7 @@ extern void appx_quiz(void);
 extern void appx_hacker(void);
 extern void appx_music(void);
 extern void appx_calendar(void);
-extern void appx_sysinfo_plus(void);
+extern void app_system(void);       /* shell/sysapp.c, v0.9.5 */
 extern void appx_fortune(void);
 extern void appx_ascii_art(void);
 extern void appx_pci(void);
@@ -196,10 +193,10 @@ static const appreg_t appreg[]={
     {"asciiart",  "ASCII Art",        "Aa", appx_ascii_art,     CAT_APPS},
 
     /* ---- System ----------------------------------------------- */
-    {"sysinfo",   "System Info",      "Si", app_sysinfo,        CAT_SYSTEM},
-    {"sysinfop",  "System Info Plus", "S+", appx_sysinfo_plus,  CAT_SYSTEM},
-    {"dashboard", "Dashboard",        "Db", app_dashboard,      CAT_SYSTEM},
-    {"sysmon",    "System Monitor",   "Mn", app_sysmonitor,     CAT_SYSTEM},
+    /* v0.9.5: one app where there were four (System Info, Info+,
+       Dashboard, System Monitor). Old ids in DESKTOP.CFG and
+       FAVORITE.CFG are mapped to this one by pin_load(). */
+    {"system",    "System",           "Sy", app_system,         CAT_SYSTEM, 1},
     {"clock",     "Clock",            "Cl", app_clock,          CAT_SYSTEM},
     {"neofetch",  "Neofetch",         "Nf", appx_neofetch,      CAT_SYSTEM},
     {"notif",     "Notifications",    "Nt", notif_center,       CAT_SYSTEM},
@@ -240,7 +237,7 @@ static const appreg_t appreg[]={
     {"fortune",   "Fortune",          "Fo", appx_fortune,       CAT_MEDIA},
 
     /* ---- Settings --------------------------------------------- */
-    {"settings",  "Settings",         "St", app_settings,       CAT_SETTINGS},
+    {"settings",  "Settings",         "St", app_settings_v2,    CAT_SETTINGS, 1},
     {"themes",    "Themes",           "Th", appx_themes,        CAT_SETTINGS},
     {"guide",     "User Guide",       "Gu", appx_guide,         CAT_SETTINGS},
     {"manual",    "Manual",           "Ma", appx_manual,        CAT_SETTINGS},
@@ -291,6 +288,7 @@ static int reg_find(const char *id){
     return -1;
 }
 
+static int pin_index(char ids[][PIN_IDLEN], int n, const char *id);
 static void pin_load(const char *path, char ids[][PIN_IDLEN], int *n,
                      const char *dflt){
     static char buf[512];
@@ -308,6 +306,14 @@ static void pin_load(const char *path, char ids[][PIN_IDLEN], int *n,
     while(*p&&*n<PIN_MAX){
         char *e=p; while(*e&&*e!='\n'&&*e!='\r') e++;
         char saved=*e; *e=0;
+        /* v0.9.5: the four system apps became one. */
+        if(!strcmp(p,"sysinfo")||!strcmp(p,"sysinfop")||
+           !strcmp(p,"dashboard")||!strcmp(p,"sysmon")){
+            const char *nid="system";
+            if(pin_index(ids,*n,nid)<0 && *n<PIN_MAX){
+                strncpy(ids[*n],nid,PIN_IDLEN-1); ids[*n][PIN_IDLEN-1]=0; (*n)++;
+            }
+        } else
         if(*p&&reg_find(p)>=0){            /* drop ids we no longer have */
             strncpy(ids[*n],p,PIN_IDLEN-1); ids[*n][PIN_IDLEN-1]=0; (*n)++;
         }
@@ -368,6 +374,19 @@ static int pin_toggle(const char *path, char ids[][PIN_IDLEN], int *n,
 static void pins_load(void){
     pin_load(PIN_FILE_FAV, fav_ids, &fav_n, "shell");
     pin_load(PIN_FILE_DESK,desk_ids,&desk_n,"shell");
+}
+
+/* v0.9.5: Settings > Desktop edits the same two lists. */
+int         desktop_app_count(void){ return NREG; }
+const char *desktop_app_id(int i)  { return (i>=0&&i<NREG)?appreg[i].id:""; }
+const char *desktop_app_name(int i){ return (i>=0&&i<NREG)?appreg[i].name:""; }
+void        desktop_pins_reload(void){ pins_load(); }
+int desktop_app_pinned(const char *id, int fav){
+    return fav ? pin_index(fav_ids,fav_n,id)>=0 : pin_index(desk_ids,desk_n,id)>=0;
+}
+int desktop_app_pin_toggle(const char *id, int fav){
+    return fav ? pin_toggle(PIN_FILE_FAV, fav_ids,&fav_n, id)
+               : pin_toggle(PIN_FILE_DESK,desk_ids,&desk_n,id);
 }
 
 /* ---- Views ---------------------------------------------------
@@ -508,11 +527,11 @@ static void draw_icons(int sel, int menu_open){
             vga_putchar_at(' ', sx, sy, th->desk_bg, th->desk_bg);
 
     if(!icon_count){
-        vga_puts_at("No desktop shortcuts.",2,3,th->bar_fg,th->desk_bg);
-        vga_puts_at("Windows key or ESC opens",2,5,th->bar_fg,th->desk_bg);
-        vga_puts_at("the start menu;",2,6,th->bar_fg,th->desk_bg);
-        vga_puts_at("press D on an app there",2,7,th->bar_fg,th->desk_bg);
-        vga_puts_at("to put it here.",2,8,th->bar_fg,th->desk_bg);
+        vga_puts_at("No desktop shortcuts.",2,3,th->desk_fg,th->desk_bg);
+        vga_puts_at("Windows key or ESC opens",2,5,th->desk_fg,th->desk_bg);
+        vga_puts_at("the start menu;",2,6,th->desk_fg,th->desk_bg);
+        vga_puts_at("press D on an app there",2,7,th->desk_fg,th->desk_bg);
+        vga_puts_at("to put it here.",2,8,th->desk_fg,th->desk_bg);
         return;
     }
 
@@ -533,7 +552,7 @@ static void draw_icons(int sel, int menu_open){
         vga_color_t ifg=s?th->icon_bg:th->icon_fg;
         vga_color_t nfg=s?th->accent:th->bar_fg;
 
-        vga_puts_at("---------------",x,y,th->bar_fg,th->desk_bg);
+        vga_puts_at("---------------",x,y,th->desk_fg,th->desk_bg);
         vga_putchar_at('-',x,y,th->accent,th->desk_bg);
         vga_putchar_at(a->icon[0],x+1,y,ifg,ibg);
         vga_putchar_at(a->icon[1],x+2,y,ifg,ibg);
@@ -551,16 +570,29 @@ static void draw_icons(int sel, int menu_open){
     if(total_rows > rows_vis){
         int bar_x = field_w < D_COLS ? field_w : D_COLS-1;
         vga_putchar_at(icon_scroll_row>0?'^':' ', bar_x, 2,
-                       th->bar_fg, th->desk_bg);
+                       th->desk_fg, th->desk_bg);
         vga_putchar_at((icon_scroll_row+rows_vis)<total_rows?'v':' ',
                        bar_x, 2+rows_vis*ICON_TILE_STEP-1,
-                       th->bar_fg, th->desk_bg);
+                       th->desk_fg, th->desk_bg);
     }
 }
 
 /* Info strip along the bottom of the content area */
 static void draw_infopanel(void){
     theme_t *th=ui_theme();
+    extern int cfg_desk_info(void);
+    extern int boot_is_live(void);
+    /* v0.9.5: Settings > Appearance can turn the strip off -- except in a
+       live session, where it is the warning that nothing is kept. */
+    if(!cfg_desk_info() && !boot_is_live()){
+        for(int y=INFO_SEP_Y;y<=INFO_Y;y++)
+            for(int x=0;x<D_COLS;x++){
+                char c=' '; vga_color_t fg=th->desk_bg;
+                ui_pattern_at(x,y,&c,&fg);
+                vga_putchar_at(c,x,y,fg,th->desk_bg);
+            }
+        return;
+    }
     uint32_t f=pmm_free_blocks(),t=pmm_total_blocks();
     (void)t;
     char rb[8]; utoa((f*4)/1024,rb,10); strcat(rb,"M");
@@ -570,25 +602,24 @@ static void draw_infopanel(void){
     us[3]='0'+((up%3600)/60/10)%10; us[4]='0'+((up%3600)/60)%10; us[5]=':';
     us[6]='0'+((up%60)/10)%10; us[7]='0'+(up%60)%10; us[8]=0;
     /* Separator line */
-    for(int x=0;x<D_COLS;x++) vga_putchar_at('-',x,INFO_SEP_Y,th->icon_bg,th->desk_bg);
+    for(int x=0;x<D_COLS;x++) vga_putchar_at('-',x,INFO_SEP_Y,th->pat_kind?th->pat_fg:th->icon_bg,th->desk_bg);
     /* Info row */
     for(int x=0;x<D_COLS;x++) vga_putchar_at(' ',x,INFO_Y,th->desk_bg,th->desk_bg);
-    vga_puts_at("RAM:",1,INFO_Y,th->bar_fg,th->desk_bg);
-    vga_puts_at(rb,5,INFO_Y,VGA_LIGHT_GREEN,th->desk_bg);
-    vga_puts_at("Up:",11,INFO_Y,th->bar_fg,th->desk_bg);
-    vga_puts_at(us,14,INFO_Y,VGA_LIGHT_GREY,th->desk_bg);
+    vga_puts_at("RAM:",1,INFO_Y,th->desk_fg,th->desk_bg);
+    vga_puts_at(rb,5,INFO_Y,th->desk_fg,th->desk_bg);
+    vga_puts_at("Up:",11,INFO_Y,th->desk_fg,th->desk_bg);
+    vga_puts_at(us,14,INFO_Y,th->desk_fg,th->desk_bg);
     /* Right side hint, right-anchored so it lands correctly in any width.
        A live session says so here instead: someone who pins an app to the
        desktop and finds it gone after a reboot should have been told why
        before they did it, not after. */
     {
-        extern int boot_is_live(void);
         const char *hint = boot_is_live()
             ? "LIVE - no disk is touched, nothing is saved"
             : "Tap icon to open  Right-tap for menu";
         int hx=D_COLS-(int)strlen(hint)-1; if(hx<20) hx=20;
         vga_puts_at(hint,hx,INFO_Y,
-                    boot_is_live()?VGA_YELLOW:th->icon_bg, th->desk_bg);
+                    th->desk_fg, th->desk_bg);
     }
 }
 
@@ -877,7 +908,7 @@ static int ctx_menu_activate(int sel){
     if(sel < 0 || sel >= ctx_nitems) return 0;
     switch(ctx_action[sel]){
     case CTXA_SETTINGS:
-        app_settings();
+        app_settings_v2();
         return 0;
     case CTXA_DISPLAY: {
         int nt=(ui_current_theme()+1)%ui_theme_count();
@@ -2098,86 +2129,7 @@ reload:
     }
 }
 
-static void app_sysinfo(void){
-    vga_clear(); ui_draw_taskbar("System Info");
-    ui_draw_window(6,2,68,19,"System Information");
-    int y=4;
-    #define ROW(l,v,c) vga_puts_at(l,10,y,VGA_LIGHT_GREY,VGA_BLACK);vga_puts_at(v,32,y,c,VGA_BLACK);y++;
-    char rb[24],tb[24],up[24];
-    ROW("OS:",          "HavenDOS " HAVENDOS_VER,        VGA_LIGHT_CYAN);
-    ROW("Architecture:","x86 32-bit Protected",  VGA_WHITE);
-    ROW("Bootloader:",  "GRUB2 Multiboot1",       VGA_WHITE);
-    ROW("Display:",     "80x25 VGA Text Mode",    VGA_WHITE);
-    y++;
-    uint32_t f=pmm_free_blocks(),t=pmm_total_blocks();
-    utoa(f*4,rb,10); strcat(rb," KB free");
-    utoa(t*4,tb,10); strcat(tb," KB total");
-    ROW("Free RAM:",    rb, VGA_LIGHT_GREEN);
-    ROW("Total RAM:",   tb, VGA_YELLOW);
-    utoa(get_ticks()/100,up,10); strcat(up,"s");
-    ROW("Uptime:",      up, VGA_WHITE);
-    y++;
-    ROW("User:",        current_username(),  VGA_LIGHT_GREEN);
-    ROW("Admin:",       current_user_admin()?"Yes":"No", current_user_admin()?VGA_LIGHT_GREEN:VGA_LIGHT_GREY);
-    ROW("Drivers:",     "VGA, PS/2 KB+Mouse",VGA_WHITE);
-    ROW("Filesystem:",  "RAMFS (64 slots, dirs supported)",  VGA_WHITE);
-    vga_puts_at("Any key...",34,20,VGA_DARK_GREY,VGA_BLACK);
-    keyboard_waitchar();
-}
-
 /* System Monitor - live updating */
-static void app_sysmonitor(void){
-    vga_clear(); ui_draw_taskbar("System Monitor");
-    ui_draw_window(4,2,72,20,"System Monitor  [ESC=Close]");
-    vga_puts_at("CPU Activity",8,4,VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts_at("Memory",8,9,VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts_at("Uptime",8,14,VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts_at("Ticks",44,4,VGA_LIGHT_CYAN,VGA_BLACK);
-
-    int bar_pos=0;
-    while(1){
-        if(keyboard_haschar()&&keyboard_getchar()==27)return;
-
-        /* Fake CPU activity bar (animates) */
-        bar_pos=(bar_pos+1)%60;
-        vga_puts_at("                                                    ",8,6,VGA_DARK_GREY,VGA_BLACK);
-        for(int i=0;i<bar_pos;i++)
-            vga_putchar_at('#',8+i,6,
-                i<20?VGA_LIGHT_GREEN:i<45?VGA_YELLOW:VGA_RED,VGA_BLACK);
-
-        /* Memory bar */
-        uint32_t f=pmm_free_blocks(),t=pmm_total_blocks();
-        int used=t>0?(int)((t-f)*60/t):0;
-        for(int i=0;i<60;i++)
-            vga_putchar_at('#',8+i,11,
-                i<used?(i<40?VGA_LIGHT_GREEN:VGA_YELLOW):VGA_DARK_GREY,VGA_BLACK);
-        char rb[16],tb[16];
-        utoa(f*4,rb,10); strcat(rb,"KB free");
-        utoa(t*4,tb,10); strcat(tb,"KB total");
-        vga_puts_at("                    ",8,12,VGA_BLACK,VGA_BLACK);
-        vga_puts_at(rb,8,12,VGA_LIGHT_GREEN,VGA_BLACK);
-        vga_puts_at(" / ",8+(int)strlen(rb),12,VGA_LIGHT_GREY,VGA_BLACK);
-        vga_puts_at(tb,11+(int)strlen(rb),12,VGA_YELLOW,VGA_BLACK);
-
-        /* Uptime */
-        uint32_t ticks=get_ticks();
-        char up[32];
-        uint32_t secs=ticks/100,mins=secs/60,hrs=mins/60;
-        secs%=60;mins%=60;
-        up[0]='0'+hrs/10;up[1]='0'+hrs%10;up[2]=':';
-        up[3]='0'+mins/10;up[4]='0'+mins%10;up[5]=':';
-        up[6]='0'+secs/10;up[7]='0'+secs%10;up[8]=0;
-        vga_puts_at(up,8,15,VGA_WHITE,VGA_BLACK);
-
-        /* Tick counter */
-        char tc[16]; utoa(ticks,tc,10);
-        vga_puts_at("          ",44,6,VGA_BLACK,VGA_BLACK);
-        vga_puts_at(tc,44,6,VGA_LIGHT_CYAN,VGA_BLACK);
-
-        sleep_ms(100);
-    }
-}
-
 static void app_clock(void){
     vga_clear(); ui_draw_taskbar("Clock");
     ui_draw_window(22,5,36,14,"Clock");
@@ -2478,299 +2430,6 @@ static void app_todo(void){
     }
 }
 
-static void read_str(char *buf, int max, int x, int y){
-    int pos=0; buf[0]=0; vga_set_cursor(x,y);
-    /* clear field */
-    for(int i=0;i<max;i++) vga_putchar_at('_',x+i,y,VGA_DARK_GREY,VGA_BLACK);
-    vga_set_cursor(x,y);
-    while(1){
-        int c=keyboard_waitchar();
-        if(c=='\n'||c=='\r') break;
-        if(c==27){buf[0]=0;break;}
-        if((c=='\b'||c==127)&&pos>0){pos--;buf[pos]=0;
-            vga_putchar_at('_',x+pos,y,VGA_DARK_GREY,VGA_BLACK);
-            vga_set_cursor(x+pos,y);}
-        else if(c>=32&&c<127&&pos<max-1){
-            buf[pos++]=c;buf[pos]=0;
-            vga_putchar_at(c,x+pos-1,y,VGA_WHITE,VGA_BLACK);
-        }
-    }
-}
-
-static void app_settings(void){
-    extern int         cfg_autologin(void);
-    extern void        cfg_set_autologin(int);
-    extern const char *cfg_autologin_user(void);
-    extern void        cfg_set_autologin_user(const char*);
-    extern int         cfg_verbose_boot(void);
-    extern void        cfg_set_verbose_boot(int);
-    extern int         cfg_post_screen(void);
-    extern void        cfg_set_post_screen(int);
-    extern int         cfg_screensaver_timeout(void);
-    extern void        cfg_set_screensaver_timeout(int);
-    extern int         cfg_autologin_timeout(void);
-    extern void        cfg_set_autologin_timeout(int);
-    extern const char *cfg_hostname(void);
-    extern void        cfg_set_hostname(const char*);
-    extern int         cfg_acct_hidden(int);
-    extern void        cfg_set_acct_hidden(int,int);
-    extern void        cfg_save(void);
-    extern uint32_t    pmm_free_blocks(void);
-    extern uint32_t    pmm_total_blocks(void);
-
-    /* Tabs: Themes | Accounts | Boot | System | About */
-    const char *tabs[]={"Themes","Accounts","Boot","System","About"};
-    int ntabs=5, tab=0, sel=0;
-
-    /* v0.8.5.6: the theme as it was BEFORE any preview.
-       ui_load_preview() overwrites cur_theme, so ui_current_theme()
-       cannot be used to undo a preview -- it returns the previewed
-       value. This tab used to cancel with
-           ui_set_theme(ui_current_theme())
-       which reads the clobbered value and WRITES IT TO DISK, so ESC
-       committed the theme you were last hovering over instead of
-       cancelling. Tab did the same. shell/apps_extra.c's picker got
-       this right by saving the entry value first; this one did not.
-       Three separate theme pickers, three different behaviours. */
-    int theme_start = ui_current_theme();
-    /* And open on the active theme rather than on theme 0, which is the
-       other half of the same bug: starting at 0 meant one Down keypress
-       previewed theme 1, and ESC then committed it. */
-    sel = theme_start;
-
-    while(1){
-        vga_clear(); ui_draw_taskbar("Settings");
-        ui_draw_window(4,2,72,21,"Settings  " HAVENDOS_VER);
-
-        /* Tab bar */
-        int tx=6;
-        for(int t=0;t<ntabs;t++){
-            int active=(t==tab);
-            vga_putchar_at(' ',tx,4,active?VGA_BLACK:VGA_DARK_GREY,active?VGA_CYAN:VGA_BLACK);
-            vga_puts_at(tabs[t],tx+1,4,active?VGA_BLACK:VGA_LIGHT_GREY,active?VGA_CYAN:VGA_BLACK);
-            vga_putchar_at(' ',tx+1+(int)strlen(tabs[t]),4,active?VGA_BLACK:VGA_DARK_GREY,active?VGA_CYAN:VGA_BLACK);
-            tx+=2+(int)strlen(tabs[t])+1;
-        }
-        for(int x=6;x<75;x++) vga_putchar_at('-',x,5,VGA_DARK_GREY,VGA_BLACK);
-        vga_puts_at("Tab=Next tab  Up-Down=Select  Enter=Apply  ESC=Close",6,22,VGA_DARK_GREY,VGA_BLACK);
-
-        /* ── Tab 0: Themes ── */
-        if(tab==0){
-            /* BUG FIX: cap visible rows to 12 so we never draw past row 20.
-               Use scroll offset so all themes are accessible via Up/Down. */
-            #define THEME_VISIBLE 12
-            static int theme_scroll = 0;
-            int tc=ui_theme_count();
-            /* Clamp scroll so sel is always visible */
-            if(sel < theme_scroll) theme_scroll = sel;
-            if(sel >= theme_scroll + THEME_VISIBLE) theme_scroll = sel - THEME_VISIBLE + 1;
-            if(theme_scroll < 0) theme_scroll = 0;
-
-            vga_puts_at("Select desktop theme:",7,6,VGA_WHITE,VGA_BLACK);
-            if(theme_scroll > 0)
-                vga_puts_at("^ more",62,6,VGA_DARK_GREY,VGA_BLACK);
-            else
-                vga_puts_at("      ",62,6,VGA_BLACK,VGA_BLACK);
-
-            for(int i=0;i<THEME_VISIBLE;i++){
-                int ti = i + theme_scroll;
-                if(ti >= tc) break;
-                int s=(ti==sel);
-                vga_putchar_at(s?'>':' ',7,8+i,s?VGA_LIGHT_GREEN:VGA_DARK_GREY,VGA_BLACK);
-                /* Pad to clear old text */
-                char padded[20]; int pi=0;
-                const char *nm=ui_theme_name(ti);
-                while(*nm&&pi<19) padded[pi++]=*nm++;
-                while(pi<19) padded[pi++]=' ';
-                padded[pi]=0;
-                vga_puts_at(padded,9,8+i,s?VGA_WHITE:VGA_LIGHT_GREY,VGA_BLACK);
-            }
-            if(theme_scroll + THEME_VISIBLE < tc)
-                vga_puts_at("v more",62,8+THEME_VISIBLE-1,VGA_DARK_GREY,VGA_BLACK);
-
-            /* Preview label — always at fixed row 21 inside window */
-            vga_puts_at("Preview: ",7,21,VGA_DARK_GREY,VGA_BLACK);
-            char pnm[20]; int pi2=0;
-            const char *pn=ui_theme_name(sel);
-            while(*pn&&pi2<19) pnm[pi2++]=*pn++;
-            while(pi2<19) pnm[pi2++]=' ';
-            pnm[pi2]=0;
-            vga_puts_at(pnm,16,21,ui_theme()->accent,VGA_BLACK);
-
-            int c=keyboard_waitchar();
-            /* Cancel restores in memory and writes nothing. */
-            if(c==27){ ui_load_preview(theme_start); return; }
-            if(c=='\t'){
-                ui_load_preview(theme_start);
-                tab=(tab+1)%ntabs;
-                sel=(tab==0)?ui_current_theme():0;
-                theme_scroll=0;
-                continue;
-            }
-            if(c==0x148&&sel>0){ sel--; ui_load_preview(sel); }
-            if(c==0x150&&sel<tc-1){ sel++; ui_load_preview(sel); }
-            /* Enter is the only thing that commits, and it moves the
-               baseline so a later ESC reverts to what was applied
-               rather than to what was active on entry. */
-            if(c=='\n'||c=='\r'){ ui_set_theme(sel); theme_start=sel; }
-        }
-
-        /* ── Tab 1: Accounts ── */
-        else if(tab==1){
-            vga_puts_at("Account visibility on login screen:",7,6,VGA_WHITE,VGA_BLACK);
-            /* Built-in accounts: indices 0,1,2 = admin,bootos,guest */
-            const char *bnames[]={"admin","bootos","guest"};
-            for(int i=0;i<3;i++){
-                int s=(sel==i);
-                int hidden=cfg_acct_hidden(i);
-                vga_putchar_at(s?'>':' ',7,8+i,s?VGA_LIGHT_GREEN:VGA_DARK_GREY,VGA_BLACK);
-                vga_puts_at(bnames[i],9,8+i,VGA_WHITE,VGA_BLACK);
-                vga_puts_at(hidden?"  [HIDDEN]  ":"  [VISIBLE] ",17,8+i,
-                            hidden?VGA_YELLOW:VGA_LIGHT_GREEN,VGA_BLACK);
-                vga_puts_at("Enter to toggle",30,8+i,VGA_DARK_GREY,VGA_BLACK);
-            }
-
-            for(int x=6;x<75;x++) vga_putchar_at('-',x,12,VGA_DARK_GREY,VGA_BLACK);
-
-            /* Auto-login */
-            int al=cfg_autologin();
-            vga_puts_at("Auto-login:",7,13,VGA_WHITE,VGA_BLACK);
-            vga_puts_at(al?"ENABLED ":"DISABLED",19,13,al?VGA_LIGHT_GREEN:VGA_YELLOW,VGA_BLACK);
-            vga_puts_at("(sel row 3 + Enter to toggle)",29,13,VGA_DARK_GREY,VGA_BLACK);
-
-            if(al){
-                vga_puts_at("Auto-login user:",7,14,VGA_WHITE,VGA_BLACK);
-                vga_puts_at(cfg_autologin_user(),24,14,VGA_LIGHT_CYAN,VGA_BLACK);
-            }
-
-            vga_puts_at("Note: hidden accounts can still log in via shell.",7,16,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at("Wizard-created accounts are always visible.",7,17,VGA_DARK_GREY,VGA_BLACK);
-
-            int c=keyboard_waitchar();
-            if(c==27)return;
-            if(c=='\t'){tab=(tab+1)%ntabs;sel=0;continue;}
-            if(c==0x148&&sel>0)sel--;
-            if(c==0x150&&sel<3)sel++;
-            if((c=='\n'||c=='\r')&&sel<3){
-                cfg_set_acct_hidden(sel,!cfg_acct_hidden(sel));
-                cfg_save();
-            }
-            if((c=='\n'||c=='\r')&&sel==3){
-                cfg_set_autologin(!cfg_autologin());
-                cfg_save();
-            }
-        }
-
-        /* ── Tab 2: Boot ── */
-        else if(tab==2){
-            vga_puts_at("Boot configuration:",7,6,VGA_WHITE,VGA_BLACK);
-
-            typedef struct{const char *lbl; int val;} bopt;
-            /* The POST screen is gone -- it announced a power-on self test
-               that the real BIOS had already performed before GRUB loaded
-               the kernel.  What is left is one honest switch. */
-            bopt bopts[]={
-                {"Verbose boot log",     cfg_verbose_boot()},
-            };
-            int nbopts=1;
-            for(int i=0;i<nbopts;i++){
-                int s=(i==sel);
-                vga_putchar_at(s?'>':' ',7,8+i,s?VGA_LIGHT_GREEN:VGA_DARK_GREY,VGA_BLACK);
-                vga_puts_at(bopts[i].lbl,9,8+i,VGA_WHITE,VGA_BLACK);
-                vga_puts_at(bopts[i].val?"[ON] ":"[OFF]",40,8+i,
-                            bopts[i].val?VGA_LIGHT_GREEN:VGA_YELLOW,VGA_BLACK);
-            }
-            vga_puts_at("The log prints as each driver starts. 'dmesg' replays it",
-                        7,12,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at("either way; 'quiet' on the GRUB line silences it.",
-                        7,13,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at("Changes take effect on next boot.",7,15,VGA_DARK_GREY,VGA_BLACK);
-
-            int c=keyboard_waitchar();
-            if(c==27)return;
-            if(c=='\t'){tab=(tab+1)%ntabs;sel=0;continue;}
-            if(c==0x148&&sel>0)sel--;
-            if(c==0x150&&sel<nbopts-1)sel++;
-            if(c=='\n'||c=='\r'){
-                if(sel==0){cfg_set_verbose_boot(!cfg_verbose_boot());cfg_save();}
-            }
-        }
-
-        /* ── Tab 3: System ── */
-        else if(tab==3){
-            vga_puts_at("System settings:",7,6,VGA_WHITE,VGA_BLACK);
-            vga_puts_at("Hostname:",7,8,VGA_WHITE,VGA_BLACK);
-            vga_puts_at(cfg_hostname(),18,8,VGA_LIGHT_CYAN,VGA_BLACK);
-            vga_puts_at("Screensaver timeout (seconds):",7,10,VGA_WHITE,VGA_BLACK);
-            char tsbuf[8]; itoa(cfg_screensaver_timeout(),tsbuf,10);
-            vga_puts_at(tsbuf,38,10,VGA_LIGHT_CYAN,VGA_BLACK);
-            vga_puts_at("Auto-login delay  (seconds):",7,12,VGA_WHITE,VGA_BLACK);
-            char albuf[8]; itoa(cfg_autologin_timeout(),albuf,10);
-            vga_puts_at(albuf,36,12,VGA_LIGHT_CYAN,VGA_BLACK);
-            vga_puts_at("(0=instant, any key cancels countdown)",7,13,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at("H=Hostname  T=Screensaver  A=Auto-login delay",7,18,VGA_DARK_GREY,VGA_BLACK);
-
-            int c=keyboard_waitchar();
-            if(c==27)return;
-            if(c=='\t'){tab=(tab+1)%ntabs;sel=0;continue;}
-            if(c=='h'||c=='H'){
-                vga_puts_at("New hostname: ",7,15,VGA_WHITE,VGA_BLACK);
-                char hn[24]="";
-                read_str(hn,23,22,15);
-                if(hn[0]){cfg_set_hostname(hn);cfg_save();}
-            }
-            if(c=='t'||c=='T'){
-                vga_puts_at("Screensaver timeout (sec): ",7,15,VGA_WHITE,VGA_BLACK);
-                char ts[8]="";
-                read_str(ts,7,34,15);
-                if(ts[0]){cfg_set_screensaver_timeout(atoi(ts));cfg_save();}
-            }
-            if(c=='a'||c=='A'){
-                vga_puts_at("Auto-login delay (sec, 0=instant): ",7,15,VGA_WHITE,VGA_BLACK);
-                char als[8]="";
-                read_str(als,7,42,15);
-                if(als[0]){cfg_set_autologin_timeout(atoi(als));cfg_save();}
-            }
-        }
-
-        /* ── Tab 4: About ── */
-        else if(tab==4){
-            vga_puts_at("HavenDOS " HAVENDOS_VER,7,6,VGA_LIGHT_CYAN,VGA_BLACK);
-            vga_puts_at("TechHaven Studios  2026",7,7,VGA_DARK_GREY,VGA_BLACK);
-            for(int x=6;x<75;x++) vga_putchar_at('-',x,9,VGA_DARK_GREY,VGA_BLACK);
-
-            uint32_t free_mb=pmm_free_blocks()*4/1024;
-            uint32_t total_mb=pmm_total_blocks()*4/1024;
-            char fb[8]; utoa(free_mb,fb,10);
-            char tb2[8]; utoa(total_mb,tb2,10);
-            vga_puts_at("RAM (free / total):",7,10,VGA_WHITE,VGA_BLACK);
-            vga_puts_at(fb,27,10,VGA_LIGHT_GREEN,VGA_BLACK);
-            vga_puts_at("MB /",33,10,VGA_WHITE,VGA_BLACK);
-            vga_puts_at(tb2,38,10,VGA_LIGHT_GREEN,VGA_BLACK);
-            vga_puts_at("MB",44,10,VGA_WHITE,VGA_BLACK);
-
-            vga_puts_at("Kernel:",7,11,VGA_WHITE,VGA_BLACK);
-            vga_puts_at("x86 32-bit  Multiboot1  GRUB2",15,11,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at("Build:",7,12,VGA_WHITE,VGA_BLACK);
-            vga_puts_at("HavenDOS 0.6.1  GCC -m32 -O2",15,12,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at("Hostname:",7,13,VGA_WHITE,VGA_BLACK);
-            vga_puts_at(cfg_hostname(),17,13,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at("User:",7,14,VGA_WHITE,VGA_BLACK);
-            vga_puts_at(current_username(),13,14,VGA_LIGHT_GREY,VGA_BLACK);
-            vga_puts_at(current_user_admin()?"  [admin]":"  [user]",13+(int)strlen(current_username()),14,
-                        current_user_admin()?VGA_YELLOW:VGA_LIGHT_GREY,VGA_BLACK);
-
-            for(int x=6;x<75;x++) vga_putchar_at('-',x,16,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at("github.com-MGKFN-HavenDOS-updates",7,17,VGA_DARK_GREY,VGA_BLACK);
-            vga_puts_at("techhavenstudios.lovable.app",7,18,VGA_DARK_GREY,VGA_BLACK);
-
-            int c=keyboard_waitchar();
-            if(c==27)return;
-            if(c=='\t'){tab=(tab+1)%ntabs;sel=0;continue;}
-        }
-    }
-}
-
 #define GW 36
 #define GH 17
 static void app_snake(void){
@@ -2878,12 +2537,6 @@ static void app_pipes(void){
     vga_clear();
     screensaver_run_pipes();
     vga_clear(); toast_clear();
-}
-
-static void app_dashboard(void){
-    /* Launch the dashboard — same as typing 'dashboard' in shell */
-    extern void shell_run_cmd(const char *cmd);
-    shell_run_cmd("dashboard");
 }
 
 /* ── Install App ─────────────────────────────────────────────── */
@@ -3553,6 +3206,20 @@ static void desktop_run_app(void (*fn)(void), const char *name, int fits)
        app's window. */
     if(boxed){ vga_viewport_clear(); mouse_clamp_to_grid(); }
     vga_clear();
+}
+
+/* v0.9.5: open a registered app by id from outside the desktop -- the
+   shell's `settings` and `system`. Same path as a click, so the box,
+   the crash guard and the layout check all apply. */
+int desktop_open_app(const char *id)
+{
+    for(int i=0;i<NREG;i++){
+        if(appreg[i].id && !strcmp(appreg[i].id,id)){
+            desktop_run_app(appreg[i].fn, appreg[i].name, appreg[i].fits);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /* The screen a person sees instead of a panic. Deliberately not red

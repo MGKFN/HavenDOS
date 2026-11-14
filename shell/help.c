@@ -1,295 +1,266 @@
 /* ================================================================
-   shell/help.c  --  the shell command reference
-   ================================================================
+   shell/help.c  --  `help`.  Rewritten for v0.9.5.
 
-   Moved out of shell.c for 0.8.1, and corrected against the real
-   dispatch table while it was moving.  What was wrong:
+   The old screen was one long list in six categories, written by
+   hand, paged every 20 lines whatever the screen height, and wrong
+   by 0.9.4: it still sent people to the desktop for apps that had
+   become commands, called the editor "notepad", missed `uninstall`,
+   and had no way to ask about one command.
 
-     * `pong` was listed, and described as "also on the desktop,
-       under Fun".  There is no pong command: app_pong() lives in
-       desktop.c and has never been reachable from the shell.  Help
-       documented a command that does nothing, and the tab-completion
-       table completed it.  Removed from both; the desktop-only apps
-       get an honest line of their own at the bottom instead.
+   Now it is an index. `help` lists the topics; `help <topic>` the
+   commands in one; `help <command>` one command's usage in a few
+   lines; `help all` everything. The words come from shell/cmddb.c --
+   the same table `man` renders and tools/check_help.py holds to the
+   shell's dispatcher -- so help cannot describe a command that does
+   not exist or miss one that does.
 
-     * `h-lang` was listed as the HavenCode command.  The commands
-       are `h`, `hplusplus` and `boot`; `h-lang` is the bpkg *package*
-       id, which is a different namespace and only appears after
-       `bpkg install`.
-
-     * Eleven working commands were undocumented: boot, copy, host,
-       hplusplus, lock, resolution, screensaver, script, type,
-       version, and `.` as the pipe operator.
-
-   How to keep it honest: the list below is checked against
-   exec_cmd() by tools/check_help.py, which fails the build on a
-   documented command that does not dispatch, the way
-   check_boot_log.py fails it on invented boot output.  A help screen
-   that drifts is worse than no help screen, because it is believed.
+   It pages by the console's real height and wraps to its real width,
+   from 64x24 to 240x135.
    ================================================================ */
-
 #include "types.h"
 #include "vga.h"
 #include "version.h"
+#include "string.h"
+#include "cmddb.h"
 
-extern int  keyboard_waitchar(void);
-extern uint32_t strlen(const char*);
+extern int keyboard_waitchar(void);
 
-/* Category: Files */
-static const char *cat_files[]={
-    "ls / dir        List files (color: cyan=dir green=file red=locked)",
-    "tree            Show filesystem tree",
-    "cat / type <f>  Show file contents",
-    "head [-n] <f>   First N lines (default 10)",
-    "tail [-n] <f>   Last N lines (default 10)",
-    "write <f> <txt> Write text to file",
-    "touch <file>    Create empty file",
-    "mkdir <name>    Create directory",
-    "del / rm <file> Delete file",
-    "rename / mv <o> <n>  Rename or move file",
-    "cp / copy <s> <d>    Copy file",
-    "find <pattern>  Find files (* glob supported)",
-    "grep <pat> <f>  Search in file",
-    "wc <file>       Line/word/char count",
-    "sort [-r] <f>   Sort lines (reverse with -r)",
-    "uniq <file>     Sort and deduplicate",
-    "diff <f1> <f2>  Compare two files",
-    "tee <file>      Output to screen and file",
-    "edit / notepad  Text editor",
-    "stat <file>     Show file metadata (size, type, lock)",
-    "hex <file>      Hexdump a file (hex -s <str> for strings)",
-    "zip / unzip     Archive and extract files",
-    "base64 <f>      Encode or decode (-d) a file",
-    "hash <file>     Checksum a file",
-    "df              Free space on the mounted filesystem",
-    "pwd / cd <dir>  Where you are, and go somewhere else",
-    NULL
-};
-/* Category: Shell */
-static const char *cat_shell[]={
-    "echo <text>     Print text (supports $VAR)",
-    "set <k> <v>     Set environment variable",
-    "unset <k>       Remove environment variable",
-    "export <k> <v>  Alias for set",
-    "env             Show all env variables",
-    "alias [k=v]     Set or list aliases",
-    "unalias <name>  Remove alias",
-    "history         Command history",
-    "ps1 [format]    Show or set prompt format",
-    "run <file>      Run a .BSH shell script",
-    "script <file>   Record a session to a file",
-    "source <file>   Run a script in the current shell",
-    "which <cmd>     Check if command exists",
-    "calc <expr>     Calculator (5+3*2 works)",
-    "repeat <n> <cmd>  Run command N times",
-    "seq <from> <to> Number sequence",
-    "cls / clear     Clear screen",
-    "watch <cmd>     Re-run a command until a key is pressed",
-    "timer <secs>    Count down, then beep",
-    "yes [text]      Repeat a line until stopped",
-    "color / motd    Prompt colours; the message of the day",
-    "res / resolution  Text grid: 80x25, 80x50, 90x30, 90x60",
-    "cmd > file      Redirect output to file",
-    "cmd >> file     Append output to file",
-    "cmd . cmd       Pipe output between commands",
-    NULL
-};
-/* Category: System */
-static const char *cat_sys[]={
-    "sysinfo         Full system information",
-    "sysinfo-plus    Deeper system information panel",
-    "mem             Memory stats",
-    "uptime          System uptime",
-    "disk            Disk/storage status",
-    "dmesg           Kernel boot log, paged",
-    "kpoll [on|off]  What runs on a timer, and why a poll was refused",
-    "ps              Process list",
-    "ver / version   Version info",
-    "date            Current date (RTC)",
-    "time            Current time (RTC)",
-    "dashboard / htop  Live system monitor",
-    "neofetch        The system at a glance, with the logo",
-    "lspci [-v]      Every PCI device, decoded by class",
-    "usb [-v|-vv]    USB controllers, ports, hubs and devices",
-    "usb rescan      walk the bus again (a stick plugged in after boot)",
-    "usb cfg [addr]  every configuration a device offers (read-only)",
-    "usb eth         USB network adapters, and the raw framing",
-    "usb mux         Apple Mobile Device channel (lockdown/pairing)",
-    "usb lockdown    ask lockdownd what it is -- pairing stage 1",
-    "fat32           FAT32 volumes, incl. the ESP (read-only)",
-    "exfat           exFAT volumes -- what a stick over 32 GB is (read-only)",
-    "rsa             RSA key generation and the primality test",
-    "i2c             I2C controllers, and what answers on the bus",
-    "i2chid          the trackpad: what was found on the I2C buses",
-    "gfx             the Iris Xe display engine, as the firmware left it",
-    "gfx regs        every display register read, offset and value",
-    "gfx vbt         which connector the firmware says is on which port",
-    "gfx edid [pin]  the monitor's EDID over GMBUS (0.9.1)",
-    "gfx plan        what `gfx on` would write, or why it refuses",
-    "gfx on          light the HDMI monitor: it mirrors the panel (0.9.2)",
-    "gfx off         turn the HDMI monitor off again",
-    "gfx b           pipe B as it runs: scanline, plane, surface (read only)",
-    "gfx color <c>   pipe B's background: blue/red/green/white/off",
-    "lockdown        ask lockdownd what it is -- pairing stages 1 and 2",
-    "pair            pair with a plugged-in iPhone, then open a session",
-    "pair session    open an encrypted session from the stored record",
-    "pair show       what is in the stored pair record",
-    "pair forget     delete the stored pair record",
-    "crash <how>     fault on purpose, to test the app guard",
-    "layout          open every app and report what draws off-screen",
-    "fat16           FAT16 volumes on any disk; ls, cat, cp onto a stick",
-    "selftest        Run the built-in self test",
-    "notify <t> <m>  Send toast notification",
-    "beep [hz] [ms]  Play tone via speaker",
-    "play            Boot jingle",
-    "install         Install HavenDOS to a disk (VirtIO or ATA)",
-    "uninstall       Remove HavenDOS from the disk it is installed on",
-    "update          Upgrade kernel from inserted ISO",
-    "rollback        Restore previous kernel version",
-    "reboot          Restart the system",
-    "shutdown / poweroff  Power the machine off",
-    NULL
-};
-/* Category: Users */
-static const char *cat_users[]={
-    "whoami          Current user",
-    "users           List all accounts",
-    "passwd [user]   Change password",
-    "adduser <n> <p> Add user (admin only)",
-    "deluser <user>  Delete user (admin only)",
-    "chmod <f> lock  Lock file (admin only)",
-    "chown <f> <usr> Change file owner (admin only)",
-    "lock            Lock the screen until a password is entered",
-    "log             Audit log (admin only)",
-    NULL
-};
-/* Category: Network */
-static const char *cat_net[]={
-    "ifconfig        Show or set network config",
-    "ping <ip>       Ping an IP address",
-    "netstat         Network connection status",
-    "udpsend         Send a UDP datagram: udpsend <ip> <port> <msg>",
-    "tcptest         Test a TCP connection: tcptest <host> <port>",
-    "tcpsend         Interactive TCP: tcpsend <host> <port>",
-    "chat <server>   BOOT Chat client",
-    "wget / curl     Fetch a URL over HTTP",
-    "nslookup / dns / host  Resolve a name",
-    "tls / tlsinfo   The TLS layer and what it agreed",
-    NULL
-};
-/* Category: Fun and Apps */
-static const char *cat_fun[]={
-    "matrix          Matrix screensaver",
-    "pipes           Pipes screensaver",
-    "stars           Starfield screensaver",
-    "screensaver <n>  Pick a screensaver by name",
-    "snake           Snake game",
-    "theme [n]       List or switch theme",
-    "fortune         Random quote",
-    "banner <text>   Big ASCII-art text",
-    "cowsay [msg]    Important system utility",
-    "ascii-art <txt> Large ASCII banner text",
-    "calendar        This month, with today marked",
-    "todo            The to-do list",
-    "paint           ASCII drawing canvas",
-    "music           PC speaker melodies",
-    "quiz            Trivia quiz",
-    "hacker          Retro intrusion animation",
-    "bpkg            List and install the optional packages",
-    "h / hplusplus / boot  HavenCode: the TechHaven H language",
-    "guide           Built-in user guide",
-    "man <cmd>       Detailed help for a command",
-    "help / ?        This help screen",
-    "exit / quit     Return to desktop",
-    NULL
-};
+/* ── Paged output ────────────────────────────────────────────────── */
 
-typedef struct { const char *title; const char **cmds; vga_color_t col; } cat_t;
-static const cat_t cats[]={
-    {"Files and Filesystem", cat_files, VGA_LIGHT_CYAN},
-    {"Shell and Scripting",  cat_shell, VGA_LIGHT_GREEN},
-    {"System",               cat_sys,   VGA_YELLOW},
-    {"Users and Security",   cat_users, VGA_LIGHT_RED},
-    {"Network",              cat_net,   VGA_LIGHT_BLUE},
-    {"Fun and Apps",         cat_fun,   VGA_LIGHT_MAGENTA},
-    {NULL,NULL,0}
-};
+static int hp_lines, hp_stop;
 
-void cmd_help(void){
-    vga_set_color(VGA_BLACK,VGA_LIGHT_CYAN);
-    for(int x=0;x<80;x++) vga_putchar(' ');
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-    vga_puts("\r  HavenDOS " HAVENDOS_VER "  Shell Command Reference\n");
-    vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-    for(int i=0;i<80;i++) vga_putchar('-');
+static void hp_reset(void){ hp_lines = 0; hp_stop = 0; }
+
+static void hp_nl(void){
+    if (hp_stop) return;
     vga_putchar('\n');
-    vga_set_color(VGA_WHITE,VGA_BLACK);
-
-    int printed=0;
-    for(int c=0;cats[c].title;c++){
-        vga_set_color(cats[c].col,VGA_BLACK);
-        vga_puts("  ");
-        vga_puts(cats[c].title);
-        vga_putchar('\n');
-        vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-        vga_puts("  ");
-        for(int k=0;k<(int)strlen(cats[c].title);k++) vga_putchar('-');
-        vga_putchar('\n');
-        for(int i=0;cats[c].cmds[i];i++){
-            /* Split the name from its description.  A run of two spaces is
-               the separator where one exists; column 16 is the fallback for
-               the older entries that only ever had one.  (Cutting blindly at
-               16 is what turned "nslookup / dns / host" into
-               "nslookup / dns /host".) */
-            const char *entry=cats[c].cmds[i];
-            int nlen=0;
-            while(entry[nlen] && !(entry[nlen]==' ' && entry[nlen+1]==' ')) nlen++;
-            if(!entry[nlen]){
-                nlen=0;
-                while(entry[nlen] && nlen<16) nlen++;
-                while(nlen>0 && entry[nlen-1]==' ') nlen--;
-            }
-            vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-            vga_puts("    ");
-            for(int k=0;k<nlen;k++) vga_putchar(entry[k]);
-            /* Pad to column 16, but never fewer than two spaces.  The
-               do/while alone padded only up to 16, so a name AT or OVER
-               16 chars got exactly one space and ran into its own
-               description: "rename / mv <o> <n> Rename or move file"
-               reads as if "Rename" were part of the syntax.  0.8.1 added
-               several such entries ("h / hplusplus / boot",
-               "nslookup / dns / host"), which is what surfaced it. */
-            int col=nlen, pad=0;
-            do { vga_putchar(' '); col++; pad++; } while(col<16||pad<2);
-            vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
-            int j=nlen;
-            while(entry[j]==' ') j++;
-            vga_puts(entry+j);
-            vga_putchar('\n');
-            printed++;
-            if(printed%20==0&&(cats[c].cmds[i+1]||cats[c+1].title)){
-                vga_set_color(VGA_BLACK,VGA_DARK_GREY);
-                vga_puts(" -- more -- press any key -- ");
-                vga_set_color(VGA_WHITE,VGA_BLACK);
-                keyboard_waitchar();
-                vga_puts("\r                               \r");
-            }
-        }
-        vga_putchar('\n');
+    if (++hp_lines >= vga_rows() - 2) {
+        vga_set_color(VGA_BLACK, VGA_LIGHT_GREY);
+        vga_puts(" -- more -- any key, Q stops ");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        int k = keyboard_waitchar();
+        vga_puts("\r                              \r");
+        if (k == 'q' || k == 'Q' || k == 27) hp_stop = 1;
+        hp_lines = 0;
     }
-    /* The desktop-only apps.  Named here because they are part of the
-       system and someone reading the shell reference should know where
-       they are, and NOT listed above because they are not commands --
-       which is exactly the mistake `pong` used to be. */
-    vga_set_color(VGA_LIGHT_MAGENTA,VGA_BLACK);
-    vga_puts("  On the desktop only\n");
-    vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-    vga_puts("  -------------------\n");
-    vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
-    vga_puts("    Pong, Tetris, File Manager, Clock, Hex Viewer, Disk Info,\n");
-    vga_puts("    Network Info, User Manager, Log Viewer, Notifications.\n");
-    vga_puts("    Type 'exit' for the desktop, then ESC for the start menu.\n\n");
-    vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-    vga_puts("  Type 'man <cmd>' for details on any command. Type 'guide' for the user guide.\n");
-    vga_set_color(VGA_WHITE,VGA_BLACK);
 }
+
+static void hp_put(vga_color_t fg, const char *s){
+    if (hp_stop) return;
+    vga_set_color(fg, VGA_BLACK);
+    vga_puts(s);
+}
+
+static void hp_putn(vga_color_t fg, const char *s, int n){
+    if (hp_stop) return;
+    vga_set_color(fg, VGA_BLACK);
+    for (int i = 0; i < n && s[i]; i++) vga_putchar(s[i]);
+}
+
+static void hp_pad(int n){ if (!hp_stop) while (n-- > 0) vga_putchar(' '); }
+
+/* Wrap `s` at the console width, every line starting at `indent`.
+   Stops at the first blank line ("\n\n") when `first_para` is set. */
+static void hp_wrap(vga_color_t fg, int indent, const char *s, int first_para){
+    int width = vga_cols() - indent - 1;
+    if (width < 20) width = 20;
+    while (*s && !hp_stop) {
+        if (*s == '\n') {
+            if (s[1] == '\n') { if (first_para) return; hp_nl(); s += 2; }
+            else s++;
+            continue;
+        }
+        int n = 0, sp = -1;
+        while (s[n] && s[n] != '\n' && n < width) { if (s[n] == ' ') sp = n; n++; }
+        int take = (s[n] && s[n] != '\n' && s[n] != ' ' && sp > 0) ? sp : n;
+        hp_pad(indent);
+        hp_putn(fg, s, take);
+        hp_nl();
+        s += take;
+        while (*s == ' ') s++;
+    }
+}
+
+static void hp_title(const char *left){
+    int cols = vga_cols();
+    vga_set_color(VGA_BLACK, VGA_CYAN);
+    int n = 0;
+    vga_putchar(' '); n++;
+    for (const char *s = left; *s && n < cols - 1; s++, n++) vga_putchar(*s);
+    const char *right = "HavenDOS " HAVENDOS_VER " ";
+    int rl = (int)strlen(right);
+    if (n + rl + 2 < cols) { while (n < cols - rl) { vga_putchar(' '); n++; } vga_puts(right); n += rl; }
+    while (n < cols) { vga_putchar(' '); n++; }
+    vga_set_color(VGA_WHITE, VGA_BLACK);
+    /* A full-width line already wrapped the cursor on most consoles;
+       count it as a printed line either way. */
+    hp_lines++;
+}
+
+/* ── One topic: name + summary per command ───────────────────────── */
+
+static void help_topic(int cat){
+    const cmdcat_t *c = &cmddb_cats[cat];
+    hp_put(VGA_LIGHT_CYAN, "  ");
+    hp_put(VGA_LIGHT_CYAN, c->title);
+    hp_put(VGA_DARK_GREY, "  -- help ");
+    hp_put(VGA_DARK_GREY, c->key);
+    hp_nl();
+    int cols = vga_cols();
+    for (int i = 0; cmddb[i].name && !hp_stop; i++) {
+        if (cmddb[i].cat != cat) continue;
+        int nl = (int)strlen(cmddb[i].name);
+        hp_pad(4);
+        hp_put(VGA_LIGHT_GREEN, cmddb[i].name);
+        int col = 4 + nl;
+        int at = (col + 2 > 18) ? col + 2 : 18;
+        int sl = (int)strlen(cmddb[i].summary);
+        if (at + sl >= cols) { hp_nl(); hp_pad(8); col = 8; at = 8; }
+        hp_pad(at - col);
+        hp_putn(VGA_LIGHT_GREY, cmddb[i].summary, cols - at - 1);
+        hp_nl();
+    }
+}
+
+/* ── The index ───────────────────────────────────────────────────── */
+
+static void help_index(void){
+    int cols = vga_cols();
+    hp_title("Command reference");
+    hp_nl();
+    hp_put(VGA_WHITE, "  Topics");
+    hp_put(VGA_DARK_GREY, "  -- type help <topic>");
+    hp_nl();
+    for (int c = 0; c < CDB_NCAT && !hp_stop; c++) {
+        hp_pad(4);
+        hp_put(VGA_LIGHT_GREEN, cmddb_cats[c].key);
+        hp_pad(10 - (int)strlen(cmddb_cats[c].key));
+        /* the topic's commands, as many as fit */
+        int x = 14;
+        int first = 1;
+        for (int i = 0; cmddb[i].name; i++) {
+            if (cmddb[i].cat != c) continue;
+            int nl = (int)strlen(cmddb[i].name);
+            if (x + nl + (first ? 0 : 1) + 4 >= cols) { hp_put(VGA_DARK_GREY, " ..."); break; }
+            if (!first) { hp_put(VGA_LIGHT_GREY, " "); x++; }
+            hp_put(VGA_LIGHT_GREY, cmddb[i].name);
+            x += nl; first = 0;
+        }
+        hp_nl();
+    }
+    hp_nl();
+    hp_put(VGA_WHITE, "  More");
+    hp_nl();
+    static const char *more[][2] = {
+        {"help <command>", "how to use one command"},
+        {"man <command>",  "its full page"},
+        {"help all",       "every command by topic"},
+        {"man",            "browse them all"},
+        {"guide",          "a tour of HavenDOS"},
+    };
+    /* Two columns where they fit (80 and up), one below that. */
+    int two = cols >= 80;
+    for (int i = 0; i < 5 && !hp_stop; i++) {
+        hp_pad((two && (i % 2)) ? 2 : 4);
+        hp_put(VGA_LIGHT_GREEN, more[i][0]);
+        hp_pad(16 - (int)strlen(more[i][0]));
+        hp_put(VGA_LIGHT_GREY, more[i][1]);
+        if (two && (i % 2) == 0 && i + 1 < 5) {      /* 4+16+24 = 44 */
+            hp_pad(24 - (int)strlen(more[i][1]));
+            continue;
+        }
+        hp_nl();
+    }
+    hp_nl();
+    hp_wrap(VGA_DARK_GREY, 2,
+        "Tab completes names, Up/Down recall commands. cmd . cmd pipes, "
+        "> file saves output, >> file appends, $NAME is a variable.", 0);
+}
+
+/* ── One command, briefly ────────────────────────────────────────── */
+
+static void help_command(const cmddoc_t *d){
+    hp_pad(2);
+    hp_put(VGA_LIGHT_GREEN, d->name);
+    hp_put(VGA_DARK_GREY, "  -  ");
+    hp_put(VGA_WHITE, d->summary);
+    hp_nl();
+    if (d->aliases) {
+        hp_pad(2);
+        hp_put(VGA_DARK_GREY, "also: ");
+        hp_put(VGA_LIGHT_GREY, d->aliases);
+        hp_nl();
+    }
+    hp_nl();
+    hp_put(VGA_LIGHT_CYAN, "  Usage");
+    hp_nl();
+    for (const char *s = d->synopsis; *s && !hp_stop; ) {
+        int n = 0; while (s[n] && s[n] != '\n') n++;
+        hp_pad(4); hp_putn(VGA_YELLOW, s, n); hp_nl();
+        s += n; if (*s) s++;
+    }
+    hp_nl();
+    hp_wrap(VGA_LIGHT_GREY, 2, d->desc, 1);
+    if (d->examples) {
+        /* The first example only; man has them all. */
+        const char *e = d->examples;
+        int cn = 0; while (e[cn] && e[cn] != '\t' && e[cn] != '\n') cn++;
+        hp_nl();
+        hp_put(VGA_LIGHT_CYAN, "  Example  ");
+        hp_putn(VGA_LIGHT_GREEN, e, cn);
+        if (e[cn] == '\t') {
+            const char *m = e + cn + 1; int mn = 0;
+            while (m[mn] && m[mn] != '\n') mn++;
+            if (11 + cn + 3 + mn < vga_cols()) { hp_put(VGA_DARK_GREY, "   "); hp_putn(VGA_DARK_GREY, m, mn); }
+        }
+        hp_nl();
+    }
+    hp_nl();
+    hp_put(VGA_DARK_GREY, "  The whole page: man ");
+    hp_put(VGA_DARK_GREY, d->name);
+    if (d->see) { hp_put(VGA_DARK_GREY, "     Related: "); hp_put(VGA_DARK_GREY, d->see); }
+    hp_nl();
+}
+
+/* ── Entry ───────────────────────────────────────────────────────── */
+
+void cmd_help_arg(const char *word){
+    hp_reset();
+    if (!word || !word[0]) { help_index(); return; }
+
+    if (!strcmp(word, "all")) {
+        hp_title("Every command");
+        for (int c = 0; c < CDB_NCAT && !hp_stop; c++) { hp_nl(); help_topic(c); }
+        hp_nl();
+        hp_put(VGA_DARK_GREY, "  help <command> or man <command> for one of them.");
+        hp_nl();
+        return;
+    }
+    int cat = cmddb_cat_find(word);
+    if (cat >= 0) {
+        help_topic(cat);
+        hp_nl();
+        hp_put(VGA_DARK_GREY, "  help <command> for its usage, man <command> for the full page.");
+        hp_nl();
+        return;
+    }
+    const cmddoc_t *d = cmddb_find(word);
+    if (d) { help_command(d); return; }
+
+    vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+    vga_printf("help: no topic or command called '%s'\n", word);
+    int shown = 0, n = (int)strlen(word);
+    if (n > 2) n = 2;
+    for (int i = 0; cmddb[i].name && shown < 8; i++) {
+        if (!strncmp(cmddb[i].name, word, (size_t)n)) {
+            if (!shown) { vga_set_color(VGA_LIGHT_GREY, VGA_BLACK); vga_puts("  Did you mean:"); }
+            vga_putchar(' '); vga_puts(cmddb[i].name); shown++;
+        }
+    }
+    if (shown) vga_putchar('\n');
+    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    vga_puts("  'help' on its own lists the topics.\n");
+    vga_set_color(VGA_WHITE, VGA_BLACK);
+}
+
+void cmd_help(void){ cmd_help_arg(""); }

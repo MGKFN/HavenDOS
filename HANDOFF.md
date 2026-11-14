@@ -1,7 +1,91 @@
-# HavenDOS — handoff, 12 November 2026
+# HavenDOS — handoff, 14 November 2026
 
-Current release: **v0.9.4.1** (channel Beta, codename "Prometheus"). Paste
+Current release: **v0.9.5** (channel Beta, codename "Hephaestus"). Paste
 this file into a new chat to pick up where this left off.
+
+## START HERE: 0.9.5 "HEPHAESTUS" — THE APPS, REBUILT
+
+Kyan's list (14 Nov, eight photos): help and man out of date, `users`
+useless, guide out of date, themes unchanged in two years, Settings not
+useful, three near-identical system apps, and the 0.8.x multitasking
+promise. All done except multitasking, which is **0.9.6** (see NEXT).
+
+- **One command reference: `shell/cmddb.c`** plus `include/cmddb.h`.
+  - 128 entries, 150 names. Each has name, aliases, topic (`CDB_*`),
+    synopsis, summary (max 44 chars), description, examples
+    ("cmd\twhat") and see-also.
+  - `shell/help.c` is the index: `help`, `help <topic>`,
+    `help <command>`, `help all`.
+  - `shell/man.c` renders pages into a line buffer (`ml_*`) and scrolls
+    them. It also has `man_browse()` (the Manual app),
+    `man_pages_view()` with a light markup (the guide), and topic pages.
+  - **`tools/check_help.py`** holds the table to `exec_cmd()` both
+    ways. Only `.` is exempt.
+  - **Adding a command means adding a cmddb entry and a `shell_cmds[]`
+    completion, or the build fails.**
+- **`users`** is in `shell/userscmd.c`, along with `log`.
+  - `shell/login.c` gained `get_user_pwstate()` (0 none, 1 own,
+    2 the published default), `get_user_hidden()`,
+    `get_user_current()`, `set_user_admin()` (keeps one admin),
+    `user_last_login()` and `audit_text()`.
+  - The audit log is timestamped, read back at boot, and capped at
+    2 KB, dropping whole lines.
+  - `passwd` now saves.
+- **Themes** are in `shell/ui.c`: 12 base and 8 extra (themes-extra).
+  - `theme_t` gained `desk_fg`, `pat_kind`, `pat_ch` and `pat_fg`,
+    appended so old readers still line up.
+  - The wallpaper is drawn by `ui_pattern_at()` /
+    `ui_pattern_at_theme()`. The desktop, login, setup and Settings all
+    use it.
+  - `.theme` holds the theme NAME. A number from older releases goes
+    through `legacy_map[]`.
+  - Backgrounds stay in colours 0-7, because 8-15 blink in VGA text
+    mode.
+  - The `theme` command is in `shell/themecmd.c`.
+- **Settings** is `shell/settings.c`, opened with `settings_open(section)`.
+  The desktop id `settings` is `app_settings_v2` (fits=1).
+  - New config keys in `kernel/config.c`: `desk_pattern`, `desk_info`,
+    `shell_fg`, `shell_bg` (unused, kept black) and `prompt`.
+  - The desktop exports its pin lists: `desktop_app_count()`,
+    `desktop_app_id()`, `desktop_app_name()`, `desktop_app_pinned()`,
+    `desktop_app_pin_toggle()`, `desktop_pins_reload()`, and
+    `desktop_open_app(id)`.
+- **System** is `shell/sysapp.c`, with `app_system_open(tab)`.
+  - It replaces the desktop's sysinfo, sysinfop, dashboard and sysmon
+    entries, plus the dashboard and `sysinfo` blocks in `shell.c`.
+  - `pin_load()` maps those four old ids to `system`.
+  - `sys_volume_space()` is shared with `df` and `neofetch`.
+  - `lspci.c` exports `pci_describe()`.
+- **The guide** is `shell/guide.c`, ten pages; `guide <n>` opens on a
+  page.
+- **Behaviour fixes:**
+  - The default `h=help` alias is gone, and dropped from saved alias
+    files.
+  - `find` is a recursive glob.
+  - `run` and `source` resolve paths from the working directory.
+  - `ps`, `df` and `ver` tell the truth.
+  - `chmod` and `chown` refuse honestly on FAT.
+  - `color` sets the text colour only, and it persists.
+  - `ps1` persists.
+- Verified in QEMU on an 8 GB FAT32 install (the 0.9.4.1 promo disk,
+  kernel swapped in): help, man, the browser, users, theme, ps, df, ver,
+  find, the guide, all five System tabs, every Settings section, theme
+  migration (old index 0 became Midnight), and the old desktop pins
+  becoming one System icon.
+
+## NEXT: 0.9.6 — COOPERATIVE MULTITASKING (Kyan chose both options)
+
+- **Cooperative tasks:** kernel tasks that switch when an app waits for a
+  key (`keyboard_waitchar`) or calls yield; background jobs.
+- **Switch between apps:** Alt+Tab between open apps, each keeping its
+  state, with background tasks still running.
+- Do a design pass first. Things to settle:
+  - per-task stacks;
+  - a per-task console (the shadow buffer per app);
+  - how `appguard` and `kpoll` interact with switching;
+  - which apps are safe to suspend mid-loop.
+- `ps` (shell.c) and the System app's "Tasks" line will need updating
+  when tasks exist.
 
 ## 0.9.4.1 (13 Nov): FIXES FOUND TAKING THE 1.0 SCREENSHOTS
 
@@ -3147,6 +3231,11 @@ Left, and each has its reason:
 
 Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
+
+## Testing, as of 0.9.5
+
+**6964 of 6964 checks across 66 suites** (0.9.5: `test_cmddb` 22 new, `test_accounts` 27 -> 50,
+`test_theme` 41 -> 44; `check_help.py` rewritten against `cmddb.c`).
 
 ## Testing, as of 0.9.4
 

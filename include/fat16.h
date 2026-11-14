@@ -2,6 +2,9 @@
 #include "types.h"
 int  fat16_init(void);
 int  fat16_detected(void);
+uint32_t fat16_cluster_bytes(void);   /* v0.9.5, 0 while borrowed */
+uint32_t fat16_total_clusters(void);
+uint32_t fat16_free_clusters(void);
 int  fat16_on_ata(void);
 /* The mounted volume's disk, as an index into fs/blkdev.c's table, or -1.
    Ask blk_bus_name() for the word; see the note in fs/fat16.c. */

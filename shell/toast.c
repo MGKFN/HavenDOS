@@ -11,9 +11,11 @@
 
 extern uint32_t get_ticks(void);
 
-/* Forward declaration — avoids including all of ui.h */
-typedef struct { vga_color_t bar_bg, bar_fg, desk_bg, accent, win_bg, win_fg, hilite; } theme_t;
-extern theme_t *ui_theme(void);
+/* v0.9.5: the real declaration. This file used to carry its own copy of
+   theme_t with the fields in a different order (accent fourth, where the
+   real struct has win_bg) -- harmless only because the two it read were
+   in the same place in both. */
+#include "../include/theme.h"
 
 typedef enum {
     TOAST_INFO    = 0,
@@ -76,7 +78,7 @@ static void toast_draw(void){
 
 static void toast_blank(void){
     theme_t *th = ui_theme();   /* blank in current theme background colour */
-    for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,TOAST_ROW,th->bar_fg,th->desk_bg);
+    for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,TOAST_ROW,th->desk_fg,th->desk_bg);
     extern void vga_flush(void);
     vga_flush();
 }

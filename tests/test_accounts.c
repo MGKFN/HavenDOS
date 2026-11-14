@@ -70,21 +70,28 @@ void rtc_get_date(uint8_t *d,uint8_t *m,uint16_t *y){ *d=28;*m=9;*y=2026; }
 #define FAKEFS 4096
 static char g_file[FAKEFS];
 static int  g_filelen = -1;          /* -1 = the file does not exist */
+/* v0.9.5: the login log is a file of its own now (it is read back at
+   boot), so the fake disk keeps it apart from .accounts. */
+static char g_log[FAKEFS];
+static int  g_loglen = -1;
+static int is_log(const char *p){ return p && strstr(p, "loginlog") != 0; }
 int vfs_write(const char *p, const char *d, uint32_t n)
 {
-    (void)p;
+    char *f = is_log(p) ? g_log : g_file;
+    int *fl = is_log(p) ? &g_loglen : &g_filelen;
     if(n > FAKEFS-1) n = FAKEFS-1;
-    memcpy(g_file, d, (size_t)n);
-    g_file[n] = 0;
-    g_filelen = (int)n;
+    memcpy(f, d, (size_t)n);
+    f[n] = 0;
+    *fl = (int)n;
     return (int)n;
 }
 int vfs_read(const char *p, char *out, uint32_t max)
 {
-    (void)p;
-    if(g_filelen < 0) return -1;
-    uint32_t n = (uint32_t)g_filelen < max-1 ? (uint32_t)g_filelen : max-1;
-    memcpy(out, g_file, (size_t)n);
+    char *f = is_log(p) ? g_log : g_file;
+    int fl = is_log(p) ? g_loglen : g_filelen;
+    if(fl < 0) return -1;
+    uint32_t n = (uint32_t)fl < max-1 ? (uint32_t)fl : max-1;
+    memcpy(out, f, (size_t)n);
     out[n] = 0;
     return (int)n;
 }
@@ -109,6 +116,7 @@ theme_t *ui_theme(void){ return &g_theme; }
 int  ui_current_theme(void){ return 0; }
 void ui_load_theme(void){}
 void ui_set_theme(int n){ (void)n; }
+int  ui_pattern_at(int x,int y,char *c,vga_color_t *fg){ (void)x;(void)y;(void)c;(void)fg; return 0; }
 int  ui_theme_count(void){ return 1; }
 const char *ui_theme_name(int i){ (void)i; return "Default"; }
 void ui_draw_window(int x,int y,int w,int h,const char *t)
@@ -234,6 +242,82 @@ int main(void)
        "a 15-character name did not survive the round trip");
     ck("its password still does not match a wrong one",
        try_login("kyan", "nope") < 0, "");
+
+    head("v0.9.5: the login log has times, survives, and says who logged in when");
+    {
+        audit("kyan", "login OK");
+        ck("a log line starts with the date and time",
+           strstr(g_log, "2026-09-28 12:00  kyan  login OK\n") != 0, g_log);
+        char when[24]; int n = 0;
+        ck("the last login is found", user_last_login("kyan", when, sizeof when, &n) == 1, "");
+        ck("...with its time", !strcmp(when, "2026-09-28 12:00"), when);
+        ck("and counted", n == 1, "");
+        ck("an account that never logged in has no last login",
+           user_last_login(m15, when, sizeof when, &n) == 0, "");
+        audit("kyan", "login FAILED");
+        user_last_login("kyan", when, sizeof when, &n);
+        ck("a failed login is not a login", n == 1, "");
+
+        /* A log from 0.9.4: no dates. */
+        audit_len = 0; audit_buf[0] = 0;
+        const char *old = "[bob] login OK\n";
+        memcpy(audit_buf, old, strlen(old)); audit_len = (int)strlen(old); audit_buf[audit_len] = 0;
+        ck("an undated 0.9.4 line still counts",
+           user_last_login("bob", when, sizeof when, &n) == 1 && !strcmp(when, "before 0.9.5"), when);
+
+        for(int i = 0; i < 300; i++) audit("kyan", "login OK");
+        ck("the log stays under its cap", audit_len < AUDIT_MAX, "");
+        ck("and rotates whole lines (it starts with a date)",
+           audit_buf[0] == '2' && audit_buf[4] == '-', audit_buf);
+        ck("what is in memory is what is on disk",
+           g_loglen == audit_len && !memcmp(g_log, audit_buf, (size_t)audit_len), "");
+
+        /* Read back at boot, not started empty. */
+        int before = audit_len;
+        audit_loaded = 0; audit_len = 0;
+        audit_load();
+        ck("the log is read back at the next boot", audit_len == before, "");
+    }
+
+    head("v0.9.5: passwd is saved; users can tell a default password");
+    {
+        logged_in_idx = try_login("kyan", "Secret1!");
+        ck("a password change succeeds", passwd_user("kyan", "", "NewPass9") == 0, "");
+        user_count = 0; memset(users, 0, sizeof(users));
+        accounts_load();
+        ck("...and survives a reload (it never used to)",
+           try_login("kyan", "NewPass9") >= 0, "the old password came back");
+        ck("the old one no longer works", try_login("kyan", "Secret1!") < 0, "");
+        logged_in_idx = try_login("kyan", "NewPass9");
+        int k = logged_in_idx;
+        ck("kyan's password is his own", get_user_pwstate(k) == 1, "");
+        users[0].pw_hash = pw_hash("Admin@123");     /* as login_init() sets it */
+        ck("admin's is still the published default", get_user_pwstate(0) == 2, "");
+        ck("guest has none", get_user_pwstate(2) == 0, "");
+    }
+
+    head("v0.9.5: roles");
+    {
+        int k = try_login("kyan", "NewPass9");
+        logged_in_idx = k;
+        ck("an admin can make another account an admin",
+           set_user_admin(m15, 1) == 0 && get_user_admin(try_login(m15, "Secret1!")), "");
+        ck("and back", set_user_admin(m15, 0) == 0, "");
+        ck("an admin can step down while another admin exists",
+           set_user_admin("kyan", 0) == 0, "");
+        ck("a standard user cannot change roles", set_user_admin(m15, 1) == -2, "");
+        /* The built-in admin. (After the memset above it is not at index 0:
+           accounts_load() appends what it does not find by name.) */
+        for(int i = 0; i < user_count; i++) if(!strcmp(users[i].name, "admin")) logged_in_idx = i;
+        int admins = 0;
+        for(int i = 0; i < user_count; i++) admins += users[i].admin;
+        char why[64]; snprintf(why, sizeof why, "%d admin(s) before, got %d", admins, set_user_admin("admin", 0));
+        ck("the last administrator cannot be demoted",
+           admins == 1 && set_user_admin("admin", 0) == -3, why);
+        user_count = 0; memset(users, 0, sizeof(users));
+        accounts_load();
+        ck("roles survive a reload", get_user_admin(try_login("kyan", "NewPass9")) == 0, "");
+    }
 
     printf("\n%d/%d passed\n", total - fails, total);
     return fails ? 1 : 0;

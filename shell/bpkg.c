@@ -100,11 +100,10 @@ static const pkg_info_t pkg_builtin[] = {
     {"calendar",     "Calendar",         "1.0.0", "Monthly calendar with today marker", 1},
     {"quiz",         "Quiz",             "1.0.0", "Trivia quiz game with scoring",      1},
     {"hacker",       "Hacker Mode",      "1.0.0", "Retro hacking terminal animation",   1},
-    {"sysinfo-plus", "SysInfo+",         "1.0.0", "Deep system information panel",      1},
-    {"themes-extra", "Themes Extra",     "1.0.0", "10 additional colour themes",        1},
+    {"themes-extra", "Themes Extra",     "1.0.0", "8 more themes for Settings",        1},
     {"h-lang",       "H Language",       "0.2.0", "TechHaven H / H++ / H# lang (HavenCode)", 1},  /* version-literal-ok: H language version, not the OS */
 };
-#define PKG_BUILTIN_COUNT  10
+#define PKG_BUILTIN_COUNT  9
 
 static void bpkg_use_builtin(void)
 {
@@ -606,7 +605,6 @@ const char *bpkg_install_msg(const char *id)
     if(strcmp(id,"calendar")==0)     return "Run: calendar";
     if(strcmp(id,"quiz")==0)         return "Run: quiz";
     if(strcmp(id,"hacker")==0)       return "Run: hacker";
-    if(strcmp(id,"sysinfo-plus")==0) return "Run: sysinfo-plus";
     return "Package installed.";
 }
 

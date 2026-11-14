@@ -13,7 +13,6 @@
  *   calendar     — monthly calendar, highlights today
  *   quiz         — multiple-choice trivia game with scoring
  *   weather      — ASCII art weather (placeholder until TLS lands)
- *   sysinfo-plus — deep system info panel
  *   hacker       — retro "hacking" terminal animation
  *   boot-lang    — enable BOOT language IDE (already compiled in)
  */
@@ -679,81 +678,6 @@ extern uint32_t net_get_ip(void);
 extern void     ip_to_str(uint32_t, char*);
 extern void     heap_stats(uint32_t*,uint32_t*);
 
-void pkg_sysinfo_plus(void)
-{
-    for(int y=0;y<25;y++) for(int x=0;x<80;x++)
-        vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
-
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_DARK_GREY);
-    vga_puts_at(" SYSINFO+  --  HavenDOS " HAVENDOS_VER "  --  TechHaven Studios",0,0,VGA_WHITE,VGA_DARK_GREY);
-
-    /* Box */
-    for(int x=2;x<78;x++){
-        vga_putchar_at('-',x,2,VGA_DARK_GREY,VGA_BLACK);
-        vga_putchar_at('-',x,22,VGA_DARK_GREY,VGA_BLACK);
-    }
-    for(int y=2;y<23;y++){
-        vga_putchar_at('|',2,y,VGA_DARK_GREY,VGA_BLACK);
-        vga_putchar_at('|',77,y,VGA_DARK_GREY,VGA_BLACK);
-    }
-
-    int row=4;
-    #define SI_ROW(label,val,col) \
-        vga_puts_at(label,5,row,VGA_DARK_GREY,VGA_BLACK); \
-        vga_puts_at(val,28,row,col,VGA_BLACK); row++;
-
-    SI_ROW("OS:",             "HavenDOS " HAVENDOS_VER,           VGA_LIGHT_CYAN)
-    SI_ROW("Vendor:",         "TechHaven Studios",          VGA_LIGHT_GREY)
-    SI_ROW("Architecture:",   "x86 32-bit (i386)",          VGA_LIGHT_GREY)
-    SI_ROW("Boot:",           "GRUB2 / Multiboot1",         VGA_LIGHT_GREY)
-    row++;
-
-    /* RAM */
-    uint32_t total_pages = pmm_total_blocks();
-    uint32_t free_pages  = pmm_free_blocks();
-    uint32_t total_mb    = (total_pages*4)/1024;  /* 4KB blocks */
-    uint32_t free_mb     = (free_pages*4)/1024;
-    uint32_t used_mb     = total_mb > free_mb ? total_mb - free_mb : 0;
-
-    char tmb[16],fmb[16],umb[16];
-    utoa(total_mb,tmb,10); strncat(tmb," MB",4);
-    utoa(free_mb, fmb,10); strncat(fmb," MB",4);
-    utoa(used_mb, umb,10); strncat(umb," MB",4);
-
-    SI_ROW("Total RAM:",      tmb, VGA_LIGHT_GREEN)
-    SI_ROW("Used RAM:",       umb, VGA_YELLOW)
-    SI_ROW("Free RAM:",       fmb, VGA_LIGHT_GREEN)
-
-    /* Heap */
-    uint32_t hfree=0, hused=0;
-    heap_stats(&hfree, &hused);
-    char hfs[16],hus[16];
-    utoa(hfree/1024,hfs,10); strncat(hfs," KB",4);
-    utoa(hused/1024,hus,10); strncat(hus," KB",4);
-    SI_ROW("Heap used:",      hus, VGA_YELLOW)
-    SI_ROW("Heap free:",      hfs, VGA_LIGHT_GREEN)
-    row++;
-
-    /* Network */
-    char ips[20]="Not configured";
-    uint32_t ip=net_get_ip();
-    if(ip) ip_to_str(ip,ips);
-    SI_ROW("Network IP:",     ips, VGA_LIGHT_CYAN)
-    SI_ROW("NIC:",            "RTL8139 / e1000",            VGA_LIGHT_GREY)
-    SI_ROW("Stack:",          "TCP/IP IPv4 (HavenDOS)",     VGA_LIGHT_GREY)
-    row++;
-
-    /* Filesystem */
-    SI_ROW("Filesystem:",     "FAT16 + RAMFS + FAT12",      VGA_LIGHT_GREY)
-    SI_ROW("Disk I/O:",       "VirtIO block (polling)",      VGA_LIGHT_GREY)
-
-    vga_puts_at("Press any key to exit",29,23,VGA_DARK_GREY,VGA_BLACK);
-    keyboard_waitchar();
-
-    for(int y=0;y<25;y++) for(int x=0;x<80;x++)
-        vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
-}
-
 /* ─────────────────────────────────────────────────────────────── */
 /* ASCII-ART BANNER (shell command wrapper)                         */
 /* ─────────────────────────────────────────────────────────────── */
@@ -773,6 +697,5 @@ void run_package_app(const char *id, const char *args)
     if(strcmp(id,"calendar")==0)     { pkg_calendar();   return; }
     if(strcmp(id,"quiz")==0)         { pkg_quiz();       return; }
     if(strcmp(id,"hacker")==0)       { pkg_hacker();     return; }
-    if(strcmp(id,"sysinfo-plus")==0) { pkg_sysinfo_plus();return;}
     vga_puts("Package app not found: "); vga_puts(id); vga_puts("\n");
 }

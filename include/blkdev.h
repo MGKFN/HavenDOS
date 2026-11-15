@@ -1,4 +1,5 @@
 #pragma once
+/* v0.9.6: the system volume named on the boot line (`vol=`); see blkdev.c. */
 #include "types.h"
 
 /* ── The block layer: ONE place that knows a disk is on a bus ─────────
@@ -214,3 +215,10 @@ int blk_boot_dev(void);
  * carry a copy of bus_name() kept in step by a build check, which is
  * what you need when the function you want is walled in behind VGA and
  * keyboard code. It is not any more. */
+
+/* v0.9.6: `vol=XXXX-XXXX` on the boot line. While set, fat16_init() and
+   fat32_init() mount only the volume with that serial. */
+#include "types.h"
+void blk_set_sysvol_serial(uint32_t s);
+void blk_clear_sysvol_serial(void);
+int  blk_sysvol_serial(uint32_t *s);

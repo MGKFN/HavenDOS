@@ -15,6 +15,8 @@
 #include "../include/types.h"
 #include "../include/string.h"
 #include "../include/fat16.h"
+#include "../include/blkdev.h"   /* v0.9.6: vol= */
+#include "../include/klog.h"
 
 /* FAT12 API */
 extern int  fat12_init(void);
@@ -186,6 +188,23 @@ void vfs_init(void) {
        was found, so the boot decision in main.c works identically
        on both platforms — no VirtIO assumption anywhere.            */
     fat16_init();
+    {
+        /* v0.9.6: the boot line named a volume (`vol=`) and neither driver
+           found it. Mounting nothing would send this machine to the
+           installer; mounting "the first HavenDOS partition" is what every
+           release before did. That, loudly, is the safer of the two. */
+        uint32_t want;
+        if (!fat16_detected() && blk_sysvol_serial(&want)) {
+            fat32_init();
+            if (!fat32_detected()) {
+                klog(KLOG_WARN, "vfs: the boot line names volume %4x-%4x and "
+                     "no HavenDOS partition has it -- using the first one",
+                     (uint32_t)(want >> 16), (uint32_t)(want & 0xFFFF));
+                blk_clear_sysvol_serial();
+                fat16_init();
+            }
+        }
+    }
     if (fat16_detected()) {
         using_fat16 = 1;
         using_fat12 = 0;

@@ -98,3 +98,7 @@ int esp_find(int disk, esp_report_t *rep);
 int esp_install(int disk, esp_report_t *rep, int havendos_part, int dry_run);
 
 const char *esp_strerror(int code);
+
+/* v0.9.6: the next esp_install() writes this as grub.cfg instead of the
+   standard menu. NULL restores the standard one. */
+void esp_set_menu(const char *text);

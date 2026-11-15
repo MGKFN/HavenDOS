@@ -58,6 +58,7 @@
 #define UNINST_E_FILES     (-7)   /* could not remove \EFI\HAVENDOS      */
 #define UNINST_E_PART      (-8)   /* could not clear the table entry     */
 #define UNINST_E_PARAM     (-9)
+#define UNINST_E_TWO      (-10)   /* v0.9.6: a `migrate` is half done      */
 
 typedef struct {
     /* ── what the survey found ──────────────────────────────────── */
@@ -71,6 +72,7 @@ typedef struct {
     int      fallback_foreign;   /* ...or is somebody else's, so LEFT    */
 
     int      part_index;         /* our partition's GPT slot, -1 if none */
+    int      n_havendos;         /* v0.9.6: how many partitions are ours */
     uint64_t part_first, part_sectors;
 
     int      esp_is_ours;        /* label HAVENBOOT and no \EFI\Microsoft */

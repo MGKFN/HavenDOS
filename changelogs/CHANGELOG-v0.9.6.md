@@ -11,7 +11,8 @@ chose both halves of the old 0.8.x promise:
 - **switching between open apps** with Alt+Tab, each keeping its state,
   with background tasks still running.
 
-Both are in this release.
+Both are in this release. So is `migrate`, which moves a FAT16 install
+to a new FAT32 partition on the same disk, from inside HavenDOS (below).
 
 ## What you see
 
@@ -147,6 +148,105 @@ opened. All three are closed:
 - **`resolution` refuses with other apps open.** Each open app's console
   is laid out for the current grid.
 
+## Also in 0.9.6: moving an install from FAT16 to FAT32 (`migrate`)
+
+Every install made before 0.9.3 is FAT16, and FAT16 stops at 2 GB.
+0.9.3 made new installs FAT32, but an existing install could only get
+there by being wiped and reinstalled. Now it can move itself, on the
+same disk, from inside HavenDOS.
+
+1. **Make room.** In Windows' Disk Management, shrink a volume and
+   either leave the space unallocated, or make a partition and pick
+   "Do not format this volume". 512 MB is the least it will take.
+2. **`migrate`** lists where the install can go: free space, or empty
+   partitions. It also lists what it is leaving alone and why ("holds
+   NTFS", "Windows recovery", "Microsoft reserved").
+3. **`migrate 1`** (or whichever number) says exactly what it will do,
+   then waits for you to type a word: MOVE for free space, ERASE for an
+   existing partition. Then it:
+   - makes the partition (or marks the empty one as HavenDOS's);
+   - formats it FAT32 and copies this system's kernel onto it;
+   - copies everything from the FAT16 install except `/boot`: users,
+     passwords, settings, the iPhone pairing, your home folder;
+   - adds it to the boot menu as the first HavenDOS entry.
+   Windows stays the default. The old install stays too, as the third
+   entry.
+4. **Reboot, pick the first HavenDOS entry**, log in, and check your
+   files are there.
+5. **`migrate finish`**, from the new install, after typing REMOVE:
+   - takes the old install out of the menu;
+   - erases its boot sector;
+   - deletes its partition, which leaves that space unallocated for
+     Windows.
+
+### What keeps this safe
+
+- **It never takes a partition with a filesystem on it**, whatever its
+  type says. It reads the first sectors and refuses NTFS, exFAT, FAT,
+  BitLocker, ReFS, ext2/3/4, XFS, btrfs, LUKS, Linux swap, and any boot
+  sector it cannot name. It only takes the partition types a disk tool
+  makes for "new partition" (Windows basic data and Linux data), never
+  the EFI partition, Microsoft reserved, recovery, or another HavenDOS.
+  An empty partition whose first sectors are not blank is still offered,
+  but marked "old data in it", in yellow.
+- **It asks every question before it writes anything:**
+  - is the target still exactly what the list showed?
+  - can the boot menu be written? (a dry run of the real write)
+  - would the table change be accepted?
+  - is there memory for the copy?
+- **If the format or the copy fails, the new partition is taken back
+  out.** An existing empty partition gets its old entry back. The FAT16
+  install is untouched: nothing on it is written, and the boot menu
+  hasn't changed yet.
+- **`migrate finish` refuses unless you're running the new FAT32 system,
+  booted from its own menu entry.** Otherwise "it boots" hasn't been
+  shown yet. It also refuses when there's more than one old install to
+  choose from. Its steps run in a safe order: a power cut between any
+  two leaves a menu that boots, and running it again finishes the job.
+- **No other task runs while it works.** A background job writing a file
+  halfway through the copy would be a file the copy missed.
+- **`uninstall` refuses while a move is half done.** With two HavenDOS
+  partitions it would remove one of them and the menu that names both.
+  It says to run `migrate finish` instead.
+
+### How the right one boots
+
+Both volumes are labelled HAVENDOS, so the menu's old `search --label`
+could find either. Each HavenDOS entry now names its partition by volume
+serial (`search --fs-uuid`) and passes it to the kernel as `vol=`. The
+FAT16 and FAT32 drivers then mount only that volume. If no volume has
+the serial, the kernel falls back to the first HavenDOS partition and
+says so in the log, rather than going to the installer.
+
+### Fixed along the way
+
+- **`uninstall` named partitions by position, not by table slot.** On a
+  table with a hole (Windows leaves one wherever it deleted a
+  partition), the removal's three-way check refused, so uninstall failed
+  safe but failed. `gpt_scan()` now reports each entry's slot, and
+  uninstall uses it.
+- **FAT16 could only list its root folder.** `ls` in a FAT16 home
+  folder showed the root. `fat16_list_path()` lists any folder; the copy
+  needed it first.
+- **The FAT16 driver no longer takes a FAT32 volume for one.** Both
+  carry the HAVEN name; a FAT32 one has a zero FAT16 size field.
+
+### Limits
+
+- **Files over the copy buffer are not copied.** The buffer is 64 MB,
+  or less if memory is short. Each skipped file is listed by name and
+  stays on the old install until `finish`.
+- **Long names.** FAT16 keeps 8.3 names, so a file that was saved as
+  `verylongname.txt` arrives as `verylong.txt`, as FAT16 already listed
+  it. The system's own long-named files (every dotfile) arrive under
+  their real names. `tools/check_migrate_names.py` fails the build if
+  the source starts using a long name that isn't on that list.
+- **UEFI installs on GPT disks only.** That covers every install on the
+  HP. An MBR or BIOS install is refused with that reason.
+- **The FAT32 volume doesn't grow into the space `finish` frees.**
+  That space goes back to unallocated.
+- **Not yet run on the HP.** See `docs/MIGRATE-HARDWARE-TEST.md`.
+
 ## Tests
 
 - **New `test_task`: 99 checks.** It is built `-m32`, so the real switch
@@ -184,9 +284,57 @@ opened. All three are closed:
 - Two stale injections, re-aimed at the changed code:
   - in `check_kpoll_suite.py`, at `kpoll_sleep_ms()`'s loop;
   - in `check_console_suite.py`, at `vga_set_mode()`'s first branch.
-- **`make test`: 7138/7138 across 68 suites.**
+- **New `test_migrate`: 63 checks** of the pure half of `migrate`:
+  - FAT16's names for every dotfile, in both forms;
+  - every filesystem signature, plus one made by the real `mkfs.vfat`;
+  - which partition types may be taken;
+  - the serial as GRUB prints it;
+  - both menus, and a buffer too small for them.
+  **`tools/check_migrate_suite.py`: 15 injections, all caught**, plus
+  the harmless one correctly missed.
+- **`test_fat32sys`**: 112 checks became 125:
+  - `vol=` on a disk with two HavenDOS volumes, each picked by its
+    serial, and nothing for a serial nobody has;
+  - `gpt_scan()`'s slots on a table with holes.
+  **`check_fat32sys_suite.py`** gained five injections, all caught.
+  The first version of the slot set it *before* clearing the entry, so
+  every slot read 0. `migrate` was stopped by the removal's three-way
+  check, in its own dry run, before it wrote anything. That's the check
+  that now catches it first.
+- **New `tools/check_migrate_names.py`**, run by `make`. It tests itself
+  on a made-up dotfile before it trusts its own patterns.
+- **`make test`: 7214/7214 across 69 suites.**
 
 ### In QEMU
+
+- **New `harness/migrate_fat32.py`, 76/76, both ways** (into the empty
+  partition, and with `--gap` into free space). It runs under OVMF, on a
+  Windows-shaped disk: ESP, MSR, NTFS C:, a gap, an 8 GB never-formatted
+  partition, free space, and recovery.
+  1. The ISO installs FAT16 into the gap.
+  2. The harness fills the volume with mtools: dotfiles under FAT16's
+     own names, a home folder three levels deep, a hundred small files,
+     a 3 MB file, and a 70 MB file.
+  3. `migrate` lists both places, and the NTFS and recovery partitions
+     it is leaving alone. `migrate 1` + ERASE moves the install.
+  4. sgdisk, fsck.fat and mtools confirm:
+     - the partition is retyped over the same sectors;
+     - the volume is clean FAT32;
+     - every file arrived byte for byte, the dotfiles under their real
+       names and not also under their FAT16 ones;
+     - the 70 MB file was left behind, and the screen said so;
+     - the kernel is identical;
+     - the menu names both installs by serial, with Windows still the
+       default;
+     - Windows' boot manager and the NTFS bytes are unchanged.
+  5. The menu as written, entry 0, boots the new system to the login
+     screen, not the setup wizard.
+  6. On the new system, `df` says FAT32, and `migrate finish` + REMOVE
+     completes.
+  7. The old partition is gone from the table, its boot sector is zero,
+     the menu has one HavenDOS entry, and `sgdisk -v` and fsck.fat find
+     nothing wrong.
+  8. It still boots.
 
 - **`appguard_boot.py` 19/19.** Four crash types, each inside a task;
   the desktop answers after every one; the tick keeps arriving; the

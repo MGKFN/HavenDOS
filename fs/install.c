@@ -1326,3 +1326,51 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
     return INSTADD_OK;
 }
 
+/* ── v0.9.6: A FAT32 HAVENDOS VOLUME AT A GIVEN RANGE, FOR `migrate` ───
+   fs/migrate.c has already put the partition in the table (or retyped an
+   empty one) and knows exactly where it is; this formats it FAT32 --
+   always FAT32, whatever its size, because moving off FAT16 is the point
+   -- with the serial the boot menu will search for, and writes what an
+   install writes: the kernel this system booted, its menu, the marker.
+
+   The same writers as the additive path: add_wr() through inst_wr(),
+   v32_wr()'s bound for everything the FAT32 driver writes. Nothing here
+   touches the partition table or the ESP. */
+uint32_t havendos_vol_serial(uint64_t first){ return vol_serial(first); }
+
+int havendos_install_volume32(int disk, uint64_t first, uint64_t sectors,
+                              uint32_t serial, const char *part_cfg)
+{
+    uint8_t v[512];
+    if(disk < 0 || !first || !part_cfg)               return INSTADD_E_DISK;
+    if(sectors > 0xFFFFFFFFull)                       return INSTADD_E_GEOM;
+    { extern int inst_disk_is_readonly(int);
+      if(inst_disk_is_readonly(disk))                 return INSTADD_E_READONLY; }
+    if(!image_acquire())                              return INSTADD_E_NOIMAGE;
+
+    s_disk = disk; s_part_lba = first; s_next_cluster = 2;
+    s_add_dry = 0; s_add_wrote = 0;
+    memset(&s_geom, 0, sizeof s_geom);
+    s_fs32 = 1; s_vol_sectors = sectors;
+    if(!fat32_geom((uint32_t)sectors, &s_geom32))     return INSTADD_E_GEOM;
+    if((uint64_t)s_img_size + 4u * 65536u >
+       (uint64_t)s_geom32.clusters * s_geom32.sects_per_clust * 512u)
+                                                      return INSTADD_E_VOLSPACE;
+
+    if(!fat32_format(add_wr, 0, &s_geom32, (uint32_t)first, serial, "HAVENDOS"))
+        return INSTADD_E_FORMAT;
+    if(!v32_open())                                   return INSTADD_E_FILES;
+    if(!fat32_mkdir("/BOOT") || !fat32_mkdir("/BOOT/GRUB")
+       || !v32_put("/BOOT/GRUB/GRUB.CFG", part_cfg, (uint32_t)strlen(part_cfg))
+       || !v32_put("/BOOT/HAVENDOS.ELF", s_img, s_img_size)
+       || !v32_put("/HAVENDOS.TXT", s_add_marker, (uint32_t)strlen(s_add_marker))){
+        v32_close();                                  return INSTADD_E_FILES;
+    }
+    v32_close();
+
+    if(!inst_rd(0, v) || !vol_bpb_ok(v))             return INSTADD_E_VERIFY;
+    if((v[67] | ((uint32_t)v[68]<<8) | ((uint32_t)v[69]<<16)
+        | ((uint32_t)v[70]<<24)) != serial)           return INSTADD_E_VERIFY;
+    return INSTADD_OK;
+}
+

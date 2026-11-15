@@ -24,11 +24,11 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           drivers/vga.c drivers/keyboard.c drivers/mouse.c \
           drivers/ata.c drivers/ahci.c drivers/atapi.c drivers/pci.c drivers/pci_bar.c drivers/uhci.c drivers/nvme.c drivers/virtio.c \
           drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/xedisp.c drivers/xegmbus.c drivers/xemode.c drivers/edid.c drivers/rtc.c \
-          fs/blkdev.c fs/ramfs.c fs/gpt.c fs/gpt_write.c fs/esp.c fs/fat16fmt.c fs/fat32fmt.c fs/espmake.c fs/uninstall.c fs/fat12.c fs/fat16.c fs/fat32.c fs/exfat.c fs/vfs.c fs/sysvol.c fs/instsize.c fs/install.c \
+          fs/blkdev.c fs/ramfs.c fs/gpt.c fs/gpt_write.c fs/esp.c fs/fat16fmt.c fs/fat32fmt.c fs/espmake.c fs/uninstall.c fs/migrate.c fs/migrate_plan.c fs/fat12.c fs/fat16.c fs/fat32.c fs/exfat.c fs/vfs.c fs/sysvol.c fs/instsize.c fs/install.c \
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
-          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c
+          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/migratecmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c
 
 SRCS_S  = boot/boot.S
 OBJS_C  = $(SRCS_C:.c=.o)
@@ -172,6 +172,7 @@ version-sync: include/version.h \
 	python3 tools/check_usb_buffers.py
 	python3 tools/check_kpoll_sites.py
 	python3 tools/check_task_sites.py
+	python3 tools/check_migrate_names.py
 	python3 tools/check_kpoll_guard.py
 	python3 tools/check_console_grid.py
 	python3 tools/check_tls_stages.py
@@ -490,7 +491,12 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@echo "  the system volume on FAT32: parked, borrowed, found, renamed"
 	@$(TESTCC) -Iinclude -Itests -Wno-builtin-declaration-mismatch \
 	           -Wno-unused-function -o /tmp/hd_tf32s tests/test_fat32sys.c && \
-	  python3 tools/run_suite.py --name test_fat32sys --min 112 -- /tmp/hd_tf32s
+	  python3 tools/run_suite.py --name test_fat32sys --min 125 -- /tmp/hd_tf32s
+	@echo "── test_migrate ───────────────────────────"
+	@echo "  migrate: the names it carries, what counts as empty, the menus"
+	@$(TESTCC) -O1 -Wall -Iinclude -Itests -Wno-builtin-declaration-mismatch \
+	           -o /tmp/hd_tmig tests/test_migrate.c && \
+	  python3 tools/run_suite.py --name test_migrate --min 63 -- /tmp/hd_tmig
 	@echo "── test_kbdinit ───────────────────────────"
 	@echo "  the 8042 is given time to answer, during init as well as at runtime"
 	@# drivers/keyboard.c is COMPILED here through io.h's IO_H seam. What

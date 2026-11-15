@@ -336,6 +336,22 @@ static void apply_cmdline(const char *s){
            in 0.9.5 -- the way back if task switching misbehaves on some
            machine. Safe mode implies it. */
         else if(tok_eq(p,"notasks"))      g_no_tasks=1;
+        /* v0.9.6: which HavenDOS volume is the system, by serial --
+           written by `migrate` into the boot menu, so a disk carrying an
+           old FAT16 install and a new FAT32 one boots the one chosen. */
+        else if(p[0]=='v'&&p[1]=='o'&&p[2]=='l'&&p[3]=='='){
+            extern void blk_set_sysvol_serial(uint32_t s);
+            uint32_t v = 0; int nd = 0;
+            for(const char *q = p + 4; *q && *q != ' '; q++){
+                char c = *q;
+                if(c == '-') continue;
+                int d = (c>='0'&&c<='9') ? c-'0' : (c>='a'&&c<='f') ? c-'a'+10
+                      : (c>='A'&&c<='F') ? c-'A'+10 : -1;
+                if(d < 0){ nd = 99; break; }
+                v = (v << 4) | (uint32_t)d; nd++;
+            }
+            if(nd == 8) blk_set_sysvol_serial(v);
+        }
         else if(tok_eq(p,"live"))         g_live=1;
         /* v0.8.5.2 -- the escape hatch for a firmware that will not hand
            the xHCI over. If SMM keeps its USB legacy emulation running,

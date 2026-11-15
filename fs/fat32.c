@@ -1600,6 +1600,8 @@ static int gpt_cb(void *ctx, uint64_t lba, void *buf){
    the GUID test anyway -- it is FAT32, it is first on the disk, and it is
    the one partition where mounting the wrong thing as the system volume
    would end in somebody's Windows not booting. */
+static uint64_t g_sys_part_lba;      /* v0.9.6: see fat32_system_part_lba() */
+
 static int find_gpt_fat32(void){
     static const uint8_t OURS[16] = {
         'H','A','V','E','N','D','O','S','-','P','A','R','T','-','0','1'
@@ -1615,15 +1617,30 @@ static int find_gpt_fat32(void){
         for(k = 0; k < 16; k++)
             if(parts[i].type_guid[k] != OURS[k]){ ours = 0; break; }
         if(!ours || parts[i].first_lba == 0) continue;
-        if(fat32_mount_system(local_read, local_write, 0, parts[i].first_lba))
+        {   /* v0.9.6: the boot line may name the volume (`vol=`) */
+            uint32_t want;
+            if(blk_sysvol_serial(&want)){
+                uint8_t bs[SECT_SZ];
+                if(!local_read(0, parts[i].first_lba, bs)) continue;
+                if(ld32(bs + 67) != want) continue;
+            }
+        }
+        if(fat32_mount_system(local_read, local_write, 0, parts[i].first_lba)){
+            g_sys_part_lba = parts[i].first_lba;
             return 1;
+        }
     }
     return 0;
 }
 
+/* v0.9.6: where the system volume starts, for `migrate`. 0 if there is
+   no FAT32 system volume. */
+uint64_t fat32_system_part_lba(void){ return g_sys_part_lba; }
+
 int fat32_init(void){
     uint8_t mbr[SECT_SZ], bs[SECT_SZ];
 
+    g_sys_part_lba = 0;
     unmount_all();
     if(blk_count() == 0) blk_scan();
     g_f32_dev = blk_boot_dev();
@@ -1654,7 +1671,10 @@ int fat32_init(void){
             if(pass == 0){
                 if(!local_read(0, lba, bs) || !bpb_label_is_ours(bs)) continue;
             }
-            if(fat32_mount_system(local_read, local_write, 0, lba)) return 1;
+            if(fat32_mount_system(local_read, local_write, 0, lba)){
+                g_sys_part_lba = lba;
+                return 1;
+            }
         }
     }
     return 0;

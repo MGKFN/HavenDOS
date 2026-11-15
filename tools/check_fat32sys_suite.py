@@ -174,6 +174,43 @@ BUGS += [
      """    for(int pass = 0; pass < 1; pass++){"""),
 ]
 
+# v0.9.6: `vol=` and the table slot -- what `migrate` leans on to boot the
+# right one of two HavenDOS volumes, and to remove the right partition.
+BUGS += [
+    ("vol= is ignored",
+     "with two HavenDOS volumes on the disk the kernel mounts the first, "
+     "whichever the boot menu chose",
+     """                if(ld32(bs + 67) != want) continue;""",
+     """                (void)want;"""),
+
+    ("vol= is read from the FAT16 serial offset",
+     "byte 39 of a FAT32 boot sector is inside its BPB, not the serial",
+     """                if(ld32(bs + 67) != want) continue;""",
+     """                if(ld32(bs + 39) != want) continue;"""),
+
+    ("fat32_init() does not forget the last system volume",
+     "after a failed remount fat32_system_part_lba() still names the old one",
+     """    g_sys_part_lba = 0;
+    unmount_all();""",
+     """    unmount_all();"""),
+
+    ("gpt_scan records the slot before clearing the entry",
+     "every slot reads 0 -- the first version of migrate did exactly this, "
+     "and only gpt_remove_partition()'s three-way match stopped it",
+     """        memset(p, 0, sizeof *p);
+        p->slot = (int)i;""",
+     """        p->slot = (int)i;
+        memset(p, 0, sizeof *p);""",
+     "fs/gpt.c"),
+
+    ("gpt_scan records the index into its output as the slot",
+     "right until the table has a hole, which Windows leaves wherever it "
+     "deleted a partition",
+     """        p->slot = (int)i;            /* after the memset, or it is always 0 */""",
+     """        p->slot = found;""",
+     "fs/gpt.c"),
+]
+
 HARMLESS = (
     "a comment is reworded (must not be caught)",
     "nothing about the driver changed",

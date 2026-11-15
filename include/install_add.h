@@ -211,4 +211,11 @@ const char *havendos_install_add_strerror(int code);
 #define INSTADD_SHORT_MAX 30
 const char *havendos_install_add_shortstr(int code);
 
+/* v0.9.6, for fs/migrate.c: the serial an install at `first` gets, and a
+   FAT32 HavenDOS volume (kernel, menu, marker) formatted at a range that
+   is ALREADY a partition. Touches neither the table nor the ESP. */
+uint32_t havendos_vol_serial(uint64_t first);
+int      havendos_install_volume32(int disk, uint64_t first, uint64_t sectors,
+                                   uint32_t serial, const char *part_cfg);
+
 #endif /* INSTALL_ADD_H */

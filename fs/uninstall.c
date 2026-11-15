@@ -76,12 +76,19 @@ static int mount_for(int disk, uninst_report_t *r, int want_write,
        uninstall is safer than diskpart: there is no size to squint at
        and no partition number to mistype. */
     r->part_index = -1;
+    r->n_havendos = 0;
     for(i = 0; i < n; i++){
         int k, match = 1;
         for(k = 0; k < 16; k++)
             if(p[i].type_guid[k] != GPT_TYPE_HAVENDOS[k]){ match = 0; break; }
-        if(match){
-            r->part_index   = i;
+        if(match) r->n_havendos++;
+        if(match && r->part_index < 0){
+            /* v0.9.6: the TABLE SLOT, not the position in gpt_scan()'s
+               list. They differ wherever the table has a hole -- which
+               Windows leaves after deleting a partition -- and then the
+               three-way match in gpt_remove_partition() refused, so
+               uninstall failed safe but failed. */
+            r->part_index   = p[i].slot;
             r->part_first   = p[i].first_lba;
             r->part_sectors = p[i].last_lba - p[i].first_lba + 1;
             break;
@@ -95,7 +102,7 @@ static int mount_for(int disk, uninst_report_t *r, int want_write,
         r->esp_lba     = p[i].first_lba;
         r->esp_sectors = p[i].last_lba - p[i].first_lba + 1;
         if(esp_lba_out) *esp_lba_out = p[i].first_lba;
-        if(esp_idx_out) *esp_idx_out = i;
+        if(esp_idx_out) *esp_idx_out = p[i].slot;   /* v0.9.6: the slot */
         return UNINST_OK;
     }
     return UNINST_E_NOESP;
@@ -207,6 +214,10 @@ int uninst_run(int disk, int dry_run, uninst_report_t *r)
 
     rc = uninst_survey(disk, &sv);
     if(rc != UNINST_OK) return rc;
+    /* v0.9.6: two HavenDOS partitions is a move in progress (`migrate`).
+       Uninstalling now would remove one of them and the boot menu that
+       names both, which is neither of the two things anybody wants. */
+    if(sv.n_havendos > 1) return UNINST_E_TWO;
     *r = sv;
 
     /* ── 1 and 2: the boot loader and our files, on the ESP ─────── */
@@ -276,7 +287,7 @@ int uninst_run(int disk, int dry_run, uninst_report_t *r)
            start LBA costs nothing and cannot be stale. */
         int i, idx = -1;
         for(i = 0; i < n; i++)
-            if(p[i].is_esp && p[i].first_lba == sv.esp_lba){ idx = i; break; }
+            if(p[i].is_esp && p[i].first_lba == sv.esp_lba){ idx = p[i].slot; break; }
         if(idx >= 0){
             uint8_t t[16];
             for(i = 0; i < 16; i++) t[i] = p[idx].type_guid[i];
@@ -296,6 +307,8 @@ const char *uninst_strerror(int code)
 {
     switch(code){
     case UNINST_OK:         return "ok";
+    case UNINST_E_TWO:      return "this disk has two HavenDOS partitions -- a move "
+                                   "is in progress: finish it with 'migrate finish'";
     case UNINST_E_NOGPT:    return "this disk has no GPT";
     case UNINST_E_NOESP:    return "no EFI System Partition on this disk";
     case UNINST_E_MOUNT:    return "the EFI System Partition would not mount";

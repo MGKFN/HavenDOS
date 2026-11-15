@@ -145,3 +145,6 @@ int      fat32_rmdir    (const char *path);
 void     fat32_list     (void (*cb)(const char *name, int is_dir, uint32_t size));
 void     fat32_list_dir (const char *dir,
                          void (*cb)(const char *name, int is_dir, uint32_t size));
+
+/* v0.9.6: where the FAT32 SYSTEM volume starts; 0 if there is none. */
+uint64_t fat32_system_part_lba(void);

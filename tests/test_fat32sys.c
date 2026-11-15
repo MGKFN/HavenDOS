@@ -37,6 +37,9 @@ static FILE *g_disk;
 int blk_count(void){ return g_disk ? 1 : 0; }
 int blk_scan(void){ return 0; }
 int blk_boot_dev(void){ return g_disk ? 0 : -1; }
+/* v0.9.6: the boot line's `vol=`, as fs/blkdev.c keeps it */
+static int g_want_set; static uint32_t g_want;
+int blk_sysvol_serial(uint32_t *s){ if(g_want_set && s) *s = g_want; return g_want_set; }
 int blk_read(int d, uint64_t l, uint8_t *b){
     (void)d;
     if(!g_disk || fseek(g_disk, (long)(l * 512u), SEEK_SET)) return 0;
@@ -158,6 +161,16 @@ static int fmt_at(uint32_t lba, const char *label, const char *cfg){
              label, lba, DISK, cfg, DISK, (unsigned long long)lba * 512ull);
     return system(cmd) == 0;
 }
+/* the same, with a chosen volume serial (mkfs.fat -i) */
+static int fmt_at_id(uint32_t lba, const char *label, const char *cfg, uint32_t id){
+    char cmd[700];
+    snprintf(cmd, sizeof cmd,
+             "mkfs.fat -F 32 -n %s -i %08X --offset=%u %s 81920 > /dev/null 2>&1 && "
+             "printf '%s' > /tmp/hd_f32s_cfg.txt && "
+             "mcopy -i %s@@%llu /tmp/hd_f32s_cfg.txt ::/cfg.txt",
+             label, id, lba, DISK, cfg, DISK, (unsigned long long)lba * 512ull);
+    return system(cmd) == 0;
+}
 static int blank_disk(int mb){
     char cmd[256];
     if(g_disk){ fclose(g_disk); g_disk = 0; }
@@ -210,6 +223,57 @@ static void discovery(void){
     ck("and it is OURS -- not the ESP, not the data partition",
        read_is("/cfg.txt", "gpt-ours"), 0);
     ck("as the system volume", fat32_system_mounted() && !fat32_borrowed(), 0);
+
+    /* v0.9.6: `migrate` puts a second HavenDOS partition on the disk and
+       the boot line names the one to use. */
+    head("two HavenDOS partitions: vol= picks one by serial");
+    ck("blank 160 MB disk", blank_disk(160), 0);
+    ck("sgdisk: ESP, HavenDOS A, HavenDOS B",
+       system("sgdisk -n 1:2048:+40M -t 1:" ESP_GUID
+              " -n 2:83968:+40M -t 2:" HAVEN_GUID
+              " -n 3:165888:+40M -t 3:" HAVEN_GUID
+              " " DISK " > /dev/null 2>&1") == 0, 0);
+    ck("format them, serials 1111AAAA and 2222BBBB",
+       fmt_at(2048, "EFI", "esp")
+       && fmt_at_id(83968, "HAVENDOS", "vol-a", 0x1111AAAAu)
+       && fmt_at_id(165888, "HAVENDOS", "vol-b", 0x2222BBBBu), 0);
+    ck("open", open_disk(), 0);
+    g_want_set = 0;
+    ck("no vol=: the first one, as before", fat32_init() == 1
+       && read_is("/cfg.txt", "vol-a") && fat32_system_part_lba() == 83968, 0);
+    g_want_set = 1; g_want = 0x2222BBBBu;
+    ck("vol=2222-BBBB: the second", fat32_init() == 1
+       && read_is("/cfg.txt", "vol-b") && fat32_system_part_lba() == 165888, 0);
+    g_want = 0x1111AAAAu;
+    ck("vol=1111-AAAA: the first", fat32_init() == 1
+       && read_is("/cfg.txt", "vol-a"), 0);
+    g_want = 0x33334444u;
+    ck("a serial nobody has: nothing (vfs_init then falls back, loudly)",
+       fat32_init() == 0 && fat32_system_part_lba() == 0, 0);
+    g_want_set = 0;
+
+    /* v0.9.6: gpt_part_t.slot is the TABLE slot, which is what
+       gpt_remove_partition() takes. A hole in the table -- what Windows
+       leaves where it deleted a partition -- is where it differs from the
+       index into gpt_scan()'s output. The first version set it before a
+       memset and every slot read 0; `migrate` was saved by the three-way
+       match, and this is the check that would have said so first. */
+    head("gpt_scan reports each partition's table slot, holes included");
+    ck("blank", blank_disk(160), 0);
+    ck("sgdisk: partitions 1, 3 and 7 -- slots 0, 2 and 6",
+       system("sgdisk -n 1:2048:+20M -t 1:" ESP_GUID
+              " -n 3:83968:+20M -t 3:" MSDATA
+              " -n 7:165888:+20M -t 7:" HAVEN_GUID
+              " " DISK " > /dev/null 2>&1") == 0, 0);
+    ck("open", open_disk(), 0);
+    {
+        gpt_part_t p[GPT_MAX_PARTS];
+        int n = gpt_scan(gpt_cb, 0, p, GPT_MAX_PARTS);
+        ck("three found", n == 3, n);
+        ck("in order, slots 0, 2, 6",
+           n == 3 && p[0].slot == 0 && p[1].slot == 2 && p[2].slot == 6,
+           n == 3 ? p[1].slot * 10 + p[2].slot : -1);
+    }
 
     head("a GPT disk with only an ESP and a data partition mounts nothing");
     ck("blank it", blank_disk(160), 0);

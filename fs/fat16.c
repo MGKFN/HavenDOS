@@ -522,6 +522,16 @@ static int gpt_rd_cb(void *ctx, uint64_t lba, void *buf)
     return fat16_raw_read(lba, (uint8_t *)buf) ? 0 : -1;
 }
 
+/* v0.9.6: 1 unless the boot line names a volume (`vol=`) and the boot
+   sector `bs` is not it. */
+static int serial_wanted(const uint8_t *bs)
+{
+    uint32_t want;
+    if(!blk_sysvol_serial(&want)) return 1;
+    return (bs[39] | ((uint32_t)bs[40]<<8) | ((uint32_t)bs[41]<<16)
+          | ((uint32_t)bs[42]<<24)) == want;
+}
+
 static int find_gpt_volume(void)
 {
     static const uint8_t OURS[16] = {
@@ -549,6 +559,11 @@ static int find_gpt_volume(void)
         /* the OEM name fs/fat16fmt.c writes */
         if(!(sec[3]=='H'&&sec[4]=='A'&&sec[5]=='V'&&sec[6]=='E'&&sec[7]=='N'))
             continue;
+        /* v0.9.6: a FAT32 volume has the same OEM name (fs/fat32fmt.c)
+           and a zero in the 16-bit sectors-per-FAT field. Taken as FAT16
+           it is nonsense -- and since `migrate`, a disk can carry both. */
+        if((sec[22] | ((uint16_t)sec[23]<<8)) == 0) continue;
+        if(!serial_wanted(sec)) continue;   /* the boot line names another */
 
         g_part_lba = parts[i].first_lba;
         return 1;
@@ -612,7 +627,7 @@ int fat16_init(void){
             /* Must have our volume label "HAVEN16" to trust it */
             int is_haven = (psec[3]=='H'&&psec[4]=='A'&&psec[5]=='V'&&
                             psec[6]=='E'&&psec[7]=='N');
-            if(!(part_sig && bps2==512 && is_haven)){
+            if(!(part_sig && bps2==512 && is_haven && serial_wanted(psec))){
                 /* Not at 2048. On a GPT disk it never is: the protective
                    MBR has one 0xEE entry and the real table is at LBA 1,
                    so everything above has been asking the wrong sector.
@@ -623,6 +638,13 @@ int fat16_init(void){
         }
     }
 
+    /* v0.9.6: an MBR disk's first partition is taken on its type byte
+       alone; with a volume named on the boot line it must also be that
+       one. (`migrate` is GPT-only, so this is a guard, not a path.) */
+    {
+        uint8_t bs[512];
+        if(!fat16_raw_read(g_part_lba, bs) || !serial_wanted(bs)) return 0;
+    }
     return mount_at_part_lba();
 }
 
@@ -671,6 +693,9 @@ static int mount_at_part_lba(void)
 }
 
 int fat16_detected(void){ return fat16_ready; }
+/* v0.9.6: where the system volume starts, for `migrate`. 0 when it is
+   not mounted or lent out. */
+uint64_t fat16_part_lba(void){ return (fat16_ready && !g_borrowed) ? g_part_lba : 0; }
 
 /* v0.9.5: the volume's size and free space, for `df` and the System
    app's Storage tab -- which until now said "ramfs 2MB" on every
@@ -1336,6 +1361,63 @@ static int path_walk(const char *path, int create,
     if(!*p) return 0;                      /* trailing slash: no filename */
     *out_dir  = dir;
     *out_leaf = p;
+    return 1;
+}
+
+/* ── v0.9.6: listing a SUBDIRECTORY ──────────────────────────────────
+   fat16_list() only ever walked the root, and nothing else could list
+   anything: `ls` in a FAT16 home folder showed the root, and the VFS says
+   so in as many words. `migrate` has to copy every folder, so this walks
+   `dir` to its cluster with the same dir_lookup() the path functions use
+   and lists that. "" or "/" is the root. Returns 0 if `dir` is not a
+   directory. The callback must not call back into this driver: it is
+   called with sector_buf in use, which is why `migrate` collects names
+   first and reads files afterwards. */
+int fat16_list_path(const char *dir, void (*cb)(const char*,int,uint32_t)){
+    if(!fat16_ready || g_borrowed) return 0;
+    const char *p = dir ? dir : "";
+    while(*p == '/') p++;
+    if(!*p){ fat16_list(cb); return 1; }
+
+    uint16_t cl = 0;
+    while(*p){
+        char comp[16]; int n = 0;
+        while(*p && *p != '/'){ if(n < 15) comp[n++] = *p; p++; }
+        comp[n] = 0;
+        while(*p == '/') p++;
+        if(!n) continue;
+        char n83[8], e83[3];
+        name_to_83(comp, n83, e83);
+        uint16_t child = 0; int is_dir = 0;
+        if(!dir_lookup(cl, n83, e83, &child, &is_dir) || !is_dir) return 0;
+        cl = child;
+    }
+    if(cl < 2) return 0;
+
+    char fname[16];
+    const int per = BYTES_PER_SECT / 32;
+    uint16_t c = cl;
+    int guard = 0;
+    while(c >= 2 && c < FAT_BAD && guard++ < 65536){
+        uint32_t lba = cluster_to_lba(c);
+        for(int sp = 0; sp < bpb_sects_per_clust; sp++){
+            if(!rd(lba + sp, sector_buf)) return 0;
+            for(int i = 0; i < per; i++){
+                uint8_t *d = de_ptr(sector_buf, i);
+                if(d[DE_NAME] == 0x00) return 1;
+                if(d[DE_NAME] == 0xE5) continue;
+                if(d[DE_NAME] == '.') continue;            /* . and ..     */
+                if(d[DE_ATTR] & ATTR_VOLUME_ID) continue;
+                char n83[8], e83[3];
+                memcpy(n83, d + DE_NAME, 8);
+                memcpy(e83, d + DE_EXT, 3);
+                name_from_83(n83, e83, fname);
+                cb(fname, (d[DE_ATTR] & ATTR_DIRECTORY) ? 1 : 0,
+                   DE_GET_U32(d, DE_FILE_SIZE));
+            }
+        }
+        c = fat_get(c);
+    }
     return 1;
 }
 

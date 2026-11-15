@@ -403,7 +403,7 @@ static const char *shell_cmds[]={
     "kill","kpoll",
     "host","hplusplus","htop","i2c","i2chid","ifconfig","install","jobs","lock","log","ls",
     "uninstall",
-    "layout","lspci","man","matrix","mem","mkdir","motd","music","mv",
+    "layout","lspci","man","matrix","mem","migrate","mkdir","motd","music","mv",
     "neofetch","netstat","notepad","notify","nslookup","open","paint","pair","passwd","ping",
     "pipes","play","poweroff","ps","ps1","pwd","quit","quiz",
     "reboot","rename","repeat","res","resolution","rm","rollback","rsa","run",
@@ -2988,6 +2988,12 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
         vga_clear();
         vga_set_cursor(0,0);
         vga_set_color(VGA_WHITE, VGA_BLACK);
+    }
+
+    else if(!strcmp(cmd,"migrate")){
+        /* v0.9.6: FAT16 -> FAT32, on the same disk. */
+        extern void cmd_migrate(const char *);
+        cmd_migrate(arg1);
     }
 
     else if(!strcmp(cmd,"uninstall")){

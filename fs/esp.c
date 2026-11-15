@@ -88,6 +88,12 @@ static const char *CFG_TEXT =
     "    fwsetup\n"
     "}\n";
 
+/* v0.9.6: a menu other than CFG_TEXT, for `migrate` -- which has two
+   HavenDOS volumes on one disk and must name each by its serial rather
+   than search for the label they share. NULL is CFG_TEXT. */
+static const char *g_menu;
+void esp_set_menu(const char *text){ g_menu = text; }
+
 static uint32_t cstrlen(const char *s){
     uint32_t n = 0; while(s && s[n]) n++; return n;
 }
@@ -373,7 +379,10 @@ int esp_install_mounted(esp_report_t *rep, int havendos_part, int dry_run)
     r = write_verified(P_LOADER, grub_efi_img, grub_efi_img_size);
     if(r != ESP_OK) return r;
 
-    r = write_verified(P_CFG, (const uint8_t *)CFG_TEXT, cstrlen(CFG_TEXT));
+    {
+        const char *cfg = g_menu ? g_menu : CFG_TEXT;
+        r = write_verified(P_CFG, (const uint8_t *)cfg, cstrlen(cfg));
+    }
     if(r != ESP_OK) return r;
 
     r = write_verified(P_FALLBACK, grub_efi_img, grub_efi_img_size);

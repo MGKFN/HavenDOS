@@ -181,6 +181,19 @@ int blk_find(uint8_t kind, int unit){
    must not become the volume the system mounts as its own. It is in the
    list at all because a machine can boot HavenDOS from a USB disk and
    then needs to find it -- but only when nothing fixed answered. */
+/* ── v0.9.6: WHICH VOLUME IS THE SYSTEM, BY NAME ────────────────────
+   The boot line can name it: `vol=XXXX-XXXX`, the volume serial the
+   GRUB menu also finds it by (search --fs-uuid). Until 0.9.6 the system
+   volume was "the first HavenDOS partition on this disk" -- FAT16 before
+   FAT32 -- and that stops being an answer the moment one disk carries two,
+   which is exactly what `migrate` makes. The picker is here, beside the
+   choice of disk, because it is the same question one level down. */
+static int      g_want_set;
+static uint32_t g_want_serial;
+void blk_set_sysvol_serial(uint32_t s){ g_want_serial = s; g_want_set = 1; }
+void blk_clear_sysvol_serial(void)   { g_want_set = 0; }
+int  blk_sysvol_serial(uint32_t *s)  { if(g_want_set && s) *s = g_want_serial; return g_want_set; }
+
 int blk_boot_dev(void){
     static const uint8_t pref[] = {
         BLK_BUS_VIRTIO, BLK_BUS_ATA, BLK_BUS_AHCI, BLK_BUS_NVME, BLK_BUS_USB

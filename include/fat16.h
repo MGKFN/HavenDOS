@@ -93,3 +93,8 @@ int  fat16_exists_path(const char *path);
    not exist. Removed rather than implemented -- a prototype with no
    function behind it is the fat16_list() mistake with the sign
    flipped, and the next person to want it can write it. */
+
+/* v0.9.6: list a subdirectory ("" or "/" is the root); 0 if not a dir. */
+int      fat16_list_path(const char *dir, void (*cb)(const char*,int,uint32_t));
+/* v0.9.6: where the mounted system volume starts; 0 if none or lent. */
+uint64_t fat16_part_lba(void);

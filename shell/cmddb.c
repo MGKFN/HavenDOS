@@ -778,6 +778,20 @@ const cmddoc_t cmddb[] = {
       NULL,
       "uninstall disk update" },
 
+    { "migrate", NULL, CDB_DISKS,
+      "migrate\nmigrate <n>\nmigrate finish",
+      "Move this install from FAT16 to FAT32",
+      "FAT16 stops at 2 GB. `migrate` lists the places on this disk a new "
+      "FAT32 install can go -- unallocated space, or an empty partition "
+      "you made for it (never one with a filesystem) -- and `migrate <n>` "
+      "makes it there, copies your users, passwords, settings and files, "
+      "and adds it to the boot menu as the first HavenDOS entry. The old "
+      "install stays in the menu. Boot the new one, check your files, then "
+      "`migrate finish` deletes the old partition and its menu entry.",
+      "migrate\tsee where it can go\nmigrate 1\tmove to place 1\n"
+      "migrate finish\tremove the old FAT16 install",
+      "install uninstall df" },
+
     { "uninstall", NULL, CDB_DISKS,
       "uninstall",
       "Remove HavenDOS from a disk",

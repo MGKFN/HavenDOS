@@ -22,6 +22,11 @@ typedef struct {
     uint8_t  type_guid[16];
     int      is_esp;          /* the EFI System Partition          */
     int      is_msft;         /* a Microsoft data/reserved/recovery partition */
+    /* v0.9.6: the entry's position in the TABLE. gpt_scan() skips unused
+       slots, so the index into its output is not the slot when there is a
+       hole -- and Windows leaves one wherever a partition was deleted.
+       gpt_remove_partition() wants the slot. */
+    int      slot;
 } gpt_part_t;
 
 /* read_sector returns 0 on success.  Returns the number of partitions found,

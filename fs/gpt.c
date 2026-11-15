@@ -106,6 +106,7 @@ int gpt_scan(int (*rd)(void*,uint64_t,void*), void *ctx,
 
         gpt_part_t *p = &out[found];
         memset(p, 0, sizeof *p);
+        p->slot = (int)i;            /* after the memset, or it is always 0 */
         memcpy(p->type_guid, e, 16);
         for(int k=0;k<8;k++) p->first_lba |= (uint64_t)e[32+k] << (8*k);
         for(int k=0;k<8;k++) p->last_lba  |= (uint64_t)e[40+k] << (8*k);

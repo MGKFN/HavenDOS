@@ -82,7 +82,7 @@ it; the design argument is the comment at the top of `include/task.h`.
   - `test_console` +17 (per-task consoles); `check_console_suite.py` +4,
     all caught;
   - `test_kpoll` +2; `test_usbhid` +6;
-  - **`make test`: 7138/7138 across 68 suites.**
+  - **`make test`: 7214/7214 across 69 suites** (with `migrate`, below).
   - QEMU: `appguard_boot.py` 19/19 (four crashes, each inside a task),
     `helios_boot.py` 32/32.
   - Scripted runs covered the switcher, chips, the Music Player behind
@@ -106,6 +106,58 @@ it; the design argument is the comment at the top of `include/task.h`.
 - **Not proved on the HP.** The framebuffer console and the USB
   keyboard's Alt bit are what the laptop has to confirm: hold Alt, tap
   Tab, and see whether the panel comes up and switches on release.
+
+### Also in 0.9.6: `migrate` (FAT16 -> FAT32 on the same disk)
+
+Kyan's FAT16 install on the HP is stuck at 2 GB. He made an 8 GB empty
+partition and asked for a way to move onto it from inside HavenDOS, then
+remove the old one once the new one boots. The version stayed 0.9.6:
+nothing shipped runs 0.9.6 yet. Hardware steps are in
+`docs/MIGRATE-HARDWARE-TEST.md`; the changelog section explains why it is
+safe.
+
+- **The pure half, `fs/migrate_plan.c`**, linked by `tests/test_migrate.c`:
+  - `MIG_LONG_NAMES`, the dotfiles carried by real name;
+  - FAT16's two name forms for each;
+  - `mig_fs_signature()`, which must refuse anything recognisable;
+  - which types may be taken;
+  - both menus.
+- **The kernel half, `fs/migrate.c`:**
+  - `mig_survey()`;
+  - `mig_run()`: questions, then table, then volume, then copy, then
+    menu, with a rollback for the volume or copy failing;
+  - `mig_finish()`: menu, then zero the boot sector, then remove the
+    entry.
+  `fs/` must not call the task layer (`check_task_sites.py`), so
+  `shell/migratecmd.c` holds the `task_lock()`.
+- **`vol=XXXX-XXXX` on the kernel line:**
+  - `blk_set_sysvol_serial()` in `fs/blkdev.c` holds the serial;
+  - `fat16_init()` (`serial_wanted()`, on every discovery path) and
+    `fat32_init()` mount only that volume;
+  - `vfs_init()` falls back to the first HavenDOS partition, with a
+    `klog` warning.
+- **The ESP menu** is written through `esp_install()` with
+  `esp_set_menu()` overriding `CFG_TEXT`, so it goes through the same
+  verified writer and backup rules as an install. Each HavenDOS entry is
+  `search --fs-uuid` plus `vol=`. Windows stays `default=1`.
+- **`install.c: havendos_install_volume32()`** formats FAT32 at a range
+  that is already a partition, and writes the kernel, the partition's
+  menu and the marker. It touches neither the table nor the ESP.
+- **Supporting changes:**
+  - `gpt_part_t.slot` is the table slot. uninstall uses it now; it used
+    the list index before, which is wrong on a table with a hole.
+  - `fat16_list_path()` lists any FAT16 folder.
+  - `uninstall` refuses with two HavenDOS partitions (`UNINST_E_TWO`).
+- **Proof:**
+  - `harness/migrate_fat32.py`: 76/76 into the empty partition, and
+    76/76 with `--gap`;
+  - `test_migrate` 63 and `check_migrate_suite` 15/15;
+  - `test_fat32sys` 125 and `check_fat32sys_suite` 23/23;
+  - `check_migrate_names.py` in `make`.
+- **Not done:**
+  - files over the copy buffer (64 MB) are listed, not copied;
+  - the FAT32 volume doesn't grow into the space `finish` frees;
+  - MBR/BIOS installs are refused.
 
 ## 0.9.5.1 — THE MODERN LOOK EVERYWHERE, NEW GAMES AND APPS
 
@@ -267,6 +319,8 @@ promise. All done except multitasking, which is **0.9.6** (see NEXT).
 
 Nothing is decided; these are the candidates, most useful first:
 
+- **`migrate` on the HP** (`docs/MIGRATE-HARDWARE-TEST.md`): his 8 GB
+  partition, the reboot into entry 1, then `migrate finish`.
 - **0.9.6 on the HP:**
   - Alt+Tab with the USB keyboard: does the panel commit when Alt is
     released?
@@ -3425,6 +3479,7 @@ Left, and each has its reason:
 | `check_gfx_readonly.py` | any write in `drivers/xedisp.c`, `shell/gfxcmd.c` or `drivers/edid.c`; in `drivers/xegmbus.c`, any write outside `gmbus_wr()` or a `gmbus_wr()` without its range guard; in `drivers/xemode.c`, any write outside `xm_wr()`, an `xm_wr()` that writes before asking `xm_allowed()`, or an `xm_allowed()` that names an offset of pipe A's path (0.9.0-0.9.2) |
 | `check_harnesses.py` | an injection harness whose baseline will not build |
 | `check_kpoll_sites.py` | `kernel_poll()` outside two named files; a polling sleep in a driver; a client registered outside four |
+| `check_migrate_names.py` | (0.9.6) a file name the source uses that is not 8.3 and not in `MIG_LONG_NAMES` -- `migrate` would copy it under its FAT16 name and the moved system would not find it |
 | `check_task_sites.py` | (0.9.6) a task call in `drivers/ usb/ net/ fs/`; `task_switch_stack()` outside `kernel/task.c`; `sleep_ms()` in a `TK_RUN` app |
 | `check_kpoll_guard.py` | an entry point that loses its `kpoll_enter()`/`kpoll_leave()` bracket, or returns before the leave; a second copy of the rescan sequence |
 | `check_console_grid.py` | a compile-time constant used as a stride in `drivers/vga.c`; a cell buffer not sized by the budget; the two grid maxima collapsing into one |
@@ -3434,11 +3489,13 @@ outside `include/version.h`.
 
 ## Testing, as of 0.9.6
 
-**7138 of 7138 checks across 68 suites** (0.9.6: `test_task` 99 new,
+**7214 of 7214 checks across 69 suites** (0.9.6: `test_task` 99 new,
+`test_migrate` 63 new, `test_fat32sys` 112 -> 125,
 `test_console` 292 -> 309, `test_kpoll` 156 -> 158, `test_usbhid` 30 -> 36;
-`check_task_suite.py` 19/19, `check_console_suite.py` 35/35,
+`check_task_suite.py` 19/19, `check_migrate_suite.py` 15/15,
+`check_fat32sys_suite.py` 23/23, `check_console_suite.py` 35/35,
 `check_kpoll_suite.py` 17/17; QEMU `appguard_boot.py` 19/19,
-`helios_boot.py` 32/32).
+`helios_boot.py` 32/32, `migrate_fat32.py` 76/76 and 76/76 with `--gap`).
 
 ## Testing, as of 0.9.5
 

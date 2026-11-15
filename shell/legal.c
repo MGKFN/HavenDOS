@@ -174,7 +174,7 @@ int legal_show_document(const char *title, const char *sub,
             vga_putchar_at(' ',x,y,VGA_BLACK,LEGAL_BODY_BG);
 
         vga_puts_at(sub,(80-(int)strlen(sub))/2,3,VGA_LIGHT_CYAN,LEGAL_BODY_BG);
-        for(int x=4;x<76;x++) vga_putchar_at('-',x,4,VGA_DARK_GREY,LEGAL_BODY_BG);
+        /* 0.9.5.1: no dashed rule under the heading */
 
         /* body */
         for(int r=0;r<DOC_ROWS;r++){
@@ -193,12 +193,11 @@ int legal_show_document(const char *title, const char *sub,
             int tpos =(track-thumb)*top/maxtop;
             for(int r=0;r<track;r++){
                 int on=(r>=tpos&&r<tpos+thumb);
-                vga_putchar_at(on?'#':'.',77,DOC_TOP+r,
-                               on?VGA_LIGHT_CYAN:VGA_DARK_GREY,LEGAL_BODY_BG);
+                vga_putchar_at(on?' ':'.',77,DOC_TOP+r,
+                               VGA_DARK_GREY,on?VGA_CYAN:LEGAL_BODY_BG);
             }
         }
 
-        for(int x=4;x<76;x++) vga_putchar_at('-',x,22,VGA_DARK_GREY,LEGAL_BODY_BG);
 
         /* progress + prompt */
         int pct = maxtop? (top*100)/maxtop : 100;

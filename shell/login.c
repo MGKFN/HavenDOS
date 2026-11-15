@@ -491,9 +491,10 @@ static void draw_tiles(int sel, int mouse_hover){
         int is_sel   = (i==sel);
         int is_hover = (i==mouse_hover && !is_sel);
 
-        vga_color_t bg = is_sel   ? th->accent  :
+        vga_color_t sfg, sbg; ui_sel_colors(&sfg, &sbg);
+        vga_color_t bg = is_sel   ? sbg          :
                          is_hover ? th->bar_bg   : th->desk_bg;
-        vga_color_t fg = is_sel   ? th->bar_bg   :
+        vga_color_t fg = is_sel   ? sfg          :
                          is_hover ? th->accent   : th->bar_fg;
 
         for(int row=0;row<TILE_H;row++)
@@ -524,7 +525,7 @@ static void draw_tiles(int sel, int mouse_hover){
             int sep_y=ty-TILE_H;
             if(sep_y>=7)
                 for(int x=TILE_X;x<TILE_X+TW;x++)
-                    vga_putchar_at('-',x,sep_y,VGA_DARK_GREY,th->desk_bg);
+                    vga_putchar_at(' ',x,sep_y,VGA_DARK_GREY,th->desk_bg);
         }
     }
 }
@@ -549,7 +550,7 @@ static void draw_pw_panel(int user_idx, int attempts){
 
     /* Divider */
     for(int x=px+1;x<px+pw-1;x++)
-        vga_putchar_at('-',x,py+3,VGA_DARK_GREY,th->win_bg);
+        vga_putchar_at(' ',x,py+3,VGA_DARK_GREY,th->win_bg);
 
     /* Password label + input underline */
     vga_puts_at("Password:", px+2, py+4, th->bar_fg, th->win_bg);
@@ -633,40 +634,40 @@ static void first_boot_creator(void){
         ui_draw_window(20,7,40,14,"Welcome to HavenDOS");
         vga_puts_at("How would you like to start?",26,9,VGA_LIGHT_GREY,VGA_BLACK);
 
-        theme_t *th=ui_theme();
-
         /* Option 0 */
         {
             int s=(sel==0);
-            vga_color_t bg=s?th->accent:VGA_BLACK;
-            vga_color_t fg=s?th->bar_bg:VGA_DARK_GREY;
+            vga_color_t sfg,sbg; ui_sel_colors(&sfg,&sbg);
+            vga_color_t bg=s?sbg:VGA_BLACK;
+            vga_color_t fg=s?sfg:VGA_DARK_GREY;
             for(int x=23;x<58;x++) vga_putchar_at(' ',x,11,fg,bg);
             for(int x=23;x<58;x++) vga_putchar_at(' ',x,12,fg,bg);
             for(int x=23;x<58;x++) vga_putchar_at(' ',x,13,fg,bg);
             vga_puts_at(s?" > Create new account   ":" * Create new account   ",
-                        23,11,s?th->bar_bg:VGA_LIGHT_GREY,bg);
+                        23,11,s?sfg:VGA_LIGHT_GREY,bg);
             vga_puts_at("   Set your username and password",23,12,
-                        s?th->bar_bg:VGA_DARK_GREY,bg);
+                        s?sfg:VGA_DARK_GREY,bg);
             vga_puts_at("   Recommended for personal use",23,13,
-                        s?th->bar_bg:VGA_DARK_GREY,bg);
+                        s?sfg:VGA_DARK_GREY,bg);
         }
 
-        for(int x=23;x<58;x++) vga_putchar_at('-',x,15,VGA_DARK_GREY,VGA_BLACK);
+        for(int x=23;x<58;x++) vga_putchar_at(' ',x,15,VGA_DARK_GREY,VGA_BLACK);
 
         /* Option 1 */
         {
             int s=(sel==1);
-            vga_color_t bg=s?th->accent:VGA_BLACK;
-            vga_color_t fg=s?th->bar_bg:VGA_DARK_GREY;
+            vga_color_t sfg,sbg; ui_sel_colors(&sfg,&sbg);
+            vga_color_t bg=s?sbg:VGA_BLACK;
+            vga_color_t fg=s?sfg:VGA_DARK_GREY;
             for(int x=23;x<58;x++) vga_putchar_at(' ',x,16,fg,bg);
             for(int x=23;x<58;x++) vga_putchar_at(' ',x,17,fg,bg);
             for(int x=23;x<58;x++) vga_putchar_at(' ',x,18,fg,bg);
             vga_puts_at(s?" > Use existing account ":" * Use existing account ",
-                        23,16,s?th->bar_bg:VGA_LIGHT_GREY,bg);
+                        23,16,s?sfg:VGA_LIGHT_GREY,bg);
             vga_puts_at("   admin / bootos / guest",23,17,
-                        s?th->bar_bg:VGA_DARK_GREY,bg);
+                        s?sfg:VGA_DARK_GREY,bg);
             vga_puts_at("   Login with default accounts",23,18,
-                        s?th->bar_bg:VGA_DARK_GREY,bg);
+                        s?sfg:VGA_DARK_GREY,bg);
         }
 
         int c=keyboard_waitchar();
@@ -684,9 +685,9 @@ static void first_boot_creator(void){
                 vga_puts_at("Password:",25,12,VGA_LIGHT_GREY,VGA_BLACK);
                 vga_puts_at("Confirm: ",25,14,VGA_LIGHT_GREY,VGA_BLACK);
                 vga_puts_at("Admin?  Y=Yes  N=No",25,16,VGA_DARK_GREY,VGA_BLACK);
-                for(int x=25;x<55;x++) vga_putchar_at('-',x,11,VGA_DARK_GREY,VGA_BLACK);
-                for(int x=25;x<55;x++) vga_putchar_at('-',x,13,VGA_DARK_GREY,VGA_BLACK);
-                for(int x=25;x<55;x++) vga_putchar_at('-',x,15,VGA_DARK_GREY,VGA_BLACK);
+                for(int x=25;x<55;x++) vga_putchar_at(' ',x,11,VGA_DARK_GREY,VGA_BLACK);
+                for(int x=25;x<55;x++) vga_putchar_at(' ',x,13,VGA_DARK_GREY,VGA_BLACK);
+                for(int x=25;x<55;x++) vga_putchar_at(' ',x,15,VGA_DARK_GREY,VGA_BLACK);
                 if(err) vga_puts_at(err,24,18,VGA_LIGHT_RED,VGA_BLACK);
 
                 nu[0]=0; read_field_plain(nu,15,25,11,0);
@@ -737,16 +738,16 @@ static void first_boot_creator(void){
    first_boot=0: "Welcome back, <user>" + short system check.
    ================================================================ */
 static void welcome_line(int y, const char *msg, vga_color_t col){
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
+    int W=vga_cols();
+    for(int x=0;x<W;x++) vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
     int l=(int)strlen(msg);
-    int sx=(80-l)/2; if(sx<2)sx=2;
+    int sx=(W-l)/2; if(sx<2)sx=2;
     vga_puts_at(msg,sx,y,col,VGA_BLACK);
 }
 
 void login_welcome(const char *username, int first_boot){
-    for(int y=0;y<25;y++)
-        for(int x=0;x<80;x++)
-            vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
+    vga_set_color(VGA_WHITE,VGA_BLACK);
+    vga_clear();
 
     /* Line 1: big centred greeting */
     if(first_boot){
@@ -769,38 +770,33 @@ void login_welcome(const char *username, int first_boot){
     welcome_line(6, home_hint, VGA_DARK_GREY);
 
     /* Divider */
-    for(int x=20;x<60;x++) vga_putchar_at('-',x,7,VGA_DARK_GREY,VGA_BLACK);
+    for(int x=20;x<60;x++) vga_putchar_at(' ',x,7,VGA_DARK_GREY,VGA_BLACK);
     sleep_ms(400);
 
     /* Hardware / init lines */
     typedef struct { const char *msg; vga_color_t col; int ms; } wl;
 
     extern uint32_t pmm_total_blocks(void);
-    extern int      virtio_drive_count(void);
-    extern uint64_t virtio_drive_sectors(int);
-    extern int      rtl8139_found(void);
-    extern int      e1000_found(void);
+    extern int      vfs_using_disk(void);
+    extern int      netdev_count(void);
 
     char ram_s[32]; char rm[8];
     utoa(pmm_total_blocks()*4/1024,rm,10);
     strcpy(ram_s,rm); strcat(ram_s,"MB RAM OK");
 
-    char vio_s[40];
-    int vd=virtio_drive_count();
-    if(vd>0){ char ms[12]; utoa((uint32_t)(virtio_drive_sectors(0)/2048),ms,10);
-        strcpy(vio_s,"Disk: "); strcat(vio_s,ms); strcat(vio_s,"MB VirtIO mounted"); }
-    else { strcpy(vio_s,"Disk: not found"); }
-
-    char nic_s[40];
-    if(rtl8139_found())    strcpy(nic_s,"Network: RTL8139 ready");
-    else if(e1000_found()) strcpy(nic_s,"Network: e1000 ready");
-    else                   strcpy(nic_s,"Network: not available");
+    /* 0.9.5.1: these two lines said "VirtIO mounted" or "Disk: not found",
+       and named only two network cards -- on an installed IDE, NVMe or
+       USB system both were wrong. They now say what is known. */
+    int on_disk = vfs_using_disk();
+    const char *vio_s = on_disk ? "Disk: mounted" : "Disk: none -- a live session";
+    int nics = netdev_count();
+    const char *nic_s = nics>0 ? "Network: adapter ready" : "Network: no adapter";
 
     wl lines[]={
         {"Initialising system...",  VGA_LIGHT_GREY, 300},
         {ram_s,                     VGA_LIGHT_GREEN, 200},
-        {vio_s,                     vd>0?VGA_LIGHT_GREEN:VGA_YELLOW, 200},
-        {nic_s,                     (rtl8139_found()||e1000_found())?VGA_LIGHT_GREEN:VGA_YELLOW, 200},
+        {vio_s,                     on_disk?VGA_LIGHT_GREEN:VGA_YELLOW, 200},
+        {nic_s,                     nics>0?VGA_LIGHT_GREEN:VGA_YELLOW, 200},
         {"Loading desktop...",      VGA_LIGHT_GREY, 250},
         {"Almost done...",          VGA_CYAN,        350},
     };
@@ -813,10 +809,7 @@ void login_welcome(const char *username, int first_boot){
 
     /* Brief pause then wipe */
     sleep_ms(300);
-    for(int y=0;y<25;y++){
-        for(int x=0;x<80;x++) vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
-        sleep_ms(6);
-    }
+    vga_clear(); vga_flush();
 }
 
 /* ================================================================

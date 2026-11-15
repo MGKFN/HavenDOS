@@ -1,3 +1,4 @@
+#include "../include/theme.h"
 #include "../include/vga.h"
 #include "version.h"
 #include "../include/string.h"
@@ -58,9 +59,11 @@ static const int8_t pieces[7][4][4][2]={
      {{-1,0},{0,0},{1,0},{-1,-1}}},
 };
 
+/* 0.9.5.1: solid blocks, so these are BACKGROUND colours -- 0-7 only,
+   because 8-15 as a background blink in VGA text mode. */
 static const vga_color_t piece_colors[7]={
-    VGA_LIGHT_CYAN, VGA_YELLOW, VGA_MAGENTA,
-    VGA_LIGHT_GREEN, VGA_RED, VGA_LIGHT_BLUE, VGA_LIGHT_RED
+    VGA_CYAN, VGA_BROWN, VGA_MAGENTA,
+    VGA_GREEN, VGA_RED, VGA_BLUE, VGA_LIGHT_GREY
 };
 
 static int cur_type, cur_rot, cur_row, cur_col;
@@ -113,12 +116,12 @@ static int clear_lines(void){
 static void draw_cell(int r, int c, uint8_t val){
     int sx=BX+c*2, sy=BY+r;
     if(val==0){
-        vga_putchar_at('.',sx,  sy,VGA_DARK_GREY,VGA_BLACK);
-        vga_putchar_at('.',sx+1,sy,VGA_DARK_GREY,VGA_BLACK);
+        vga_putchar_at(' ',sx,  sy,VGA_DARK_GREY,VGA_BLACK);
+        vga_putchar_at((c%2==0&&r%2==0)?'.':' ',sx+1,sy,VGA_DARK_GREY,VGA_BLACK);
     } else {
         vga_color_t col=piece_colors[val-1];
-        vga_putchar_at('[',sx,  sy,col,VGA_BLACK);
-        vga_putchar_at(']',sx+1,sy,col,VGA_BLACK);
+        vga_putchar_at(' ',sx,  sy,col,col);
+        vga_putchar_at(' ',sx+1,sy,col,col);
     }
 }
 
@@ -147,8 +150,8 @@ static void draw_ghost(int show){
         int c=cur_col+pieces[cur_type][cur_rot][i][1];
         if(r>=0&&r<TH&&c>=0&&c<TW){
             if(show){
-                vga_putchar_at('#',BX+c*2,  BY+r,VGA_DARK_GREY,VGA_BLACK);
-                vga_putchar_at('#',BX+c*2+1,BY+r,VGA_DARK_GREY,VGA_BLACK);
+                vga_putchar_at('[',BX+c*2,  BY+r,VGA_DARK_GREY,VGA_BLACK);
+                vga_putchar_at(']',BX+c*2+1,BY+r,VGA_DARK_GREY,VGA_BLACK);
             } else {
                 draw_cell(r,c,board[r][c]);
             }
@@ -157,74 +160,52 @@ static void draw_ghost(int show){
 }
 
 static void draw_sidebar(void){
-    int ix=BX+TW*2+2;
+    int ix=BX+TW*2+3;
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
 
-    /* Left border */
-    for(int r=0;r<TH;r++){
-        vga_putchar_at('|',BX-1,BY+r,VGA_WHITE,VGA_BLACK);
-        vga_putchar_at('|',BX+TW*2,BY+r,VGA_WHITE,VGA_BLACK);
+    /* 0.9.5.1: a solid well and a side panel with a title band. The old
+       dashed sidebar ran its key list four rows past its own bottom. */
+    for(int r=-1;r<=TH;r++){
+        vga_putchar_at(' ',BX-1,BY+r,sb,sb);
+        vga_putchar_at(' ',BX+TW*2,BY+r,sb,sb);
     }
-    /* Top/bottom border */
-    vga_putchar_at('.',BX-1,BY-1,VGA_WHITE,VGA_BLACK);
-    for(int i=0;i<TW*2;i++) vga_putchar_at('-',BX+i,BY-1,VGA_WHITE,VGA_BLACK);
-    vga_putchar_at('.',BX+TW*2,BY-1,VGA_WHITE,VGA_BLACK);
-    vga_putchar_at('.',BX-1,BY+TH,VGA_WHITE,VGA_BLACK);
-    for(int i=0;i<TW*2;i++) vga_putchar_at('-',BX+i,BY+TH,VGA_WHITE,VGA_BLACK);
-    vga_putchar_at('.',BX+TW*2,BY+TH,VGA_WHITE,VGA_BLACK);
-
-    /* Sidebar panel */
-    vga_puts_at(".----------.",ix-1,BY,VGA_WHITE,VGA_BLACK);
-    for(int r=1;r<TH;r++){
-        vga_putchar_at('|',ix-1,BY+r,VGA_WHITE,VGA_BLACK);
-        vga_putchar_at('|',ix+11,BY+r,VGA_WHITE,VGA_BLACK);
-        for(int i=0;i<11;i++) vga_putchar_at(' ',ix+i,BY+r,VGA_BLACK,VGA_BLACK);
+    for(int i=0;i<TW*2;i++){
+        vga_putchar_at(' ',BX+i,BY-1,sb,sb);
+        vga_putchar_at(' ',BX+i,BY+TH,sb,sb);
     }
-    vga_puts_at(".----------.",ix-1,BY+TH,VGA_WHITE,VGA_BLACK);
 
-    /* Title */
-    vga_puts_at(" TETRIS ",ix+1,BY,VGA_BLACK,VGA_LIGHT_CYAN);
-    vga_puts_at(HAVENDOS_VER,ix+2,BY+1,VGA_DARK_GREY,VGA_BLACK);
+    ui_kit_panel(ix-1,BY-1,14,TH+2,"Tetris");
 
-    /* Score */
-    vga_puts_at("Score:",ix+1,BY+3,VGA_LIGHT_GREY,VGA_BLACK);
-    char sb[12]; itoa(score,sb,10);
-    vga_puts_at("          ",ix+1,BY+4,VGA_BLACK,VGA_BLACK);
-    vga_puts_at(sb,ix+1,BY+4,VGA_YELLOW,VGA_BLACK);
+    vga_puts_at("Score",ix+1,BY+1,VGA_DARK_GREY,VGA_BLACK);
+    char sb2[12]; itoa(score,sb2,10);
+    vga_puts_at("          ",ix+1,BY+2,VGA_BLACK,VGA_BLACK);
+    vga_puts_at(sb2,ix+1,BY+2,VGA_WHITE,VGA_BLACK);
 
-    /* Lines */
-    vga_puts_at("Lines:",ix+1,BY+6,VGA_LIGHT_GREY,VGA_BLACK);
+    vga_puts_at("Lines",ix+1,BY+4,VGA_DARK_GREY,VGA_BLACK);
     char lb[12]; itoa(lines,lb,10);
-    vga_puts_at("     ",ix+1,BY+7,VGA_BLACK,VGA_BLACK);
-    vga_puts_at(lb,ix+1,BY+7,VGA_LIGHT_GREEN,VGA_BLACK);
+    vga_puts_at("     ",ix+1,BY+5,VGA_BLACK,VGA_BLACK);
+    vga_puts_at(lb,ix+1,BY+5,VGA_WHITE,VGA_BLACK);
 
-    /* Level */
-    vga_puts_at("Level:",ix+1,BY+9,VGA_LIGHT_GREY,VGA_BLACK);
+    vga_puts_at("Level",ix+1,BY+7,VGA_DARK_GREY,VGA_BLACK);
     char lv[4]; itoa(level+1,lv,10);
-    vga_puts_at("     ",ix+1,BY+10,VGA_BLACK,VGA_BLACK);
-    vga_puts_at(lv,ix+1,BY+10,VGA_LIGHT_CYAN,VGA_BLACK);
+    vga_puts_at("     ",ix+1,BY+8,VGA_BLACK,VGA_BLACK);
+    vga_puts_at(lv,ix+1,BY+8,VGA_WHITE,VGA_BLACK);
 
-    /* Next piece preview */
-    vga_puts_at("Next:",ix+1,BY+12,VGA_LIGHT_GREY,VGA_BLACK);
+    vga_puts_at("Next",ix+1,BY+10,VGA_DARK_GREY,VGA_BLACK);
     for(int r=0;r<4;r++)
-        for(int c=0;c<5;c++)
-            vga_putchar_at(' ',ix+1+c*2,BY+13+r,VGA_BLACK,VGA_BLACK);
+        for(int c=0;c<6;c++)
+            vga_putchar_at(' ',ix+c*2,BY+11+r,VGA_BLACK,VGA_BLACK);
     for(int i=0;i<4;i++){
         int pr=pieces[next_type][0][i][0]+1;
-        int pc=pieces[next_type][0][i][1]+2;
-        if(pr>=0&&pr<5&&pc>=0&&pc<6){
+        int pc=pieces[next_type][0][i][1]+1;
+        if(pr>=0&&pr<4&&pc>=0&&pc<6){
             vga_color_t col=piece_colors[next_type];
-            vga_putchar_at('[',ix+1+pc*2,  BY+13+pr,col,VGA_BLACK);
-            vga_putchar_at(']',ix+1+pc*2+1,BY+13+pr,col,VGA_BLACK);
+            vga_putchar_at(' ',ix+pc*2,  BY+11+pr,col,col);
+            vga_putchar_at(' ',ix+pc*2+1,BY+11+pr,col,col);
         }
     }
 
-    /* Controls */
-    vga_puts_at("Keys:",    ix+1,BY+17,VGA_LIGHT_GREY,VGA_BLACK);
-    vga_puts_at("L-R  Move",  ix+1,BY+18,VGA_DARK_GREY,VGA_BLACK);
-    vga_puts_at("Up   Rotate",ix+1,BY+19,VGA_DARK_GREY,VGA_BLACK);
-    vga_puts_at("Dn   Soft",  ix+1,BY+20,VGA_DARK_GREY,VGA_BLACK);
-    vga_puts_at("Spc Hard", ix+1,BY+21,VGA_DARK_GREY,VGA_BLACK);
-    vga_puts_at("Q Quit",   ix+1,BY+22,VGA_DARK_GREY,VGA_BLACK);
+    ui_kit_footer("Left/Right move   Up rotate   Down soft drop   Space hard drop   Q quit");
 }
 
 static void spawn_piece(void){
@@ -376,7 +357,7 @@ void app_tetris(void){
 
     if(game_over) music_gameover();
     draw_board();
-    vga_puts_at(" GAME OVER! ",BX+2,BY+8, VGA_WHITE,VGA_RED);
+    ui_kit_panel(BX+1,BY+7,TW*2-2,7,"Game over");
     char fs[20]; itoa(score,fs,10);
     vga_puts_at("Score:",BX+2,BY+10,VGA_LIGHT_GREY,VGA_BLACK);
     vga_puts_at(fs,BX+9,BY+10,VGA_YELLOW,VGA_BLACK);

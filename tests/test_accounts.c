@@ -105,11 +105,15 @@ int  cfg_autologin(void){ return 0; }
 int  cfg_autologin_timeout(void){ return 0; }
 const char *cfg_autologin_user(void){ return ""; }
 
-int  e1000_found(void){ return 0; }
-int  rtl8139_found(void){ return 0; }
 uint32_t pmm_total_blocks(void){ return 1024; }
-int  virtio_drive_count(void){ return 0; }
-uint64_t virtio_drive_sectors(int i){ (void)i; return 0; }
+/* 0.9.5.1: the welcome screen asks these instead of naming two NICs and
+   one disk bus; login.c uses ui_sel_colors for its highlights. */
+int  vfs_using_disk(void){ return 1; }
+int  netdev_count(void){ return 0; }
+void vga_set_color(vga_color_t f, vga_color_t b){ (void)f; (void)b; }
+void vga_clear(void){}
+void vga_flush(void){}
+void ui_sel_colors(vga_color_t *f, vga_color_t *b){ *f=VGA_BLACK; *b=VGA_BLACK; }
 
 static theme_t g_theme;
 theme_t *ui_theme(void){ return &g_theme; }

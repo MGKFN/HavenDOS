@@ -42,13 +42,19 @@ static void clear_screen(void)
 }
 
 /* ── the bits of the OS ui.c leans on ────────────────────────── */
-typedef enum { VGA_BLACK, VGA_WHITE = 15 } vga_color_t;
+typedef enum { VGA_BLACK, VGA_DARK_GREY = 8, VGA_WHITE = 15 } vga_color_t;
 typedef struct { uint8_t bar_fg, bar_bg, accent, desk_bg, win_fg, win_bg,
                          icon_bg, icon_fg; } theme_t;
 static theme_t g_theme = {7, 1, 11, 0, 15, 1, 8, 15};
 theme_t *ui_theme(void){ return &g_theme; }
 
 void rtc_get_time(uint8_t *h, uint8_t *m, uint8_t *s){ *h = 13; *m = 45; *s = 7; }
+/* v0.9.5.1: the bars show the date and use the shared selection colours. */
+void rtc_get_date(uint8_t *d, uint8_t *mo, uint16_t *y){ *d = 15; *mo = 11; *y = 2026; }
+void ui_sel_colors(vga_color_t *fg, vga_color_t *bg){ *fg = VGA_BLACK; *bg = VGA_WHITE; }
+#ifndef HAVENDOS_VER
+#define HAVENDOS_VER "v0.0.0"   /* version-literal-ok: a stand-in for the test */
+#endif
 const char *current_username(void){ return "kyan"; }
 int current_user_admin(void){ return 1; }
 static int g_unread = 0;
@@ -91,11 +97,15 @@ static void run_mode(int cols, int rows, const char *label)
     printf("\n%s\n", label);
 
     snprintf(buf, sizeof buf, "row %d", bar);
-    ck("taskbar is drawn on the real bottom row", row_has(bar, "HAVENDOS"), buf);
+    ck("taskbar is drawn on the real bottom row", row_has(bar, "HavenDOS"), buf);
+    ck("the start button is where clicks go (columns 0-13)",
+       col_of(bar, "HavenDOS") >= 0 && col_of(bar, "HavenDOS") + 8 <= 13, buf);
     ck("taskbar spans the full width", row_filled_to(bar, cols), buf);
     ck("top status bar spans the full width", row_filled_to(0, cols), "row 0");
     ck("username is on the taskbar", row_has(bar, "kyan"), NULL);
     ck("clock is on the taskbar", row_has(bar, "13:45:07"), NULL);
+    ck("the date is on the top bar", row_has(0, "15 Nov 2026"), screen[0]);
+    ck("and ends at the right edge", col_of(0, "15 Nov 2026") + 11 == cols - 1, screen[0]);
 
     int clock = col_of(bar, "13:45:07");
     snprintf(buf, sizeof buf, "clock at col %d, width %d", clock, cols);
@@ -104,10 +114,12 @@ static void run_mode(int cols, int rows, const char *label)
     ck("clock is right-anchored, not stranded mid-screen",
        clock >= cols - 12, buf);
 
-    int notif = col_of(bar, "NOTIF");
-    snprintf(buf, sizeof buf, "NOTIF at %d, clock at %d", notif, clock);
-    ck("NOTIF does not collide with the clock",
-       notif >= 0 && notif + 5 <= clock, buf);
+    int notif = col_of(bar, "no alerts");
+    snprintf(buf, sizeof buf, "alerts at %d, clock at %d", notif, clock);
+    ck("the alert badge does not collide with the clock",
+       notif >= 0 && notif + 9 <= clock, buf);
+    ck("and sits inside the notification hit box (W-25..W-13)",
+       notif >= cols - 25 && notif + 9 <= cols - 12, buf);
 
     /* nothing may be drawn below the taskbar or in phantom rows */
     int dirty = 0;
@@ -123,13 +135,14 @@ int main(void)
 
     run_mode(80, 25, "80x25  (the mode the layout was designed for)");
 
-    /* the exact columns the hard-coded version used */
-    printf("\n80x25 must be byte-identical to the old fixed layout\n");
+    /* 0.9.5.1 replaced the old "HAVENDOS . kyan.admin  [!] NOTIF (n)"
+       bar; these pin the new one at 80x25. */
+    printf("\n80x25 layout\n");
     g_cols = 80; g_rows = 25; clear_screen(); ui_draw_desktop_bars();
-    ck("bell still at column 55", col_of(24, "[!]") == 55, NULL);
-    ck("NOTIF still at column 59", col_of(24, "NOTIF") == 59, NULL);
-    ck("clock still at column 71", col_of(24, "13:45:07") == 71, NULL);
-    ck("taskbar still on row 24", row_has(24, "HAVENDOS"), NULL);
+    ck("start button label at column 2", col_of(24, "HavenDOS") == 2, screen[24]);
+    ck("user at column 15", col_of(24, "kyan") == 15, screen[24]);
+    ck("alerts at column 56", col_of(24, "no alerts") == 56, screen[24]);
+    ck("clock at column 71", col_of(24, "13:45:07") == 71, screen[24]);
 
     run_mode(80, 50, "80x50");
     run_mode(90, 30, "90x30");
@@ -139,8 +152,8 @@ int main(void)
     g_unread = 12; g_cols = 90; g_rows = 60;
     clear_screen(); ui_draw_desktop_bars();
     ck("count renders with a 2-digit unread count",
-       row_has(59, "9+)"), screen[59]);
-    ck("count stays on screen", col_of(59, "9+)") < 90, NULL);
+       row_has(59, "9+ new"), screen[59]);
+    ck("count stays inside the hit box", col_of(59, "9+ new") + 6 <= 90 - 12, screen[59]);
 
     printf("\n%d/%d passed\n", total - fails, total);
     return fails ? 1 : 0;

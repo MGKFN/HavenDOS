@@ -87,6 +87,8 @@ int  mouse_is_ready(void){ return 0; }
 void sleep_ms(uint32_t ms){ (void)ms; }
 int  keyboard_haschar(void){ return 0; }
 void rtc_get_time(uint8_t *h,uint8_t *m,uint8_t *s){ *h=12;*m=0;*s=0; }
+void rtc_get_date(uint8_t *d,uint8_t *mo,uint16_t *y){ *d=1;*mo=1;*y=2026; }
+void vga_fill_row(int y,char c,vga_color_t f,vga_color_t b){ for(int x=0;x<80;x++) vga_putchar_at(c,x,y,f,b); }
 const char *current_username(void){ return "admin"; }
 int  current_user_admin(void){ return 1; }
 int  notif_get_unread(void){ return 0; }

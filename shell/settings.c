@@ -212,12 +212,14 @@ static void preview(int n, int x0, int y0, int w, int h){
     put(x0+2,y0+2,"[>_] Shell",t->desk_fg,t->desk_bg);
     int wx=x0+(w>=30?14:w/3), wy=y0+3, ww=x0+w-2-wx, wh=h-5;
     if(ww>=10 && wh>=3){
-        for(int y=0;y<wh;y++) for(int x=0;x<ww;x++){
-            char c=(y==0||y==wh-1)?'-':(x==0||x==ww-1)?'|':' ';
-            vga_putchar_at(c,wx+x,wy+y,(y==0||y==wh-1||x==0||x==ww-1)?t->accent:t->win_fg,t->win_bg);
-        }
-        put(wx+2,wy,t->name,t->title_fg,t->win_bg);
-        if(ww>=20) put(wx+2,wy+1,"Text in a window",t->win_fg,t->win_bg);
+        /* 0.9.5.1: a window as every app now draws one -- a filled title
+           band over a plain body, no dashed frame. */
+        vga_color_t tb=(vga_color_t)(t->accent&7); if(tb==t->win_bg) tb=t->title_bg;
+        vga_color_t tf=(tb==VGA_BLACK||tb==VGA_BLUE||tb==VGA_RED||tb==VGA_MAGENTA)?VGA_WHITE:VGA_BLACK;
+        for(int y=0;y<wh;y++) for(int x=0;x<ww;x++)
+            vga_putchar_at(' ',wx+x,wy+y,y==0?tf:t->win_fg,y==0?tb:t->win_bg);
+        put(wx+1,wy,t->name,tf,tb);
+        if(ww>=20) put(wx+1,wy+2,"Text in a window",t->win_fg,t->win_bg);
     }
     for(int x=0;x<w;x++) vga_putchar_at(' ',x0+x,y0+h-1,t->bar_fg,t->bar_bg);
     put(x0+1,y0+h-1,"Start",t->accent,t->bar_bg);
@@ -588,14 +590,14 @@ static int page_about(int k, int *sel){
     char mem[24]; utoa_s((pmm_total_blocks()*4u)/1024u,mem); { int p=(int)strlen(mem); const char *u=" MB"; while(*u) mem[p++]=*u++; mem[p]=0; }
     put(PX+1,3,"HavenDOS",th->accent,VGA_BLACK);
     put(PX+10,3,HAVENDOS_VER_NUM " " HAVENDOS_CHANNEL " \"" HAVENDOS_CODENAME "\"",VGA_WHITE,VGA_BLACK);
-    put(PX+1,4,"A 32-bit operating system written from scratch in C and assembly.",VGA_LIGHT_GREY,VGA_BLACK);
+    put(PX+1,4,"Written from scratch in C and x86 assembly.",VGA_LIGHT_GREY,VGA_BLACK);
     row(6,0,"Made by",HAVENDOS_VENDOR,VGA_WHITE);
-    row(7,0,"Kernel","x86 32-bit protected mode, Multiboot, GRUB 2",VGA_WHITE);
+    row(7,0,"Kernel","x86 32-bit, Multiboot, GRUB 2",VGA_WHITE);
     row(8,0,"Memory",mem,VGA_WHITE);
     row(9,0,"Hostname",cfg_hostname(),VGA_WHITE);
     row(10,0,"Signed in as",current_username(),VGA_WHITE);
     row(12,0,"Source and releases","github.com/MGKFN/HavenDOS",VGA_WHITE);
-    row(13,0,"Updates","`update` installs a newer kernel",VGA_WHITE);
+    row(13,0,"Updates","`update` installs a new kernel",VGA_WHITE);
     row(14,0,"Everything else","`system`, `help`, `guide`",VGA_WHITE);
     put(PX+1,16,HAVENDOS_EA_LINE1,VGA_YELLOW,VGA_BLACK);
     return 1;

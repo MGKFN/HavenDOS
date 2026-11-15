@@ -4,47 +4,55 @@
 
 void ui_draw_desktop_bars(void){
     theme_t *th=ui_theme();
-    /* v0.7.18: derived from the active mode instead of a hard-coded 80x25,
-       so the bar sits on the real bottom row and the right-hand cluster is
-       anchored to the real right edge. At 80x25 the arithmetic reproduces
-       the previous fixed columns exactly. */
     const int W=vga_cols();
     const int BAR_Y=vga_rows()-1;
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
 
-    /* Row 0 — top status bar */
     for(int x=0;x<W;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
-    vga_puts_at("HavenDOS " HAVENDOS_VER,1,0,th->bar_fg,th->bar_bg);
+    vga_puts_at("HavenDOS",1,0,th->bar_fg,th->bar_bg);
+    vga_puts_at(HAVENDOS_VER,10,0,th->accent,th->bar_bg);
+    {
+        static const char *mon[12]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+        uint8_t d,mo; uint16_t yr; rtc_get_date(&d,&mo,&yr);
+        char db[16]; int n=0;
+        if(d>=10) db[n++]=(char)('0'+d/10);
+        db[n++]=(char)('0'+d%10); db[n++]=' ';
+        const char *mm=(mo>=1&&mo<=12)?mon[mo-1]:"???";
+        while(*mm) db[n++]=*mm++;
+        db[n++]=' ';
+        db[n++]=(char)('0'+(yr/1000)%10); db[n++]=(char)('0'+(yr/100)%10);
+        db[n++]=(char)('0'+(yr/10)%10);   db[n++]=(char)('0'+yr%10);
+        db[n]=0;
+        vga_puts_at(db,W-1-n,0,th->bar_fg,th->bar_bg);
+    }
+
     uint8_t h,m,s2; rtc_get_time(&h,&m,&s2);
     char tb[9];
     tb[0]='0'+h/10;tb[1]='0'+h%10;tb[2]=':';
     tb[3]='0'+m/10;tb[4]='0'+m%10;tb[5]=':';
     tb[6]='0'+s2/10;tb[7]='0'+s2%10;tb[8]=0;
-    /* Row 0 time removed — desktop tick writes date | time to row 0 */
 
-    /* Bottom taskbar */
     for(int x=0;x<W;x++) vga_putchar_at(' ',x,BAR_Y,th->bar_fg,th->bar_bg);
-    vga_puts_at("  HAVENDOS    ",0,BAR_Y,th->bar_bg,th->accent);
-    vga_putchar_at('.',14,BAR_Y,th->accent,th->bar_bg);
+    vga_puts_at("  HavenDOS  ",0,BAR_Y,sf,sb);
     const char *un=current_username();
     int ulen=(int)strlen(un);
-    vga_puts_at(un,17,BAR_Y,th->accent,th->bar_bg);
-    if(current_user_admin()) vga_puts_at(".admin",17+ulen,BAR_Y,th->bar_fg,th->bar_bg);
-    /* Right-hand cluster: [!] NOTIF (n)  HH:MM:SS, anchored to the right edge.
-       At W=80 these land on 55/59/65/71, exactly where they were. */
-    const int CLOCK_X=W-9, NCNT_X=W-15, NTXT_X=W-21, BELL_X=W-25;
+    vga_puts_at(un,15,BAR_Y,th->bar_fg,th->bar_bg);
+    if(current_user_admin()) vga_puts_at("(admin)",16+ulen,BAR_Y,VGA_DARK_GREY,th->bar_bg);
+
+    const int CLOCK_X=W-9, BELL_X=W-25;
     extern int notif_get_unread(void);
     int nunu = notif_get_unread();
-    vga_puts_at("[!]",BELL_X,BAR_Y,nunu>0?th->accent:th->bar_fg,th->bar_bg);
-    if(nunu > 0){
-        /* v0.7.5 FIX: was char nc[4] with nc[4]=0 on the >9 path — a
-           one-byte stack overflow that clobbered the adjacent local. */
-        char nc[5]; nc[0]='('; nc[1]='0'+nunu; nc[2]=')'; nc[3]=0; nc[4]=0;
-        if(nunu>9){ nc[1]='9'; nc[2]='+'; nc[3]=')'; nc[4]=0; }
-        vga_puts_at("NOTIF",NTXT_X,BAR_Y,th->accent,th->bar_bg);
-        vga_puts_at(nc,NCNT_X,BAR_Y,th->accent,th->bar_bg);
+    if(nunu>0){
+        char nc[16]; int n=0;
+        const char *p=" ! ";
+        while(*p) nc[n++]=*p++;
+        if(nunu>9){ nc[n++]='9'; nc[n++]='+'; } else nc[n++]=(char)('0'+nunu);
+        p=" new ";
+        while(*p) nc[n++]=*p++;
+        nc[n]=0;
+        vga_puts_at(nc,BELL_X,BAR_Y,sf,sb);
     } else {
-        vga_puts_at("NOTIF",NTXT_X,BAR_Y,th->bar_fg,th->bar_bg);
-        vga_puts_at("   ",NCNT_X,BAR_Y,th->bar_fg,th->bar_bg); /* clear old count */
+        vga_puts_at("no alerts",BELL_X+1,BAR_Y,VGA_DARK_GREY,th->bar_bg);
     }
     vga_puts_at(tb,CLOCK_X,BAR_Y,th->accent,th->bar_bg);
 }

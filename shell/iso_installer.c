@@ -252,7 +252,7 @@ static void hdr(const char *title, int step, int total){
     sb[si++]='S';sb[si++]='t';sb[si++]='e';sb[si++]='p';sb[si++]=' ';
     sb[si++]='0'+step; sb[si++]='/'; sb[si++]='0'+total; sb[si]=0;
     vga_puts_at(sb,72,0,VGA_LIGHT_CYAN,HDR_BG);
-    for(int x=0;x<80;x++) vga_putchar_at('-',x,1,VGA_DARK_GREY,BODY_BG);
+    for(int x=0;x<80;x++) vga_putchar_at(' ',x,1,VGA_DARK_GREY,BODY_BG);
     vga_puts_at(title,2,1,ACC,BODY_BG);
 }
 
@@ -261,14 +261,16 @@ static void footer(const char *hint){
     vga_puts_at(hint,2,24,VGA_LIGHT_CYAN,HDR_BG);
 }
 
+/* 0.9.5.1: a panel edge -- a solid band across the top, nothing else --
+   instead of a dashed rectangle. */
 static void box(int x,int y,int w,int h){
     for(int i=x;i<x+w;i++){
-        vga_putchar_at('-',i,y,VGA_DARK_GREY,BODY_BG);
-        vga_putchar_at('-',i,y+h-1,VGA_DARK_GREY,BODY_BG);
+        vga_putchar_at(' ',i,y,VGA_BLACK,VGA_CYAN);
+        vga_putchar_at(' ',i,y+h-1,VGA_DARK_GREY,BODY_BG);
     }
     for(int j=y+1;j<y+h-1;j++){
-        vga_putchar_at('|',x,j,VGA_DARK_GREY,BODY_BG);
-        vga_putchar_at('|',x+w-1,j,VGA_DARK_GREY,BODY_BG);
+        vga_putchar_at(' ',x,j,VGA_DARK_GREY,BODY_BG);
+        vga_putchar_at(' ',x+w-1,j,VGA_DARK_GREY,BODY_BG);
     }
 }
 
@@ -284,8 +286,8 @@ static void prog_cb(int step, int total, const char *msg){
     int bar_w=60;
     int filled=(step*bar_w)/total;
     for(int x=0;x<bar_w;x++)
-        vga_putchar_at(x<filled?'#':'.',10+x,g_prog_row,
-                       x<filled?OK_COL:VGA_DARK_GREY,BODY_BG);
+        vga_putchar_at(x<filled?' ':'.',10+x,g_prog_row,
+                       VGA_DARK_GREY,x<filled?VGA_GREEN:BODY_BG);
     char pct[8]; utoa((uint32_t)(step*100/total),pct,10);
     int pl=(int)strlen(pct);
     vga_puts_at("   ",71,g_prog_row,BODY_FG,BODY_BG);
@@ -440,7 +442,7 @@ static int screen_drive_picker(int ndisks){
                     "column.",6,5,VGA_YELLOW,BODY_BG);
 
         vga_puts_at("  #  Size       Type     Bus  Dev  Notes",6,6,ACC,BODY_BG);
-        for(int x=6;x<74;x++) vga_putchar_at('-',x,7,VGA_DARK_GREY,BODY_BG);
+        for(int x=6;x<74;x++) vga_putchar_at(' ',x,7,VGA_DARK_GREY,BODY_BG);
 
         for(int i=0;i<nshow;i++){
             uint64_t sects=disk_sectors(i);
@@ -754,7 +756,7 @@ static int screen_additive_confirm(int drive)
     vga_puts_at("No file on the EFI partition is overwritten without a",
                 12,9,OK_COL,BODY_BG);
     vga_puts_at("verified copy being taken first.",12,10,OK_COL,BODY_BG);
-    for(int x=11;x<69;x++) vga_putchar_at('-',x,11,VGA_DARK_GREY,BODY_BG);
+    for(int x=11;x<69;x++) vga_putchar_at(' ',x,11,VGA_DARK_GREY,BODY_BG);
     vga_puts_at("What is written: one new partition in free space, four",
                 12,12,BODY_FG,BODY_BG);
     vga_puts_at("sectors of the partition table, and new files on the",
@@ -831,7 +833,7 @@ static int screen_confirm(int drive, uint32_t mb){
         strcat(line, n); strcat(line, " MB");
         vga_puts_at(line,12,8,BODY_FG,BODY_BG);
     }
-    for(int x=11;x<69;x++) vga_putchar_at('-',x,9,VGA_DARK_GREY,BODY_BG);
+    for(int x=11;x<69;x++) vga_putchar_at(' ',x,9,VGA_DARK_GREY,BODY_BG);
     vga_puts_at("  /boot/grub/grub.cfg  GRUB config",12,10,VGA_LIGHT_GREY,BODY_BG);
     vga_puts_at("  /boot/havendos.elf   HavenDOS kernel",12,11,VGA_LIGHT_GREY,BODY_BG);
     vga_puts_at("  /havendos.txt        Version marker",12,12,VGA_DARK_GREY,BODY_BG);

@@ -23,6 +23,20 @@
 #include "../include/types.h"
 #include "../include/errors.h"
 
+/* 0.9.5.1: the bar across the top is the theme's, as in every other app;
+   these drew their own dark-grey strip. */
+#include "../include/theme.h"
+static void pk_bar(void){
+    theme_t *th=ui_theme();
+    for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
+}
+static vga_color_t pk_fg(vga_color_t c){
+    theme_t *th=ui_theme();
+    if(c==VGA_WHITE||c==VGA_DARK_GREY||c==th->bar_bg) return th->bar_fg;
+    return c;
+}
+#define PK_BG (ui_theme()->bar_bg)
+
 /* Forward declarations for RTC and PMM */
 extern void     rtc_get_time(uint8_t*h,uint8_t*m,uint8_t*s);
 extern void     rtc_get_date(uint8_t*day,uint8_t*month,uint16_t*year);
@@ -224,14 +238,16 @@ static void paint_redraw_all(void)
 
 static void paint_status(void)
 {
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_DARK_GREY);
-    vga_puts_at("PAINT  Arrows=Move  Space=Draw  C=Clear  S=Save  Q=Quit",1,0,VGA_WHITE,VGA_DARK_GREY);
+    pk_bar();
+    vga_puts_at(" Paint",1,0,pk_fg(VGA_WHITE),PK_BG);
     char pos[16]="(00,00)";
     pos[1]='0'+(paint_cx/10); pos[2]='0'+(paint_cx%10);
     pos[4]='0'+(paint_cy/10); pos[5]='0'+(paint_cy%10);
-    vga_puts_at(pos,70,0,VGA_LIGHT_CYAN,VGA_DARK_GREY);
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,1,VGA_BLACK,VGA_DARK_GREY);
-    vga_puts_at("Chars: # * . + - | @ % 0   1-9=Pick colour",1,1,VGA_DARK_GREY,VGA_DARK_GREY);
+    vga_puts_at(pos,70,0,pk_fg(VGA_LIGHT_CYAN),PK_BG);
+    for(int x=0;x<80;x++) vga_putchar_at(' ',x,1,VGA_BLACK,VGA_BLACK);
+    vga_puts_at("Brush",1,1,VGA_DARK_GREY,VGA_BLACK);
+    vga_putchar_at(paint_char,7,1,VGA_LIGHT_GREEN,VGA_BLACK);
+    vga_puts_at("1-9 pick a brush:  # + * . - | @ % 0",10,1,VGA_DARK_GREY,VGA_BLACK);
 }
 
 void pkg_paint(void)
@@ -243,11 +259,7 @@ void pkg_paint(void)
     /* Draw border */
     for(int y=0;y<25;y++) for(int x=0;x<80;x++)
         vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
-    for(int x=0;x<80;x++) vga_putchar_at('-',x,24,VGA_DARK_GREY,VGA_BLACK);
-    for(int y=2;y<24;y++) {
-        vga_putchar_at('|',0, y,VGA_DARK_GREY,VGA_BLACK);
-        vga_putchar_at('|',79,y,VGA_DARK_GREY,VGA_BLACK);
-    }
+    ui_kit_footer("Arrows move   Space draw   C clear   S save   Q quit");
 
     paint_status();
     paint_redraw_all();
@@ -258,7 +270,7 @@ void pkg_paint(void)
     while(1) {
         /* Draw cursor */
         char cc=paint_canvas[paint_cy][paint_cx];
-        vga_putchar_at(cc?cc:'_',paint_cx+1,paint_cy+2,VGA_YELLOW,VGA_DARK_GREY);
+        vga_putchar_at(cc?cc:'_',paint_cx+1,paint_cy+2,VGA_BLACK,VGA_LIGHT_GREY);
 
         int k=keyboard_waitchar();
 
@@ -292,9 +304,9 @@ void pkg_paint(void)
                 buf[bp++]='\n';
             }
             vfs_write("HOME/PAINT.TXT",buf,(uint32_t)bp);
-            vga_puts_at("Saved to HOME/PAINT.TXT",28,24,VGA_LIGHT_GREEN,VGA_BLACK);
+            ui_kit_footer("Saved to HOME/PAINT.TXT");
             sleep_ms(800);
-            for(int x=0;x<80;x++) vga_putchar_at('-',x,24,VGA_DARK_GREY,VGA_BLACK);
+            ui_kit_footer("Arrows move   Space draw   C clear   S save   Q quit");
         }
         else if(k=='q'||k=='Q'||k==27) break;
 
@@ -356,9 +368,9 @@ void pkg_music(void)
     for(int y=0;y<25;y++) for(int x=0;x<80;x++)
         vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
 
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_DARK_GREY);
-    vga_puts_at(" MUSIC PLAYER  --  HavenDOS " HAVENDOS_VER,0,0,VGA_WHITE,VGA_DARK_GREY);
-    vga_puts_at("PC Speaker",69,0,VGA_LIGHT_CYAN,VGA_DARK_GREY);
+    pk_bar();
+    vga_puts_at(" Music Player",0,0,pk_fg(VGA_WHITE),PK_BG);
+    vga_puts_at("PC Speaker",69,0,pk_fg(VGA_LIGHT_CYAN),PK_BG);
 
     vga_puts_at("Select a song:",32,4,VGA_LIGHT_CYAN,VGA_BLACK);
     for(int i=0;i<SONG_COUNT;i++) {
@@ -368,7 +380,7 @@ void pkg_music(void)
     }
     vga_puts_at("Q. Quit",30,6+SONG_COUNT+1,VGA_DARK_GREY,VGA_BLACK);
 
-    vga_puts_at("Press a number to play  |  Any key to stop",18,22,VGA_DARK_GREY,VGA_BLACK);
+    ui_kit_footer("1-9 play a song   any key stops it   Q quit");
 
     while(1) {
         int k=keyboard_waitchar();
@@ -434,7 +446,7 @@ void pkg_calendar(void)
     static const char *dow="Su Mo Tu We Th Fr Sa";
 
     /* Header */
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_DARK_GREY);
+    pk_bar();
     char hdr[32]="   "; int hi=3;
     const char *mn=months[mo];
     while(*mn) hdr[hi++]=*mn++;
@@ -442,8 +454,8 @@ void pkg_calendar(void)
     char ys[8]; utoa((uint32_t)yr,ys,10);
     for(int i=0;ys[i];i++) hdr[hi++]=ys[i];
     hdr[hi]=0;
-    vga_puts_at(" CALENDAR",0,0,VGA_WHITE,VGA_DARK_GREY);
-    vga_puts_at(hdr,30,0,VGA_LIGHT_CYAN,VGA_DARK_GREY);
+    vga_puts_at(" Calendar",0,0,pk_fg(VGA_WHITE),PK_BG);
+    vga_puts_at(hdr,30,0,pk_fg(VGA_LIGHT_CYAN),PK_BG);
 
     /* Day-of-week row */
     vga_puts_at(dow, 28, 3, VGA_DARK_GREY, VGA_BLACK);
@@ -460,7 +472,9 @@ void pkg_calendar(void)
         utoa((uint32_t)d, ds+(d<10?1:0), 10);
         ds[2]=0;
         vga_color_t fc = (d==dy) ? VGA_BLACK : (col==0||col==6) ? VGA_LIGHT_RED : VGA_LIGHT_GREY;
-        vga_color_t bc = (d==dy) ? VGA_LIGHT_CYAN : VGA_BLACK;
+        vga_color_t sf_, sb_; ui_sel_colors(&sf_,&sb_);
+        if(d==dy) fc = sf_;
+        vga_color_t bc = (d==dy) ? sb_ : VGA_BLACK;
         vga_puts_at(ds, cx, cy, fc, bc);
         col++;
         if(col==7){col=0;row++;}
@@ -473,9 +487,9 @@ void pkg_calendar(void)
     ts[thi++]=':';
     utoa((uint32_t)mi,tmp,10); if(mi<10){ts[thi++]='0';} for(int i=0;tmp[i];i++) ts[thi++]=tmp[i];
     ts[thi]=0;
-    vga_puts_at(ts,55,0,VGA_YELLOW,VGA_DARK_GREY);
+    vga_puts_at(ts,55,0,pk_fg(VGA_YELLOW),PK_BG);
 
-    vga_puts_at("Press any key to exit",29,22,VGA_DARK_GREY,VGA_BLACK);
+    ui_kit_footer("Any key closes");
     keyboard_waitchar();
 
     for(int y=0;y<25;y++) for(int x=0;x<80;x++)
@@ -525,10 +539,10 @@ void pkg_quiz(void)
     for(int y=0;y<25;y++) for(int x=0;x<80;x++)
         vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
 
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_DARK_GREY);
+    pk_bar();
     /* The bank holds twelve questions and a run asks eight of them, so the
        header said twelve and the quiz ended after eight. */
-    vga_puts_at(" HAVENDOS QUIZ  --  8 Questions",0,0,VGA_WHITE,VGA_DARK_GREY);
+    vga_puts_at(" Quiz  -  eight questions",0,0,pk_fg(VGA_WHITE),PK_BG);
 
     uint8_t _qh=0,_qm=0,_qs=0;
     rtc_get_time(&_qh,&_qm,&_qs);
@@ -551,13 +565,13 @@ void pkg_quiz(void)
         /* Progress */
         char prog[24]="Question 0/0";
         prog[9]='1'+qi; prog[11]='0'+total;
-        vga_puts_at(prog,60,0,VGA_DARK_GREY,VGA_DARK_GREY);
+        vga_puts_at(prog,48,0,pk_fg(VGA_DARK_GREY),PK_BG);
 
         /* Score */
         char sc[16]="Score: 0/0";
         sc[7]='0'+score; sc[9]='0'+qi;
         /* at the right of the bar: column 2 sat on top of the title */
-        vga_puts_at(sc,80-(int)strlen(sc)-2,0,VGA_LIGHT_GREEN,VGA_DARK_GREY);
+        vga_puts_at(sc,80-(int)strlen(sc)-2,0,pk_fg(VGA_LIGHT_GREEN),PK_BG);
 
         vga_puts_at(q->q,4,4,VGA_LIGHT_CYAN,VGA_BLACK);
         static const char *letters[]={"A","B","C","D"};
@@ -580,7 +594,7 @@ void pkg_quiz(void)
 
         if(ans==q->correct){
             score++;
-            vga_puts_at("  Correct!  ",30,18,VGA_BLACK,VGA_LIGHT_GREEN);
+            vga_puts_at("  Correct!  ",30,18,VGA_BLACK,VGA_GREEN);
         } else {
             char wrong[48]="  Wrong! Answer: ";
             int wl=(int)strlen(wrong);

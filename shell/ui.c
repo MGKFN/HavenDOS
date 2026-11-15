@@ -238,73 +238,161 @@ void ui_load_preview(int n){
    ================================================================ */
 
 /* ── App taskbar (top bar only) — used by all apps ────────────── */
+/* ================================================================
+   THE 0.9.5.1 LOOK
+   Kyan, after 0.9.5: "the settings app is fire same for system ... apply
+   the modern looks everywhere every app every screen". What made those
+   two read as modern was not a feature, it was a handful of rules, and
+   they are written down here so every screen can follow them:
+
+     * no dashed boxes -- a panel is a filled title band and a plain body;
+     * the app's name sits left in the top bar, the time right;
+     * one selection colour, the theme accent as a background (never a
+       blinking 8-15 colour), with black or white text on it;
+     * keys go in a footer strip on the bottom row, not on a border;
+     * headings in the accent, labels dim, values bright.
+
+   ui_draw_taskbar() and ui_draw_window() are what most apps call, so
+   restyling those two restyles them; the ui_kit_* helpers below are for
+   code that draws its own.
+   ================================================================ */
+void ui_sel_colors(vga_color_t *fg, vga_color_t *bg){
+    int a = ui_theme()->accent & 7;
+    if(a==0) a=VGA_LIGHT_GREY;
+    *bg=(vga_color_t)a;
+    *fg=(a==VGA_BLUE||a==VGA_RED||a==VGA_MAGENTA)?VGA_WHITE:VGA_BLACK;
+}
+
+static void put_clip(const char *s, int x, int y, int maxx, vga_color_t fg, vga_color_t bg){
+    for(; *s && x<maxx; s++, x++) vga_putchar_at(*s,x,y,fg,bg);
+}
+
+/* The bar across the top of a full-screen app. */
 void ui_draw_taskbar(const char *title){
     theme_t *th=ui_theme();
     const int W=vga_cols();
     for(int x=0;x<W;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
-    /* Left: back/close hint */
-    vga_puts_at(" ESC=Close",0,0,th->bar_fg,th->bar_bg);
-    /* Center: app title */
-    if(title&&title[0]){
-        int tlen=(int)strlen(title);
-        int tx=(W-tlen)/2; if(tx<12)tx=12;
-        vga_puts_at(title,tx,0,th->accent,th->bar_bg);
-    }
-    /* Right: HH:MM */
+    if(title&&title[0]) put_clip(title,1,0,W-20,th->bar_fg,th->bar_bg);
     uint8_t h,m,s2; rtc_get_time(&h,&m,&s2);
     char tb[6];
     tb[0]='0'+h/10;tb[1]='0'+h%10;tb[2]=':';
     tb[3]='0'+m/10;tb[4]='0'+m%10;tb[5]=0;
+    if(W>=40) vga_puts_at("ESC close",W-17,0,th->bar_fg,th->bar_bg);
     vga_puts_at(tb,W-6,0,th->accent,th->bar_bg);
 }
 
-/* ── Desktop two-bar layout ─────────────────────────────────────
-   Row  0 : thin top status bar  (version . HavenDOS . clock)
-   Row 24 : main taskbar (start button + title + sysinfo)
-   ────────────────────────────────────────────────────────────── */
+/* A footer strip of keys on the bottom row (or row y). */
+void ui_kit_footer_at(int y, const char *keys){
+    const int W=vga_cols();
+    vga_fill_row(y,' ',VGA_WHITE,VGA_DARK_GREY);
+    if(keys) put_clip(keys,1,y,W-1,VGA_WHITE,VGA_DARK_GREY);
+}
+void ui_kit_footer(const char *keys){ ui_kit_footer_at(vga_rows()-1, keys); }
+
+/* A full-screen app frame: black body, top bar, optional footer. */
+void ui_kit_begin(const char *title, const char *keys){
+    const int H=vga_rows();
+    for(int y=0;y<H;y++) vga_fill_row(y,' ',VGA_LIGHT_GREY,VGA_BLACK);
+    ui_draw_taskbar(title);
+    if(keys) ui_kit_footer(keys);
+}
+
+/* A panel: a filled title band and a plain body. Same geometry as the
+   old dashed window, so callers' coordinates still land inside it. */
+void ui_kit_panel(int x,int y,int w,int h,const char *title){
+    theme_t *th=ui_theme();
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
+    for(int i=0;i<w;i++) vga_putchar_at(' ',x+i,y,sf,sb);
+    if(title&&title[0]) put_clip(title,x+1,y,x+w-1,sf,sb);
+    for(int r=1;r<h;r++)
+        for(int i=0;i<w;i++) vga_putchar_at(' ',x+i,y+r,th->win_fg,th->win_bg);
+}
+
+void ui_kit_heading(int x,int y,const char *s){ vga_puts_at(s,x,y,ui_theme()->accent,VGA_BLACK); }
+
+/* label (dim) then value (bright), value at column vx. */
+void ui_kit_kv(int x,int y,int vx,const char *label,const char *value){
+    vga_puts_at(label,x,y,VGA_DARK_GREY,VGA_BLACK);
+    if(value) vga_puts_at(value,vx,y,VGA_WHITE,VGA_BLACK);
+}
+
+/* A list row, highlighted when selected. */
+void ui_kit_row(int x,int y,int w,int sel,const char *text){
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
+    vga_color_t fg = sel?sf:VGA_LIGHT_GREY, bg = sel?sb:VGA_BLACK;
+    for(int i=0;i<w;i++) vga_putchar_at(' ',x+i,y,fg,bg);
+    if(text) put_clip(text,x+1,y,x+w,fg,bg);
+}
+
+/* A 2-cell solid block: the modern pixel, for games. */
+void ui_kit_cell(int x,int y,vga_color_t c){
+    vga_putchar_at(' ',x,y,c,c); vga_putchar_at(' ',x+1,y,c,c);
+}
+
+/* A horizontal meter `w` wide. */
+void ui_kit_bar(int x,int y,int w,int filled,vga_color_t c){
+    for(int i=0;i<w;i++){
+        if(i<filled) vga_putchar_at(' ',x+i,y,c,c);
+        else vga_putchar_at('.',x+i,y,VGA_DARK_GREY,VGA_BLACK);
+    }
+}
+
+/* ── The desktop's two bars ──────────────────────────────────────
+   Row 0:  HavenDOS <version>                         <date>
+   Row H-1: [ HavenDOS ]  user (admin)        [!] n   HH:MM:SS
+   The start pill keeps the old hit box (columns 0-13), and the
+   notification cluster keeps ui_taskbar_notif_hit()'s.                */
 void ui_draw_desktop_bars(void){
     theme_t *th=ui_theme();
-    /* v0.7.18: derived from the active mode instead of a hard-coded 80x25,
-       so the bar sits on the real bottom row and the right-hand cluster is
-       anchored to the real right edge. At 80x25 the arithmetic reproduces
-       the previous fixed columns exactly. */
     const int W=vga_cols();
     const int BAR_Y=vga_rows()-1;
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
 
-    /* Row 0 — top status bar */
     for(int x=0;x<W;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
-    vga_puts_at("HavenDOS " HAVENDOS_VER,1,0,th->bar_fg,th->bar_bg);
+    vga_puts_at("HavenDOS",1,0,th->bar_fg,th->bar_bg);
+    vga_puts_at(HAVENDOS_VER,10,0,th->accent,th->bar_bg);
+    {
+        static const char *mon[12]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+        uint8_t d,mo; uint16_t yr; rtc_get_date(&d,&mo,&yr);
+        char db[16]; int n=0;
+        if(d>=10) db[n++]=(char)('0'+d/10);
+        db[n++]=(char)('0'+d%10); db[n++]=' ';
+        const char *mm=(mo>=1&&mo<=12)?mon[mo-1]:"???";
+        while(*mm) db[n++]=*mm++;
+        db[n++]=' ';
+        db[n++]=(char)('0'+(yr/1000)%10); db[n++]=(char)('0'+(yr/100)%10);
+        db[n++]=(char)('0'+(yr/10)%10);   db[n++]=(char)('0'+yr%10);
+        db[n]=0;
+        vga_puts_at(db,W-1-n,0,th->bar_fg,th->bar_bg);
+    }
+
     uint8_t h,m,s2; rtc_get_time(&h,&m,&s2);
     char tb[9];
     tb[0]='0'+h/10;tb[1]='0'+h%10;tb[2]=':';
     tb[3]='0'+m/10;tb[4]='0'+m%10;tb[5]=':';
     tb[6]='0'+s2/10;tb[7]='0'+s2%10;tb[8]=0;
-    /* Row 0 time removed — desktop tick writes date | time to row 0 */
 
-    /* Bottom taskbar */
     for(int x=0;x<W;x++) vga_putchar_at(' ',x,BAR_Y,th->bar_fg,th->bar_bg);
-    vga_puts_at("  HAVENDOS    ",0,BAR_Y,th->bar_bg,th->accent);
-    vga_putchar_at('.',14,BAR_Y,th->accent,th->bar_bg);
+    vga_puts_at("  HavenDOS  ",0,BAR_Y,sf,sb);
     const char *un=current_username();
     int ulen=(int)strlen(un);
-    vga_puts_at(un,17,BAR_Y,th->accent,th->bar_bg);
-    if(current_user_admin()) vga_puts_at(".admin",17+ulen,BAR_Y,th->bar_fg,th->bar_bg);
-    /* Right-hand cluster: [!] NOTIF (n)  HH:MM:SS, anchored to the right edge.
-       At W=80 these land on 55/59/65/71, exactly where they were. */
-    const int CLOCK_X=W-9, NCNT_X=W-15, NTXT_X=W-21, BELL_X=W-25;
+    vga_puts_at(un,15,BAR_Y,th->bar_fg,th->bar_bg);
+    if(current_user_admin()) vga_puts_at("(admin)",16+ulen,BAR_Y,VGA_DARK_GREY,th->bar_bg);
+
+    const int CLOCK_X=W-9, BELL_X=W-25;
     extern int notif_get_unread(void);
     int nunu = notif_get_unread();
-    vga_puts_at("[!]",BELL_X,BAR_Y,nunu>0?th->accent:th->bar_fg,th->bar_bg);
-    if(nunu > 0){
-        /* v0.7.5 FIX: was char nc[4] with nc[4]=0 on the >9 path — a
-           one-byte stack overflow that clobbered the adjacent local. */
-        char nc[5]; nc[0]='('; nc[1]='0'+nunu; nc[2]=')'; nc[3]=0; nc[4]=0;
-        if(nunu>9){ nc[1]='9'; nc[2]='+'; nc[3]=')'; nc[4]=0; }
-        vga_puts_at("NOTIF",NTXT_X,BAR_Y,th->accent,th->bar_bg);
-        vga_puts_at(nc,NCNT_X,BAR_Y,th->accent,th->bar_bg);
+    if(nunu>0){
+        char nc[16]; int n=0;
+        const char *p=" ! ";
+        while(*p) nc[n++]=*p++;
+        if(nunu>9){ nc[n++]='9'; nc[n++]='+'; } else nc[n++]=(char)('0'+nunu);
+        p=" new ";
+        while(*p) nc[n++]=*p++;
+        nc[n]=0;
+        vga_puts_at(nc,BELL_X,BAR_Y,sf,sb);
     } else {
-        vga_puts_at("NOTIF",NTXT_X,BAR_Y,th->bar_fg,th->bar_bg);
-        vga_puts_at("   ",NCNT_X,BAR_Y,th->bar_fg,th->bar_bg); /* clear old count */
+        vga_puts_at("no alerts",BELL_X+1,BAR_Y,VGA_DARK_GREY,th->bar_bg);
     }
     vga_puts_at(tb,CLOCK_X,BAR_Y,th->accent,th->bar_bg);
 }
@@ -356,36 +444,11 @@ void ui_draw_desktop(void){
 }
 
 /* ================================================================
-   WINDOW — double-line border, accent title
+   WINDOW -- a panel since 0.9.5.1 (see THE 0.9.5.1 LOOK above). The
+   old one was a dashed border with the title set into it.
    ================================================================ */
 void ui_draw_window(int x,int y,int w,int h,const char *title){
-    theme_t *th=ui_theme();
-
-    /* Top border */
-    vga_putchar_at('.',x,y,th->accent,th->win_bg);
-    for(int i=1;i<w-1;i++) vga_putchar_at('-',x+i,y,th->accent,th->win_bg);
-    vga_putchar_at('.',x+w-1,y,th->accent,th->win_bg);
-
-    /* Title in center of top border */
-    if(title&&title[0]){
-        int tlen=(int)strlen(title);
-        int tx=x+(w-tlen-2)/2; if(tx<x+1)tx=x+1;
-        vga_putchar_at(' ',tx-1,y,th->title_fg,th->win_bg);
-        vga_puts_at(title,tx,y,th->title_fg,th->win_bg);
-        vga_putchar_at(' ',tx+tlen,y,th->title_fg,th->win_bg);
-    }
-
-    /* Sides + fill */
-    for(int i=1;i<h-1;i++){
-        vga_putchar_at('|',x,    y+i,th->accent,th->win_bg);
-        for(int j=1;j<w-1;j++) vga_putchar_at(' ',x+j,y+i,th->win_fg,th->win_bg);
-        vga_putchar_at('|',x+w-1,y+i,th->accent,th->win_bg);
-    }
-
-    /* Bottom border */
-    vga_putchar_at('.',x,    y+h-1,th->accent,th->win_bg);
-    for(int i=1;i<w-1;i++) vga_putchar_at('-',x+i,y+h-1,th->accent,th->win_bg);
-    vga_putchar_at('.',x+w-1,y+h-1,th->accent,th->win_bg);
+    ui_kit_panel(x,y,w,h,title);
 }
 
 /* ================================================================

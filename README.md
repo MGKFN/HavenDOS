@@ -6,7 +6,23 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.5 Beta "Hephaestus"
+## Current version: 0.9.5.1 Beta "Hephaestus"
+
+**0.9.5.1.** **The modern look, everywhere.** Every app and screen
+(desktop, start menu, games, tools, login, setup and the installer) now
+uses the style of 0.9.5's Settings and System apps:
+
+- solid title bands, with no dashed boxes;
+- one selection colour;
+- keys listed in a footer.
+
+There are new games and apps:
+
+- games: **2048**, **Breakout**, **Tic-Tac-Toe** and **Memory**;
+- apps: **Notes**, **Stopwatch** and a unit **Converter**.
+
+The new `open` command starts any app from the shell.
+[Changelog](changelogs/CHANGELOG-v0.9.5.1.md).
 
 **0.9.5.** **The apps, rebuilt.**
 - `help`, `man` and the Manual app read one command reference that the
@@ -178,11 +194,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.5.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.5.1.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.5.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.5.1.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 

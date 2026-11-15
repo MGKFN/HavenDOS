@@ -126,6 +126,14 @@ extern void appx_hacker(void);
 extern void appx_music(void);
 extern void appx_calendar(void);
 extern void app_system(void);       /* shell/sysapp.c, v0.9.5 */
+/* v0.9.5.1: new games (shell/games2.c) and apps (shell/apps2.c) */
+extern void app_2048(void);
+extern void app_breakout(void);
+extern void app_tictactoe(void);
+extern void app_memory(void);
+extern void app_stopwatch(void);
+extern void app_convert(void);
+extern void app_notes(void);
 extern void appx_fortune(void);
 extern void appx_ascii_art(void);
 extern void appx_pci(void);
@@ -191,6 +199,9 @@ static const appreg_t appreg[]={
     {"calendar",  "Calendar",         "Ca", appx_calendar,      CAT_APPS},
     {"chat",      "BOOT Chat",        "Ch", appx_chat,          CAT_APPS},
     {"asciiart",  "ASCII Art",        "Aa", appx_ascii_art,     CAT_APPS},
+    {"notes",     "Notes",            "No", app_notes,          CAT_APPS},
+    {"stopwatch", "Stopwatch",        "Sw", app_stopwatch,      CAT_APPS},
+    {"convert",   "Converter",        "Cv", app_convert,        CAT_APPS},
 
     /* ---- System ----------------------------------------------- */
     /* v0.9.5: one app where there were four (System Info, Info+,
@@ -226,6 +237,10 @@ static const appreg_t appreg[]={
        so a bigger console is a bigger minefield and it must NOT be
        boxed into 80x25. The only app besides the shell that does. */
     {"mines",     "Minefield",        "Mf", app_mines,          CAT_GAMES, 1},
+    {"2048",      "2048",             "2k", app_2048,           CAT_GAMES},
+    {"breakout",  "Breakout",         "Bo", app_breakout,       CAT_GAMES},
+    {"tictactoe", "Tic-Tac-Toe",      "XO", app_tictactoe,      CAT_GAMES},
+    {"memory",    "Memory",           "Me", app_memory,         CAT_GAMES},
 
     /* ---- Media ------------------------------------------------ */
     {"music",     "Music Player",     "Mu", appx_music,         CAT_MEDIA},
@@ -376,6 +391,21 @@ static void pins_load(void){
     pin_load(PIN_FILE_DESK,desk_ids,&desk_n,"shell");
 }
 
+static void desktop_run_app(void (*fn)(void), const char *name, int fits);
+/* v0.9.5.1: `open <app>` -- by id, or by the start of its name. */
+static char lcase(char c){ return (c>='A'&&c<='Z')?(char)(c+32):c; }
+int desktop_open_by_name(const char *w){
+    if(!w||!w[0]) return -1;
+    for(int i=0;i<NREG;i++) if(!strcmp(appreg[i].id,w)){ desktop_run_app(appreg[i].fn,appreg[i].name,appreg[i].fits); return i; }
+    int n=(int)strlen(w);
+    for(int i=0;i<NREG;i++){
+        const char *nm=appreg[i].name; int k=0;
+        while(k<n && nm[k] && lcase(nm[k])==lcase(w[k])) k++;
+        if(k==n){ desktop_run_app(appreg[i].fn,appreg[i].name,appreg[i].fits); return i; }
+    }
+    return -1;
+}
+
 /* v0.9.5: Settings > Desktop edits the same two lists. */
 int         desktop_app_count(void){ return NREG; }
 const char *desktop_app_id(int i)  { return (i>=0&&i<NREG)?appreg[i].id:""; }
@@ -519,12 +549,15 @@ static void draw_icons(int sel, int menu_open){
         icon_scroll_row = sel_approw - rows_vis + 1;
     if(icon_scroll_row<0) icon_scroll_row=0;
 
-    /* Clear the icon area */
-    /* Clear exactly the field, which is now as wide as the console
-       allows rather than a hardcoded 35. */
+    /* Clear the icon field to the theme's desktop -- wallpaper and all.
+       (It used to be blanked to plain colour, so the wallpaper stopped
+       wherever the icons began.) */
     for(int sy=ICON_TOP; sy<=ICON_BOT; sy++)
-        for(int sx=0; sx<=field_w && sx<D_COLS; sx++)
-            vga_putchar_at(' ', sx, sy, th->desk_bg, th->desk_bg);
+        for(int sx=0; sx<=field_w && sx<D_COLS; sx++){
+            char c=' '; vga_color_t fg=th->desk_bg;
+            ui_pattern_at(sx,sy,&c,&fg);
+            vga_putchar_at(c, sx, sy, fg, th->desk_bg);
+        }
 
     if(!icon_count){
         vga_puts_at("No desktop shortcuts.",2,3,th->desk_fg,th->desk_bg);
@@ -547,23 +580,34 @@ static void draw_icons(int sel, int menu_open){
         int x = 1 + col * ICON_PITCH;
         int y = 2 + vis_row * ICON_TILE_STEP;
 
+        /* 0.9.5.1: a tile, not a dashed rule. A solid block in the app's
+           category colour with its two-letter mark, the name under it,
+           and the whole tile in the selection colour when chosen. */
         int s=(i==sel&&!menu_open);
-        vga_color_t ibg=s?th->accent:th->icon_bg;
-        vga_color_t ifg=s?th->icon_bg:th->icon_fg;
-        vga_color_t nfg=s?th->accent:th->bar_fg;
-
-        vga_puts_at("---------------",x,y,th->desk_fg,th->desk_bg);
-        vga_putchar_at('-',x,y,th->accent,th->desk_bg);
-        vga_putchar_at(a->icon[0],x+1,y,ifg,ibg);
-        vga_putchar_at(a->icon[1],x+2,y,ifg,ibg);
-        vga_putchar_at('-',x+3,y,th->accent,th->desk_bg);
+        vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
+        static const vga_color_t catcol[] = {
+            VGA_BLUE, VGA_CYAN, VGA_GREEN, VGA_MAGENTA, VGA_RED, VGA_BROWN
+        };
+        vga_color_t blk = (a->cat < 6) ? catcol[a->cat] : VGA_BLUE;
+        if(blk==th->desk_bg) blk=VGA_BLACK;
+        vga_color_t bfg = (blk==VGA_CYAN||blk==VGA_GREEN) ? VGA_BLACK : VGA_WHITE;
+        if(s){ blk=sb; bfg=sf; }
+        vga_putchar_at(' ',x,y,bfg,blk);
+        vga_putchar_at(a->icon[0],x+1,y,bfg,blk);
+        vga_putchar_at(a->icon[1],x+2,y,bfg,blk);
+        vga_putchar_at(' ',x+3,y,bfg,blk);
 
         char nm[15]; int nl=(int)strlen(a->name);
         for(int j=0;j<14;j++) nm[j]=(j<nl)?a->name[j]:' ';
         nm[14]=0;
-        vga_puts_at(nm,x,y+1,nfg,th->desk_bg);
-
-        vga_putchar_at('.',x+6,y+2,th->icon_bg,th->desk_bg);
+        if(s){
+            vga_putchar_at(' ',x-1>=0?x-1:x,y+1,sf,sb);
+            vga_puts_at(nm,x,y+1,sf,sb);
+        } else {
+            /* the name over the wallpaper, without wiping it past the text */
+            for(int j=0;j<nl && j<14;j++)
+                vga_putchar_at(a->name[j],x+j,y+1,th->desk_fg,th->desk_bg);
+        }
     }
 
     int total_rows = (icon_count + ncols - 1)/ncols;
@@ -601,14 +645,17 @@ static void draw_infopanel(void){
     us[0]='0'+(up/3600/10)%10; us[1]='0'+(up/3600)%10; us[2]=':';
     us[3]='0'+((up%3600)/60/10)%10; us[4]='0'+((up%3600)/60)%10; us[5]=':';
     us[6]='0'+((up%60)/10)%10; us[7]='0'+(up%60)%10; us[8]=0;
-    /* Separator line */
-    for(int x=0;x<D_COLS;x++) vga_putchar_at('-',x,INFO_SEP_Y,th->pat_kind?th->pat_fg:th->icon_bg,th->desk_bg);
-    /* Info row */
+    /* 0.9.5.1: a quiet strip, no dashed rule above it. */
+    for(int x=0;x<D_COLS;x++){
+        char c=' '; vga_color_t fg=th->desk_bg;
+        ui_pattern_at(x,INFO_SEP_Y,&c,&fg);
+        vga_putchar_at(c,x,INFO_SEP_Y,fg,th->desk_bg);
+    }
     for(int x=0;x<D_COLS;x++) vga_putchar_at(' ',x,INFO_Y,th->desk_bg,th->desk_bg);
-    vga_puts_at("RAM:",1,INFO_Y,th->desk_fg,th->desk_bg);
-    vga_puts_at(rb,5,INFO_Y,th->desk_fg,th->desk_bg);
-    vga_puts_at("Up:",11,INFO_Y,th->desk_fg,th->desk_bg);
-    vga_puts_at(us,14,INFO_Y,th->desk_fg,th->desk_bg);
+    vga_puts_at("RAM free",1,INFO_Y,th->desk_fg,th->desk_bg);
+    vga_puts_at(rb,10,INFO_Y,th->accent==th->desk_bg?th->desk_fg:th->accent,th->desk_bg);
+    vga_puts_at("up",17,INFO_Y,th->desk_fg,th->desk_bg);
+    vga_puts_at(us,20,INFO_Y,th->accent==th->desk_bg?th->desk_fg:th->accent,th->desk_bg);
     /* Right side hint, right-anchored so it lands correctly in any width.
        A live session says so here instead: someone who pins an app to the
        desktop and finds it gone after a reboot should have been told why
@@ -680,64 +727,45 @@ static int ctx_x=0, ctx_y=0, ctx_sel=0;
 static void draw_topmenu(void){
     theme_t *th=ui_theme();
     const char *uname=current_username();
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
 
-    /* Left panel background */
+    /* 0.9.5.1: a panel -- a header band with who you are, the rows,
+       no dashed borders. Same rows as before, so clicks still land. */
     for(int y=MENU_TOP;y<=MENU_BOT;y++)
         for(int x=0;x<MENU_W;x++)
             vga_putchar_at(' ',x,y,th->win_fg,th->win_bg);
 
-    /* Top border */
-    vga_putchar_at('.',0,MENU_TOP,th->accent,th->win_bg);
-    for(int x=1;x<MENU_W-1;x++) vga_putchar_at('-',x,MENU_TOP,th->accent,th->win_bg);
-    vga_putchar_at('.',MENU_W-1,MENU_TOP,th->accent,th->win_bg);
+    for(int x=0;x<MENU_W;x++) vga_putchar_at(' ',x,MENU_TOP,sf,sb);
+    vga_puts_at("Start",1,MENU_TOP,sf,sb);
+    vga_puts_at(uname,1,MENU_TOP+1,VGA_WHITE,th->win_bg);
+    vga_puts_at(current_user_admin()?"administrator":"standard user",1,MENU_TOP+2,VGA_DARK_GREY,th->win_bg);
 
-    /* User header */
-    vga_puts_at(uname,1,MENU_TOP+1,th->accent,th->win_bg);
-    if(current_user_admin())
-        vga_puts_at(".admin",1+(int)strlen(uname),MENU_TOP+1,th->bar_fg,th->win_bg);
-    vga_puts_at("Logged in",1,MENU_TOP+2,th->bar_fg,th->win_bg);
-
-    /* Separator after header */
-    for(int x=0;x<MENU_W;x++)
-        vga_putchar_at('-',x,MENU_TOP+3,th->icon_bg,th->win_bg);
-
-    /* Category rows */
     for(int i=0;i<NTOP;i++){
         int iy=MENU_ITEM_Y+i;
         int s=(i==top_sel);
-        vga_color_t bg=s?th->accent:th->win_bg;
-        vga_color_t fg=s?th->win_bg:th->win_fg;
-        vga_putchar_at(s?'>':' ',0,iy,fg,bg);
-        char row[MENU_W]; int j=0;
+        vga_color_t bg=s?sb:th->win_bg;
+        vga_color_t fg=s?sf:th->win_fg;
+        char row[MENU_W+1]; int j=0;
         const char *n=topmenu[i].name;
-        while(*n&&j<MENU_W-4) row[j++]=*n++;
-        while(j<MENU_W-4) row[j++]=' ';
+        row[j++]=' ';
+        while(*n&&j<MENU_W-2) row[j++]=*n++;
+        while(j<MENU_W) row[j++]=' ';
         row[j]=0;
-        vga_puts_at(row,1,iy,fg,bg);
-        vga_putchar_at('>',MENU_W-2,iy,s?th->win_bg:th->icon_bg,bg);
-        vga_putchar_at(' ',MENU_W-1,iy,fg,bg);
+        vga_puts_at(row,0,iy,fg,bg);
+        vga_putchar_at('>',MENU_W-2,iy,s?sf:VGA_DARK_GREY,bg);
     }
 
-    /* Separator before lock */
-    for(int x=0;x<MENU_W;x++)
-        vga_putchar_at('-',x,MENU_SEP_Y,th->icon_bg,th->win_bg);
-
-    /* Lock row */
     int ls=(menu_state==4);
-    vga_color_t lbg=ls?th->accent:th->win_bg;
-    vga_color_t lfg=ls?th->win_bg:th->win_fg;
-    vga_putchar_at(ls?'>':' ',0,MENU_LOCK_Y,lfg,lbg);
-    { char row[MENU_W]; int j=0;
-      const char *n="Lock";
-      while(*n&&j<MENU_W-2) row[j++]=*n++;
-      while(j<MENU_W-2) row[j++]=' ';
+    vga_color_t lbg=ls?sb:th->win_bg;
+    vga_color_t lfg=ls?sf:th->win_fg;
+    { char row[MENU_W+1]; int j=0;
+      const char *n=" Lock the screen";
+      while(*n&&j<MENU_W) row[j++]=*n++;
+      while(j<MENU_W) row[j++]=' ';
       row[j]=0;
-      vga_puts_at(row,1,MENU_LOCK_Y,lfg,lbg); }
+      vga_puts_at(row,0,MENU_LOCK_Y,lfg,lbg); }
 
-    /* Bottom border */
-    vga_putchar_at('.',0,MENU_BOT,th->accent,th->win_bg);
-    for(int x=1;x<MENU_W-1;x++) vga_putchar_at('-',x,MENU_BOT,th->accent,th->win_bg);
-    vga_putchar_at('.',MENU_W-1,MENU_BOT,th->accent,th->win_bg);
+    vga_puts_at(" ESC closes",0,MENU_BOT,VGA_DARK_GREY,th->win_bg);
 }
 
 static int sub_scroll=0;        /* first visible item index */
@@ -763,28 +791,22 @@ static void draw_submenu(void){
     if(sub_sel>=sub_scroll+SUB_VIS) sub_scroll=sub_sel-SUB_VIS+1;
     if(sub_scroll<0) sub_scroll=0;
 
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
     for(int y=SUB_TOP;y<=MENU_BOT;y++)
         for(int x=SUB_X;x<SUB_X+SUB_W;x++)
             vga_putchar_at(' ',x,y,th->win_fg,th->win_bg);
 
-    /* Top border */
-    vga_putchar_at('.',SUB_X,SUB_TOP,th->accent,th->win_bg);
-    for(int x=SUB_X+1;x<SUB_X+SUB_W-1;x++)
-        vga_putchar_at('-',x,SUB_TOP,th->accent,th->win_bg);
-    vga_putchar_at('.',SUB_X+SUB_W-1,SUB_TOP,th->accent,th->win_bg);
-
-    /* Category label, with a count so an empty Favorites reads as
-       empty rather than broken */
-    vga_puts_at(topmenu[top_sel].name,SUB_X+1,SUB_TOP+1,th->accent,th->win_bg);
+    /* 0.9.5.1: the category as a header band, its count on the right. */
+    for(int x=SUB_X;x<SUB_X+SUB_W;x++) vga_putchar_at(' ',x,SUB_TOP,sf,sb);
+    { const char *nm=topmenu[top_sel].name; while(*nm==' ') nm++;
+      vga_puts_at(nm,SUB_X+1,SUB_TOP,sf,sb); }
     { char cnt[8]; int v=sub_count,j=0;
       if(!v) cnt[j++]='0';
       else { char t[8]; int k=0; while(v){t[k++]=(char)('0'+v%10);v/=10;}
              while(k) cnt[j++]=t[--k]; }
       cnt[j]=0;
-      vga_puts_at(cnt,SUB_X+SUB_W-2-(int)strlen(cnt),SUB_TOP+1,
-                  th->bar_fg,th->win_bg); }
-    for(int x=SUB_X;x<SUB_X+SUB_W;x++)
-        vga_putchar_at('-',x,SUB_TOP+2,th->icon_bg,th->win_bg);
+      vga_puts_at(cnt,SUB_X+SUB_W-2-(int)strlen(cnt),SUB_TOP,sf,sb); }
+    vga_puts_at("D desktop  F favourite",SUB_X+2,SUB_TOP+1,VGA_DARK_GREY,th->win_bg);
 
     if(!sub_count){
         vga_puts_at("Nothing pinned yet.",SUB_X+2,SUB_ITEM_Y+1,
@@ -804,9 +826,9 @@ static void draw_submenu(void){
         int r=sub_items[idx];
         int iy=SUB_ITEM_Y+i;
         int s=(idx==sub_sel);
-        vga_color_t bg=s?th->accent:th->win_bg;
-        vga_color_t fg=s?th->win_bg:th->win_fg;
-        vga_putchar_at(s?'>':' ',SUB_X,iy,fg,bg);
+        vga_color_t bg=s?sb:th->win_bg;
+        vga_color_t fg=s?sf:th->win_fg;
+        vga_putchar_at(' ',SUB_X,iy,fg,bg);
         /* A leading space: the '>' cursor sits at SUB_X and the name began
            at SUB_X+1, so a selected row read ">Paint".  The left panel gets
            away without this only because its own labels are written with a
@@ -822,9 +844,9 @@ static void draw_submenu(void){
         int on_desk=pin_index(desk_ids,desk_n,appreg[r].id)>=0;
         int is_fav =pin_index(fav_ids,fav_n,appreg[r].id)>=0;
         vga_putchar_at(on_desk?'D':' ',SUB_X+SUB_W-4,iy,
-                       s?th->win_bg:th->accent,bg);
+                       s?sf:th->accent,bg);
         vga_putchar_at((is_fav&&topmenu[top_sel].kind!=TOP_FAV)?'F':' ',
-                       SUB_X+SUB_W-3,iy,s?th->win_bg:th->accent,bg);
+                       SUB_X+SUB_W-3,iy,s?sf:th->accent,bg);
         vga_putchar_at(' ',SUB_X+SUB_W-2,iy,fg,bg);
         vga_putchar_at(' ',SUB_X+SUB_W-1,iy,fg,bg);
     }
@@ -836,14 +858,9 @@ static void draw_submenu(void){
         vga_putchar_at('v',SUB_X+SUB_W-2,SUB_ITEM_Y+SUB_VIS-1,
                        th->accent,th->win_bg);
 
-    /* Bottom border, with the pin keys spelled out on it -- the only
-       place the user finds out D and F do anything */
-    vga_putchar_at('.',SUB_X,MENU_BOT,th->accent,th->win_bg);
-    for(int x=SUB_X+1;x<SUB_X+SUB_W-1;x++)
-        vga_putchar_at('-',x,MENU_BOT,th->accent,th->win_bg);
-    vga_putchar_at('.',SUB_X+SUB_W-1,MENU_BOT,th->accent,th->win_bg);
-    vga_puts_at(" D=desktop F=fav M=menu ",SUB_X+2,MENU_BOT,
-                th->bar_fg,th->win_bg);
+    /* The keys, on the bottom row -- the only place the user finds out
+       D, F and M do anything. */
+    vga_puts_at(" Enter open  D  F  M menu",SUB_X,MENU_BOT,VGA_DARK_GREY,th->win_bg);
 }
 
 /* ================================================================
@@ -895,7 +912,7 @@ static void ctx_build(int app){
     }
     ctx_labels[ctx_nitems]="Settings";
     ctx_action[ctx_nitems++]=CTXA_SETTINGS;
-    ctx_labels[ctx_nitems]="Display";
+    ctx_labels[ctx_nitems]="Next theme";
     ctx_action[ctx_nitems++]=CTXA_DISPLAY;
 }
 
@@ -946,32 +963,27 @@ static int ctx_menu_activate(int sel){
 static void draw_contextmenu(void){
     theme_t *th=ui_theme();
     int x=ctx_x, y=ctx_y;
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
 
-    /* Top border */
-    vga_putchar_at('.',x,y,th->accent,th->win_bg);
-    for(int i=1;i<CTXM_W-1;i++) vga_putchar_at('-',x+i,y,th->accent,th->win_bg);
-    vga_putchar_at('.',x+CTXM_W-1,y,th->accent,th->win_bg);
-
-    /* Items */
+    /* 0.9.5.1: a header band naming what was clicked, then the rows. */
+    for(int i=0;i<CTXM_W;i++) vga_putchar_at(' ',x+i,y,sf,sb);
+    {
+        const char *t = (ctx_app>=0 && ctx_app<NREG) ? appreg[ctx_app].name : "Desktop";
+        int j=0; while(t[j] && j<CTXM_W-2){ vga_putchar_at(t[j],x+1+j,y,sf,sb); j++; }
+    }
     for(int i=0;i<ctx_nitems;i++){
         int s=(i==ctx_sel);
-        vga_color_t bg=s?th->accent:th->win_bg;
-        vga_color_t fg=s?th->win_bg:th->win_fg;
-        vga_putchar_at('|',x,y+1+i,th->accent,th->win_bg);
-        vga_putchar_at(s?'>':' ',x+1,y+1+i,fg,bg);
-        char row[CTXM_W-3]; int j=0;
+        vga_color_t bg=s?sb:th->win_bg;
+        vga_color_t fg=s?sf:th->win_fg;
+        char row[CTXM_W+1]; int j=0;
         const char *n=ctx_labels[i];
-        while(*n&&j<CTXM_W-4) row[j++]=*n++;
-        while(j<CTXM_W-4) row[j++]=' ';
+        row[j++]=' ';
+        while(*n&&j<CTXM_W) row[j++]=*n++;
+        while(j<CTXM_W) row[j++]=' ';
         row[j]=0;
-        vga_puts_at(row,x+2,y+1+i,fg,bg);
-        vga_putchar_at('|',x+CTXM_W-1,y+1+i,th->accent,th->win_bg);
+        vga_puts_at(row,x,y+1+i,fg,bg);
     }
-
-    /* Bottom border */
-    vga_putchar_at('.',x,y+1+ctx_nitems,th->accent,th->win_bg);
-    for(int i=1;i<CTXM_W-1;i++) vga_putchar_at('-',x+i,y+1+ctx_nitems,th->accent,th->win_bg);
-    vga_putchar_at('.',x+CTXM_W-1,y+1+ctx_nitems,th->accent,th->win_bg);
+    for(int i=0;i<CTXM_W;i++) vga_putchar_at(' ',x+i,y+1+ctx_nitems,th->win_fg,th->win_bg);
 }
 
 static void full_draw(int icon_sel, int m_state, int t_sel, int s_sel){
@@ -1118,7 +1130,7 @@ static void app_calculator(void){
 
         /* History panel */
         vga_puts_at("History",17,4,VGA_LIGHT_CYAN,VGA_BLACK);
-        for(int x=17;x<64;x++) vga_putchar_at('-',x,5,VGA_DARK_GREY,VGA_BLACK);
+        for(int x=17;x<64;x++) vga_putchar_at(' ',x,5,VGA_DARK_GREY,VGA_BLACK);
         int show=calc_hist_count>10?10:calc_hist_count;
         for(int i=0;i<show;i++){
             int idx=calc_hist_count-show+i;
@@ -1136,7 +1148,7 @@ static void app_calculator(void){
             vga_puts_at("(no history yet)",17,8,VGA_DARK_GREY,VGA_BLACK);
 
         /* Divider */
-        for(int x=17;x<64;x++) vga_putchar_at('-',x,17,VGA_DARK_GREY,VGA_BLACK);
+        for(int x=17;x<64;x++) vga_putchar_at(' ',x,17,VGA_DARK_GREY,VGA_BLACK);
 
         /* Input line */
         vga_puts_at("Expression:",17,18,VGA_WHITE,VGA_BLACK);
@@ -1304,13 +1316,15 @@ static void ed_redraw(int cur_row, int cur_col, int scroll_row, int scroll_col)
     const int W  = vga_cols();
     const int SB = vga_rows() - 2;      /* status bar */
     const int HB = vga_rows() - 1;      /* hint bar   */
-    for(int x=0;x<W;x++) vga_putchar_at(' ',x,1,VGA_WHITE,VGA_BLUE);
-    vga_puts_at(" Notepad",0,1,VGA_WHITE,VGA_BLUE);
-    if(ed_filename[0]) vga_puts_at(ed_filename,12,1,VGA_YELLOW,VGA_BLUE);
-    else               vga_puts_at("[Untitled]",12,1,VGA_LIGHT_GREY,VGA_BLUE);
-    if(ed_dirty)       vga_putchar_at('*',11,1,VGA_LIGHT_RED,VGA_BLUE);
-    vga_puts_at(ed_insert?"[INS]":"[OVR]",W-7,1,VGA_LIGHT_CYAN,VGA_BLUE);
-    if(ed_sel_active)  vga_puts_at("[SEL]",W-13,1,VGA_YELLOW,VGA_BLUE);
+    /* 0.9.5.1: the file line is quiet text under the app bar, not a
+       second coloured bar. */
+    for(int x=0;x<W;x++) vga_putchar_at(' ',x,1,VGA_WHITE,VGA_BLACK);
+    vga_puts_at("File",1,1,VGA_DARK_GREY,VGA_BLACK);
+    if(ed_filename[0]) vga_puts_at(ed_filename,7,1,VGA_WHITE,VGA_BLACK);
+    else               vga_puts_at("untitled",7,1,VGA_LIGHT_GREY,VGA_BLACK);
+    if(ed_dirty)       vga_puts_at("modified",W-26,1,VGA_YELLOW,VGA_BLACK);
+    vga_puts_at(ed_insert?"insert":"overwrite",W-11,1,VGA_DARK_GREY,VGA_BLACK);
+    if(ed_sel_active)  vga_puts_at("selection",W-37,1,VGA_LIGHT_CYAN,VGA_BLACK);
 
     /* Content area */
     for(int vr=0;vr<ED_VROWS;vr++){
@@ -1560,7 +1574,7 @@ static void ed_save_prompt(void){
 /* ── Main editor loop ────────────────────────────────────── */
 static void app_texteditor_run(void){
     vga_clear();
-    ui_draw_taskbar("Notepad");
+    ui_draw_taskbar("Text Editor");
     int crow=0,ccol=0,srow=0,scol=0;
     ed_sel_active=0;
     ed_redraw(crow,ccol,srow,scol);
@@ -1779,9 +1793,7 @@ static const char *ed_launch_picker(int *want_new){
     if(ed_pick_count==0){ *want_new=1; return NULL; }
 
     vga_clear();
-    ui_draw_taskbar("Notepad");
-    vga_puts_at(" Notepad", 0, 1, VGA_WHITE, VGA_BLUE);
-    for(int x=8;x<vga_cols();x++) vga_putchar_at(' ',x,1,VGA_WHITE,VGA_BLUE);
+    ui_draw_taskbar("Text Editor");
 
     int sel=0; /* 0 = "New blank document", 1..N = files */
     int total = ed_pick_count+1;
@@ -1948,9 +1960,6 @@ static void fm_draw(int sel, int scroll){
     vga_puts_at("Name",                        5, 4, VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts_at("Type",                        34,4, VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts_at("Size",                        42,4, VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts_at("-------------------------------",5,5,VGA_DARK_GREY,VGA_BLACK);
-    vga_puts_at("----",                        34,5, VGA_DARK_GREY, VGA_BLACK);
-    vga_puts_at("--------",                    42,5, VGA_DARK_GREY, VGA_BLACK);
 
     /* Show ".." entry if not at root */
     int row_offset = 0;
@@ -2321,7 +2330,7 @@ static void app_todo(void){
 
         /* Column headers */
         vga_puts_at("  Done  Task                              Due            ",11,4,VGA_LIGHT_CYAN,VGA_BLACK);
-        for(int x=11;x<71;x++) vga_putchar_at('-',x,5,VGA_DARK_GREY,VGA_BLACK);
+        for(int x=11;x<71;x++) vga_putchar_at(' ',x,5,VGA_DARK_GREY,VGA_BLACK);
 
         for(int i=0;i<rem_count&&i<13;i++){
             reminder_t *r=&reminders[i];
@@ -2458,15 +2467,15 @@ static void app_snake(void){
             keyboard_waitchar();
         }
     }
-    /* Double-line border */
-    vga_putchar_at('.',21,2,VGA_GREEN,VGA_BLACK);
-    vga_putchar_at('.',21+GW+1,2,VGA_GREEN,VGA_BLACK);
-    vga_putchar_at('.',21,GH+3,VGA_GREEN,VGA_BLACK);
-    vga_putchar_at('.',21+GW+1,GH+3,VGA_GREEN,VGA_BLACK);
-    for(int x=1;x<=GW;x++){vga_putchar_at('-',21+x,2,VGA_GREEN,VGA_BLACK);vga_putchar_at('-',21+x,GH+3,VGA_GREEN,VGA_BLACK);}
-    for(int y=3;y<=GH+2;y++){vga_putchar_at('|',21,y,VGA_GREEN,VGA_BLACK);vga_putchar_at('|',21+GW+1,y,VGA_GREEN,VGA_BLACK);}
-    vga_puts_at("Arrows=move  Q=quit",22,1,VGA_DARK_GREY,VGA_BLACK);
-    vga_puts_at("Score: 0   ",50,1,VGA_WHITE,VGA_BLACK);
+    /* 0.9.5.1: a solid frame and solid cells, not '.', '-', 'o' and '@'. */
+    {
+        vga_color_t sf, sb; ui_sel_colors(&sf,&sb); (void)sf;
+        for(int x=0;x<=GW+1;x++){ vga_putchar_at(' ',21+x,2,sb,sb); vga_putchar_at(' ',21+x,GH+3,sb,sb); }
+        for(int y=3;y<=GH+2;y++){ vga_putchar_at(' ',21,y,sb,sb); vga_putchar_at(' ',21+GW+1,y,sb,sb); }
+    }
+    ui_kit_footer("Arrows steer   Q quit");
+    vga_puts_at("Score",44,1,VGA_DARK_GREY,VGA_BLACK);
+    vga_puts_at("0   ",50,1,VGA_WHITE,VGA_BLACK);
     /* High score display */
     vga_puts_at("Best: 0    ",2,4,VGA_YELLOW,VGA_BLACK);
     static int best_score=0;
@@ -2493,15 +2502,18 @@ static void app_snake(void){
             fx=(int)((get_ticks()*17)%GW);fy=(int)((get_ticks()*11)%GH);
         }
         for(int i=0;i<sl;i++)
-            vga_putchar_at(i?'o':'@',22+sx[i],3+sy[i],i?VGA_LIGHT_GREEN:VGA_WHITE,VGA_BLACK);
-        vga_putchar_at('*',22+fx,3+fy,VGA_RED,VGA_BLACK);
+            vga_putchar_at(i?' ':':',22+sx[i],3+sy[i],VGA_BLACK,i?VGA_GREEN:VGA_CYAN);
+        vga_putchar_at(' ',22+fx,3+fy,VGA_RED,VGA_RED);
         char sb[12]; utoa(sc,sb,10);
-        vga_puts_at(sb,57,1,VGA_YELLOW,VGA_BLACK);
+        vga_puts_at(sb,50,1,VGA_YELLOW,VGA_BLACK);
         char bs[12]; utoa(best_score,bs,10);
         vga_puts_at(bs,8,4,VGA_YELLOW,VGA_BLACK);
         } /* end frame */
     }
-    if(dead)vga_puts_at(" GAME OVER! Press any key ",24,10,VGA_WHITE,VGA_RED);
+    if(dead){
+        ui_kit_panel(26,9,28,4,"Game over");
+        vga_puts_at("Any key to close",32,11,VGA_LIGHT_GREY,VGA_BLACK);
+    }
     else vga_puts_at(" Press any key... ",24,10,VGA_DARK_GREY,VGA_BLACK);
     keyboard_waitchar();
 }
@@ -2560,7 +2572,7 @@ static void app_pipes(void){
 
    At 80x25 these expressions evaluate to 55 and 23, so the console
    every app was designed against is byte-for-byte unchanged. */
-#define NC_W    25
+#define NC_W    34
 #define NC_X    ((D_COLS > NC_W) ? (D_COLS - NC_W) : 0)
 #define NC_TOP   1
 #define NC_BOT  (TASKBAR_Y - 1)
@@ -2609,37 +2621,28 @@ static void notif_center(void){
     /* Mark all as read when center is opened */
     notif_unread = 0;
 
-    /* Draw panel */
+    /* 0.9.5.1: a panel with a header band, no dashed rules. */
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
     for(int y=NC_TOP;y<=NC_BOT;y++)
         for(int x=NC_X;x<NC_X+NC_W;x++)
             vga_putchar_at(' ',x,y,th->win_fg,th->win_bg);
+    for(int x=NC_X;x<NC_X+NC_W;x++) vga_putchar_at(' ',x,NC_TOP,sf,sb);
+    vga_puts_at("Notifications",NC_X+1,NC_TOP,sf,sb);
 
-    vga_putchar_at('.',NC_X,NC_TOP,th->accent,th->win_bg);
-    for(int x=NC_X+1;x<NC_X+NC_W-1;x++)
-        vga_putchar_at('-',x,NC_TOP,th->accent,th->win_bg);
-    vga_putchar_at('.',NC_X+NC_W-1,NC_TOP,th->accent,th->win_bg);
-
-    vga_puts_at(" Notifications  ",NC_X+1,NC_TOP+1,th->accent,th->win_bg);
-    for(int x=NC_X;x<NC_X+NC_W;x++)
-        vga_putchar_at('-',x,NC_TOP+2,th->icon_bg,th->win_bg);
-
-    int row=NC_TOP+3;
+    int row=NC_TOP+2;
     if(notif_count==0){
-        vga_puts_at(" No notifications",NC_X,row,th->icon_bg,th->win_bg);
+        vga_puts_at(" Nothing new",NC_X,row,VGA_DARK_GREY,th->win_bg);
     } else {
         for(int i=notif_count-1; i>=0&&row<NC_BOT-1; i--,row++){
-            vga_putchar_at('.',NC_X,row,th->accent,th->win_bg);
-            char line[24]; int j=0;
-            while(notif_msgs[i][j]&&j<NC_W-3){line[j]=notif_msgs[i][j];j++;}
-            while(j<NC_W-2) line[j++]=' ';
+            vga_putchar_at(' ',NC_X+1,row,sf,sb);
+            char line[NC_W]; int j=0;
+            while(notif_msgs[i][j]&&j<NC_W-4){line[j]=notif_msgs[i][j];j++;}
+            while(j<NC_W-4) line[j++]=' ';
             line[j]=0;
-            vga_puts_at(line,NC_X+1,row,th->win_fg,th->win_bg);
+            vga_puts_at(line,NC_X+3,row,th->win_fg,th->win_bg);
         }
     }
-
-    for(int x=NC_X;x<NC_X+NC_W;x++)
-        vga_putchar_at('-',x,NC_BOT-1,th->icon_bg,th->win_bg);
-    vga_puts_at(" Any key=Close ",NC_X+1,NC_BOT,th->icon_bg,th->win_bg);
+    vga_puts_at(" any key closes",NC_X,NC_BOT,VGA_DARK_GREY,th->win_bg);
 
     notif_unread=0;
 
@@ -2803,12 +2806,12 @@ static void app_bpkg(void){
                     tab==0?VGA_BLACK:VGA_LIGHT_GREY,tab==0?VGA_CYAN:VGA_BLACK);
         vga_puts_at(tab==1?" Installed ":"  Installed",18,4,
                     tab==1?VGA_BLACK:VGA_LIGHT_GREY,tab==1?VGA_CYAN:VGA_BLACK);
-        for(int x=6;x<75;x++) vga_putchar_at('-',x,5,VGA_DARK_GREY,VGA_BLACK);
+        for(int x=6;x<75;x++) vga_putchar_at(' ',x,5,VGA_DARK_GREY,VGA_BLACK);
 
         if(tab==0){
             /* Available packages */
             vga_puts_at("ID              Version  Size    Description",7,6,VGA_LIGHT_CYAN,VGA_BLACK);
-            for(int x=7;x<74;x++) vga_putchar_at('-',x,7,VGA_DARK_GREY,VGA_BLACK);
+            for(int x=7;x<74;x++) vga_putchar_at(' ',x,7,VGA_DARK_GREY,VGA_BLACK);
 
             for(int i=0;i<total&&i<12;i++){
                 int s=(i==sel);
@@ -2845,7 +2848,7 @@ static void app_bpkg(void){
             }
 
             /* Detail panel for selected */
-            for(int x=6;x<75;x++) vga_putchar_at('-',x,21,VGA_DARK_GREY,VGA_BLACK);
+            for(int x=6;x<75;x++) vga_putchar_at(' ',x,21,VGA_DARK_GREY,VGA_BLACK);
             vga_puts_at(bpkg_pkg_name(sel),7,22,VGA_WHITE,VGA_BLACK);
             vga_puts_at(bpkg_is_installed(bpkg_pkg_id(sel))
                         ?"  [installed]  I=Remove":"  [not installed]  I=Install",
@@ -2881,7 +2884,7 @@ static void app_bpkg(void){
             extern const char *bpkg_installed_id(int);
             int ic=bpkg_installed_count();
             vga_puts_at("Installed packages:",7,6,VGA_WHITE,VGA_BLACK);
-            for(int x=7;x<74;x++) vga_putchar_at('-',x,7,VGA_DARK_GREY,VGA_BLACK);
+            for(int x=7;x<74;x++) vga_putchar_at(' ',x,7,VGA_DARK_GREY,VGA_BLACK);
 
             if(!ic){
                 vga_puts_at("No packages installed.",7,10,VGA_DARK_GREY,VGA_BLACK);
@@ -3086,8 +3089,11 @@ static void desktop_app_surround(int vx, int vy, int vw, int vh,
     for(y = 0; y < ph; y++)
         for(x = 0; x < pw; x++){
             if(x >= vx && x < vx + vw && y >= vy && y < vy + vh) continue;
-            vga_putchar_at(' ', x, y, th->desk_bg, th->desk_bg);
+            char c=' '; vga_color_t pf=th->desk_bg;
+            ui_pattern_at(x,y,&c,&pf);          /* 0.9.5.1: the wallpaper */
+            vga_putchar_at(c, x, y, pf, th->desk_bg);
         }
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
 
     /* Shadow, one cell right and one row down, drawn BEFORE the frame
        so the frame's corners sit on top of it. */
@@ -3099,16 +3105,15 @@ static void desktop_app_surround(int vx, int vy, int vw, int vh,
             vga_putchar_at(' ', x, fy1 + 1, th->desk_bg, VGA_DARK_GREY);
 
     /* Side and bottom frame. */
+    /* 0.9.5.1: a solid edge in the selection colour, not '|' and '-'. */
     for(y = (tb >= 0 ? tb : vy); y <= fy1; y++){
         if(y < 0 || y >= ph) continue;
-        if(fx0 >= 0)  vga_putchar_at('|', fx0, y, th->accent, th->desk_bg);
-        if(fx1 < pw)  vga_putchar_at('|', fx1, y, th->accent, th->desk_bg);
+        if(fx0 >= 0)  vga_putchar_at(' ', fx0, y, sf, sb);
+        if(fx1 < pw)  vga_putchar_at(' ', fx1, y, sf, sb);
     }
     for(x = fx0; x <= fx1; x++)
         if(x >= 0 && x < pw && fy1 < ph)
-            vga_putchar_at('-', x, fy1, th->accent, th->desk_bg);
-    if(fx0 >= 0 && fy1 < ph) vga_putchar_at('+', fx0, fy1, th->accent, th->desk_bg);
-    if(fx1 < pw && fy1 < ph) vga_putchar_at('+', fx1, fy1, th->accent, th->desk_bg);
+            vga_putchar_at(' ', x, fy1, sf, sb);
 
     /* Title bar. If there is no row above the box -- a panel exactly
        25 rows tall, which vga_viewport_centre can still produce -- it
@@ -3119,12 +3124,12 @@ static void desktop_app_surround(int vx, int vy, int vw, int vh,
         int hx = fx1 - hl;
         for(x = fx0; x <= fx1; x++)
             if(x >= 0 && x < pw)
-                vga_putchar_at(' ', x, tb, th->bar_bg, th->accent);
+                vga_putchar_at(' ', x, tb, sf, sb);
         if(name && name[0] && fx0 + 2 < pw)
-            vga_puts_at(name, fx0 + 2, tb, th->bar_bg, th->accent);
+            vga_puts_at(name, fx0 + 2, tb, sf, sb);
         /* Only when it cannot collide with the name. */
         if(hx > fx0 + 3 + (name ? (int)strlen(name) : 0) && hx + hl <= fx1)
-            vga_puts_at(hint, hx, tb, th->bar_bg, th->accent);
+            vga_puts_at(hint, hx, tb, sf, sb);
     }
 }
 
@@ -3884,11 +3889,18 @@ static void app_pong(void){
     #define PAD_H 4
 
     vga_clear(); ui_draw_taskbar("Pong");
-    for(int x=PG_X1;x<=PG_X2;x++){
-        vga_putchar_at('-',x,PG_Y1,VGA_WHITE,VGA_BLACK);
-        vga_putchar_at('-',x,PG_Y2,VGA_WHITE,VGA_BLACK);
+    /* Row 1 holds only the score, so nothing else ever repaints it: write
+       it out in full, or the shell line it was opened from shows through. */
+    for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,1,VGA_BLACK,VGA_BLACK);
+    {   /* 0.9.5.1: solid walls, and the keys in a footer -- they used to be
+           printed over the title bar. */
+        vga_color_t sf, sb; ui_sel_colors(&sf,&sb); (void)sf;
+        for(int x=PG_X1;x<=PG_X2;x++){
+            vga_putchar_at(' ',x,PG_Y1,sb,sb);
+            vga_putchar_at(' ',x,PG_Y2,sb,sb);
+        }
     }
-    vga_puts_at("W/S=Left  Arrows=Right  Q=Quit  First to 7 wins",15,0,VGA_DARK_GREY,VGA_BLACK);
+    ui_kit_footer("W/S left paddle   Up/Down right paddle   Q quit   first to 7");
 
     int lpy=PG_Y1+PG_H/2-PAD_H/2;
     int rpy=PG_Y1+PG_H/2-PAD_H/2;
@@ -3949,11 +3961,11 @@ static void app_pong(void){
 
         /* Draw paddles */
         for(int i=0;i<PAD_H;i++){
-            vga_putchar_at('|',PG_X1+2,lpy+i,VGA_LIGHT_CYAN,VGA_BLACK);
-            vga_putchar_at('|',PG_X2-2,rpy+i,VGA_LIGHT_RED,VGA_BLACK);
+            vga_putchar_at(' ',PG_X1+2,lpy+i,VGA_CYAN,VGA_CYAN);
+            vga_putchar_at(' ',PG_X2-2,rpy+i,VGA_RED,VGA_RED);
         }
         ibx=bx/10; iby=by/10;
-        vga_putchar_at('o',ibx,iby,VGA_YELLOW,VGA_BLACK);
+        vga_putchar_at(' ',ibx,iby,VGA_LIGHT_GREY,VGA_LIGHT_GREY);
 
         /* Centre divider */
         for(int y=PG_Y1+1;y<PG_Y2;y+=2)
@@ -4066,127 +4078,23 @@ static void app_logviewer(void){
 }
 
 static void app_diskinfo(void){
-    vga_clear(); ui_draw_taskbar("Disk Info");
-    ui_draw_window(4,2,72,21,"Storage Information  -  HavenDOS " HAVENDOS_VER);
-    int y=4;
-    #define DROW(l,v,c) vga_puts_at(l,8,y,VGA_LIGHT_GREY,VGA_BLACK);vga_puts_at(v,30,y,c,VGA_BLACK);y++;
-    /* RAMFS */
-    DROW("Primary Storage:", "RAMFS (in-memory)", VGA_LIGHT_GREEN);
-    DROW("Max Files:",        "32 files",          VGA_WHITE);
-    DROW("Max File Size:",    "4 KB per file",     VGA_WHITE);
-    y++;
-    /* VirtIO disk */
-    int vready=virtio_blk_ready();
-    /* bus-label-ok: this row reports the VirtIO block DRIVER, gated on
-       virtio_blk_ready() -- it is not labelling a disk's bus. The panel
-       below it describes only VirtIO, which is its own gap; see the
-       handoff. */
-    DROW("VirtIO Block:",   vready?"Detected":"Not detected", vready?VGA_LIGHT_GREEN:VGA_DARK_GREY);
-    if(vready){
-        uint32_t secs=(uint32_t)virtio_blk_sectors();
-        uint32_t mb=secs/2048;
-        char szb[16]; char tmp[12]; utoa(mb,tmp,10); strncpy(szb,tmp,8); strncat(szb," MB",15);
-        DROW("Disk Size:",    szb,              VGA_WHITE);
-        DROW("Sector Size:",  "512 bytes",      VGA_WHITE);
-        char sec_s[16]; utoa(secs,sec_s,10);
-        DROW("Total Sectors:",sec_s,            VGA_DARK_GREY);
-        {   extern int vfs_using_fat32(void);
-            DROW("Filesystem:", vfs_using_fat32() ? "FAT32 (HavenDOS partition)"
-                                                  : "FAT16 (HavenDOS partition)",
-                 VGA_WHITE); }
-        /* bus-label-ok: inside if(vready), so VirtIO really is there. */
-        DROW("Interface:",    "VirtIO BLK (UTM SE)", VGA_LIGHT_CYAN);
-        DROW("PCI ID:",       "VID:1AF4 DID:1001",   VGA_DARK_GREY);
-    } else {
-        DROW("Disk Size:",    "---",            VGA_DARK_GREY);
-        DROW("Filesystem:",   "---",            VGA_DARK_GREY);
-        DROW("Note:",         "Attach VirtIO disk in UTM SE", VGA_YELLOW);
-    }
-    y++;
-    DROW("FAT12 (ATA):",  "Legacy fallback", VGA_DARK_GREY);
-    vga_puts_at("Any key...",60,22,VGA_DARK_GREY,VGA_BLACK);
-    keyboard_waitchar();
-    #undef DROW
+    /* 0.9.5.1: this was its own screen, and a stale one (the disk page
+       still said RAMFS and "attach a VirtIO disk in UTM SE"). The
+       unified app has the same information, current. */
+    { extern void app_system_open(const char*); app_system_open("storage"); }
 }
 
 static void app_netinfo(void){
-    vga_clear(); ui_draw_taskbar("Network Info");
-    ui_draw_window(4,2,72,21,"Network Information  -  HavenDOS " HAVENDOS_VER);
-    int y=4;
-    #define NROW(l,v,c) vga_puts_at(l,8,y,VGA_LIGHT_GREY,VGA_BLACK);vga_puts_at(v,30,y,c,VGA_BLACK);y++;
-    /* Live NIC status */
-    int ready=net_ready();
-    NROW("NIC Status:",  ready?"Online":"Offline", ready?VGA_LIGHT_GREEN:VGA_LIGHT_RED);
-    if(ready){
-        char ip_s[20]; ip_to_str(net_get_ip(),ip_s);
-        char gw_s[20]; ip_to_str(net_get_gw(),gw_s);
-        char ms_s[20]; ip_to_str(net_get_mask(),ms_s);
-        char dns_s[20]; ip_to_str(net_get_dns(),dns_s);
-        uint8_t mac[6]; net_get_mac(mac);
-        char mac_s[20];
-        char *mp=mac_s;
-        for(int i=0;i<6;i++){
-            char h[3]; h[0]="0123456789ABCDEF"[mac[i]>>4]; h[1]="0123456789ABCDEF"[mac[i]&0xF]; h[2]=0;
-            *mp++=h[0]; *mp++=h[1]; if(i<5)*mp++=':';
-        }
-        *mp=0;
-        NROW("IP Address:", ip_s,  VGA_WHITE);
-        NROW("Subnet Mask:",ms_s,  VGA_WHITE);
-        NROW("Gateway:",    gw_s,  VGA_WHITE);
-        NROW("DNS Server:", dns_s, VGA_WHITE);
-        NROW("MAC Address:",mac_s, VGA_LIGHT_CYAN);
-    } else {
-        NROW("IP Address:", "---",           VGA_DARK_GREY);
-        NROW("Subnet:",     "---",           VGA_DARK_GREY);
-        NROW("Gateway:",    "---",           VGA_DARK_GREY);
-        NROW("DNS Server:", "---",           VGA_DARK_GREY);
-        NROW("MAC Address:","---",           VGA_DARK_GREY);
-    }
-    y++;
-    NROW("TCP/IP Stack:", "Active (" HAVENDOS_VER ")",     VGA_LIGHT_GREEN);
-    NROW("Protocols:",    "ARP ICMP UDP TCP DNS", VGA_WHITE);
-    NROW("HTTP/HTTPS:",   "wget curl (TLS 1.2)", VGA_WHITE);
-    NROW("BOOT Chat:",    "TCP:7700 (stub)",      VGA_YELLOW);
-    vga_puts_at("Any key...",60,22,VGA_DARK_GREY,VGA_BLACK);
-    keyboard_waitchar();
-    #undef NROW
+    /* 0.9.5.1: this was its own screen, and a stale one (the disk page
+       still said RAMFS and "attach a VirtIO disk in UTM SE"). The
+       unified app has the same information, current. */
+    { extern void app_system_open(const char*); app_system_open("network"); }
 }
 
 static void app_usermanager(void){
-    vga_clear(); ui_draw_taskbar("User Manager");
-    ui_draw_window(5,2,70,20,"User Manager");
-    vga_puts_at("Username",        8,4,VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts_at("Role",           30,4,VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts_at("Status",         44,4,VGA_LIGHT_CYAN,VGA_BLACK);
-    for(int i=0;i<68;i++) vga_putchar_at('-',6+i,5,VGA_DARK_GREY,VGA_BLACK);
-    for(int i=0;i<get_user_count()&&i<14;i++){
-        const char *un=get_username(i);
-        int isme=(strcmp(un,current_username())==0);
-        vga_puts_at(un,8,6+i,isme?VGA_LIGHT_GREEN:VGA_WHITE,VGA_BLACK);
-        vga_puts_at(get_user_admin(i)?"Admin":"User",30,6+i,
-            get_user_admin(i)?VGA_YELLOW:VGA_LIGHT_GREY,VGA_BLACK);
-        vga_puts_at(isme?"[current]":"",44,6+i,VGA_CYAN,VGA_BLACK);
-    }
-    if(current_user_admin())
-        vga_puts_at("A=Add  D=Delete  ESC=Back",8,21,VGA_DARK_GREY,VGA_BLACK);
-    else
-        vga_puts_at("ESC=Back",8,21,VGA_DARK_GREY,VGA_BLACK);
-
-    int c=keyboard_waitchar();
-    if((c=='a'||c=='A')&&current_user_admin()){
-        char nu[16]="",np[16]="";
-        vga_puts_at("New username: ",8,22,VGA_WHITE,VGA_BLACK);
-        int pi=0; vga_set_cursor(22,22);
-        while(1){int c2=keyboard_waitchar();if(c2=='\n'||c2=='\r')break;
-            if((c2=='\b'||c2==127)&&pi>0){pi--;nu[pi]=0;vga_putchar('\b');}
-            else if(c2>=32&&c2<127&&pi<14){nu[pi++]=c2;nu[pi]=0;vga_putchar(c2);}
-        }
-        vga_puts_at("Password:     ",8,22,VGA_WHITE,VGA_BLACK);
-        pi=0; vga_set_cursor(22,22);
-        while(1){int c2=keyboard_waitchar();if(c2=='\n'||c2=='\r')break;
-            if((c2=='\b'||c2==127)&&pi>0){pi--;np[pi]=0;vga_putchar('\b');}
-            else if(c2>=32&&c2<127&&pi<14){np[pi++]=c2;np[pi]=0;vga_putchar('*');}
-        }
-        if(nu[0]&&np[0]) add_user(nu,np,0);
-    }
+    /* 0.9.5.1: this was its own screen, and a stale one (the disk page
+       still said RAMFS and "attach a VirtIO disk in UTM SE"). The
+       unified app has the same information, current. */
+    { extern void settings_open(const char*); settings_open("accounts"); }
 }
+

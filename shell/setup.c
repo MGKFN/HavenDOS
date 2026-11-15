@@ -60,13 +60,13 @@ static void hdr(const char *title, int step){
     int shown = step + 3;
     char sb[16]; sb[0]='S';sb[1]='t';sb[2]='e';sb[3]='p';sb[4]=' ';
     sb[5]='0'+shown; sb[6]=' ';sb[7]='o';sb[8]='f';sb[9]=' ';sb[10]='7';sb[11]=0;
-    vga_puts_at(sb,68,0,VGA_DARK_GREY,VGA_CYAN);
-    for(int x=0;x<80;x++) vga_putchar_at('-',x,1,VGA_DARK_GREY,VGA_BLACK);
+    vga_puts_at(sb,68,0,VGA_BLACK,VGA_CYAN);
+    for(int x=0;x<80;x++) vga_putchar_at(' ',x,1,VGA_DARK_GREY,VGA_BLACK);
     /* Step progress bar */
     int filled=shown*76/7;
     for(int x=0;x<76;x++)
-        vga_putchar_at(x<filled?'=':'.',x+2,1,
-                       x<filled?VGA_LIGHT_GREEN:VGA_DARK_GREY,VGA_BLACK);
+        vga_putchar_at(x<filled?' ':'.',x+2,1,
+                       VGA_DARK_GREY,x<filled?VGA_GREEN:VGA_BLACK);
 }
 static void read_str_setup(char *buf, int max, int x, int y){
     int pos=0; buf[0]=0;
@@ -115,7 +115,7 @@ static void screen_welcome(void){
     vga_puts_at("Welcome to HavenDOS " HAVENDOS_VER,20,5,VGA_LIGHT_CYAN,VGA_BLACK);
     vga_puts_at("TechHaven Studios",30,6,VGA_DARK_GREY,VGA_BLACK);
 
-    for(int x=10;x<70;x++) vga_putchar_at('-',x,8,VGA_DARK_GREY,VGA_BLACK);
+    for(int x=10;x<70;x++) vga_putchar_at(' ',x,8,VGA_DARK_GREY,VGA_BLACK);
 
     vga_puts_at("This setup wizard will help you configure your",14,10,VGA_LIGHT_GREY,VGA_BLACK);
     vga_puts_at("HavenDOS installation. It only runs once.",17,11,VGA_LIGHT_GREY,VGA_BLACK);
@@ -125,7 +125,7 @@ static void screen_welcome(void){
     vga_puts_at(". Desktop theme",22,16,VGA_LIGHT_GREY,VGA_BLACK);
     vga_puts_at(". System add-ons",22,17,VGA_LIGHT_GREY,VGA_BLACK);
 
-    for(int x=10;x<70;x++) vga_putchar_at('-',x,20,VGA_DARK_GREY,VGA_BLACK);
+    for(int x=10;x<70;x++) vga_putchar_at(' ',x,20,VGA_DARK_GREY,VGA_BLACK);
 
     /* Language note */
     vga_puts_at("Language: English (other languages coming soon)",14,22,VGA_DARK_GREY,VGA_BLACK);
@@ -143,7 +143,7 @@ static int screen_account(char *out_name, char *out_pass, int *out_admin){
 
         vga_puts_at("Create your user account",26,4,VGA_LIGHT_CYAN,VGA_BLACK);
         vga_puts_at("This will be your main account on HavenDOS.",17,5,VGA_DARK_GREY,VGA_BLACK);
-        for(int x=10;x<70;x++) vga_putchar_at('-',x,7,VGA_DARK_GREY,VGA_BLACK);
+        for(int x=10;x<70;x++) vga_putchar_at(' ',x,7,VGA_DARK_GREY,VGA_BLACK);
 
         vga_puts_at("Username  (3-15 characters):",14,9,VGA_WHITE,VGA_BLACK);
         vga_puts_at("Password  (leave blank = no password):",14,12,VGA_WHITE,VGA_BLACK);
@@ -205,7 +205,7 @@ static int screen_theme(void){
         cls(); hdr("Choose Theme",2);
         vga_puts_at("Choose your desktop theme",26,4,VGA_LIGHT_CYAN,VGA_BLACK);
         vga_puts_at("You can change this later in Settings.",20,5,VGA_DARK_GREY,VGA_BLACK);
-        for(int x=10;x<70;x++) vga_putchar_at('-',x,7,VGA_DARK_GREY,VGA_BLACK);
+        for(int x=10;x<70;x++) vga_putchar_at(' ',x,7,VGA_DARK_GREY,VGA_BLACK);
 
         /* Theme list with live preview swatch */
         for(int i=0;i<tc;i++){
@@ -298,7 +298,7 @@ static void screen_addons(void){
 
         vga_puts_at("Choose packages to install",26,3,VGA_LIGHT_CYAN,VGA_BLACK);
         vga_puts_at("All selected packages will be installed when setup finishes.",10,4,VGA_DARK_GREY,VGA_BLACK);
-        for(int x=4;x<76;x++) vga_putchar_at('-',x,5,VGA_DARK_GREY,VGA_BLACK);
+        for(int x=4;x<76;x++) vga_putchar_at(' ',x,5,VGA_DARK_GREY,VGA_BLACK);
 
         /* Column headers */
         vga_puts_at(" ",5,6,VGA_DARK_GREY,VGA_BLACK);
@@ -367,7 +367,7 @@ static void screen_summary(const char *uname, int is_admin, int theme_sel){
     cls(); hdr("Ready",4);
 
     vga_puts_at("Setup complete. Here is your configuration:",17,4,VGA_LIGHT_CYAN,VGA_BLACK);
-    for(int x=10;x<70;x++) vga_putchar_at('-',x,6,VGA_DARK_GREY,VGA_BLACK);
+    for(int x=10;x<70;x++) vga_putchar_at(' ',x,6,VGA_DARK_GREY,VGA_BLACK);
 
     vga_puts_at("Username:   ",16,8, VGA_LIGHT_GREY,VGA_BLACK);
     vga_puts_at(uname,        28,8, VGA_WHITE,VGA_BLACK);
@@ -392,7 +392,7 @@ static void screen_summary(const char *uname, int is_admin, int theme_sel){
     vga_puts_at("Default accounts (admin-bootos-guest):",16,12,VGA_LIGHT_GREY,VGA_BLACK);
     vga_puts_at("Hidden (see Settings)",55,12,VGA_DARK_GREY,VGA_BLACK);
 
-    for(int x=10;x<70;x++) vga_putchar_at('-',x,14,VGA_DARK_GREY,VGA_BLACK);
+    for(int x=10;x<70;x++) vga_putchar_at(' ',x,14,VGA_DARK_GREY,VGA_BLACK);
 
     vga_puts_at("You can change all of these in the Settings app.",15,16,VGA_DARK_GREY,VGA_BLACK);
     vga_puts_at("Your login password is required at each boot.",16,17,VGA_DARK_GREY,VGA_BLACK);

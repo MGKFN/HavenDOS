@@ -77,8 +77,11 @@ static void toast_draw(void){
 }
 
 static void toast_blank(void){
-    theme_t *th = ui_theme();   /* blank in current theme background colour */
-    for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,TOAST_ROW,th->desk_fg,th->desk_bg);
+    /* 0.9.5.1: black, not the desktop colour. A toast that expired while
+       the shell was up left a stripe of desktop blue across the shell. The
+       desktop repaints the row itself (toast_tick_expired), so it loses
+       nothing. */
+    for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,TOAST_ROW,VGA_LIGHT_GREY,VGA_BLACK);
     extern void vga_flush(void);
     vga_flush();
 }

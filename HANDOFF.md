@@ -1,7 +1,93 @@
-# HavenDOS — handoff, 14 November 2026
+# HavenDOS — handoff, 15 November 2026
 
-Current release: **v0.9.5** (channel Beta, codename "Hephaestus"). Paste
+Current release: **v0.9.5.1** (channel Beta, codename "Hephaestus"). Paste
 this file into a new chat to pick up where this left off.
+
+## START HERE: 0.9.5.1 — THE MODERN LOOK EVERYWHERE, NEW GAMES AND APPS
+
+Kyan (15 Nov) liked 0.9.5's Settings and System look and asked for it on
+every app and screen, including login, setup and the installer, plus new
+games and apps. Done. **NEXT is still 0.9.6 multitasking** (below).
+
+- **The look is a set of rules plus helpers in `shell/ui.c`**, with
+  prototypes in `include/theme.h`. The rules are in the comment block
+  above the helpers. Follow them for every new screen:
+  - **No dashed boxes.** Use `ui_kit_panel(x,y,w,h,title)`: a filled
+    title band over a plain body. `ui_draw_window()` now just calls it.
+  - **Top bar:** `ui_draw_taskbar(title)` puts the name on the left,
+    "ESC close" at W-17 and the clock at W-6. Keep app stats left of
+    col ~56.
+  - **Selection:** `ui_sel_colors(&fg,&bg)` gives accent&7 as the
+    background, with black or white text. Never use a background in
+    8-15, because those blink.
+  - **Keys:** `ui_kit_footer(keys)` and `ui_kit_footer_at(y,keys)` draw
+    a DARK_GREY strip.
+  - **Full-screen apps:** `ui_kit_begin(title,keys)` draws the bar,
+    clears the body and draws the footer.
+  - **Building blocks:** `ui_kit_heading`, `ui_kit_kv`, `ui_kit_row`,
+    `ui_kit_cell` and `ui_kit_bar`.
+- **Desktop (`shell/desktop.c`):**
+  - The bars are redesigned: date top right; start pill, user and role,
+    alerts pill and clock along the bottom.
+  - Icons are solid tiles, coloured per category by `catcol[]`.
+  - The start menu, submenus, the context menu and the notification
+    centre were restyled.
+  - `desktop_open_by_name()` matches an id, or a name prefix ignoring
+    case.
+  - Disk Info, Network Info and User Manager now redirect to
+    `app_system_open("storage")`, `app_system_open("network")` and
+    `settings_open("accounts")`.
+- **New games, in `shell/games2.c`:** `app_2048`, `app_breakout`,
+  `app_tictactoe` (easy by default; D switches to perfect minimax) and
+  `app_memory`.
+- **New apps, in `shell/apps2.c`:**
+  - `app_stopwatch`, with a timer mode;
+  - `app_convert`, which uses `udiv64()`/`sdiv64()` because the kernel
+    has no libgcc;
+  - `app_notes`, saved to `HOME/<user>/NOTES.TXT`.
+- **Registry and shell:** the new ids are in the desktop registry, in
+  `shell_cmds[]` and in `cmddb.c`.
+  - The shell runs the new commands through `desktop_open_app()`.
+  - `open` lists the app ids; `open <id|name>` opens one.
+- **Restyled, dashed rules removed:**
+  - Tetris (solid pieces, ghost, sidebar panel), Snake and Pong;
+  - Paint, Music, Quiz and Calendar (`packages.c`, `pk_bar`);
+  - the apps in `apps_extra.c`;
+  - Legal, the boot splash, setup, the ISO installer and login;
+  - the shell's welcome and `ls`.
+- **Tests:**
+  - New `test_games2`, 33 checks, floor 33.
+  - `test_chrome` rewritten, floor 42 raised to 58.
+  - `test_accounts` gained stubs for what `login.c` now calls
+    (`ui_sel_colors`, `vfs_using_disk`, `netdev_count`, `vga_clear`).
+  - **`make test`: 7013/7013 across 67 suites.**
+- **Screenshots:**
+  - HavenDOS-0.9.5.1-screenshots.zip holds the new set and the 0.9.5 set
+    in `0.9.5/`.
+  - The driver scripts were in `/home/claude/promo` and are not in the
+    repo.
+- **Fixes found while taking the screenshots:**
+  - `toast_blank()` blanks to black, not `desk_bg`. An expired toast left
+    a blue stripe across the shell.
+  - `shell_run()` clears the screen before the motd.
+  - Pong blanks row 1, so the shell line no longer shows through.
+  - The notification drawer `NC_W` went from 25 to 34.
+  - `login_welcome()` reports the disk (`vfs_using_disk`) and network
+    adapters (`netdev_count`) without naming a bus, and centres on any
+    size.
+  - Settings > About fits 80 columns, and its preview window draws the
+    new way.
+  - Legal uses `ui_kit_begin` and a panel.
+- **Still open:**
+  - The "Welcome to HavenDOS / Create new account" chooser
+    (`first_boot_creator`) shows on every boot while `login_done` is
+    unset, even after setup made an account. This was already true
+    before 0.9.5.1.
+  - BOOT Chat closes at once with no server.
+  - The fortune in the shell welcome wraps mid-word.
+- Not proved on the HP. These are all text-mode changes, so the
+  framebuffer console should render them like QEMU does, but Kyan hasn't
+  seen them on the laptop yet.
 
 ## START HERE: 0.9.5 "HEPHAESTUS" — THE APPS, REBUILT
 

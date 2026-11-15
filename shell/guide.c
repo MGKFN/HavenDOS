@@ -75,6 +75,8 @@ static const char *const pages[] = {
 "> Text Editor\tCtrl+S saves, Ctrl+Q quits\n"
 "> HavenCode\tthe editor for the H language (page 5)\n"
 "> Manual\tevery command, browsable\n"
+"> Notes / Stopwatch\tnew in 0.9.5.1, with Converter\n"
+"> 2048 / Breakout\tnew games, with Tic-Tac-Toe and Memory\n"
 "\n"
 "Apps written for an 80x25 screen open in a centred box on a bigger one; "
 "System, Settings and the shell use the whole screen.\n",

@@ -50,12 +50,13 @@ static void centre(const char *s, int y, vga_color_t fg){
 void boot_splash(void){
     cls();
     int mid = vga_rows()/2;
-    centre("------------------------------------------", mid-3, VGA_DARK_GREY);
+    /* 0.9.5.1: solid bars, not dashed rules. */
+    { int x0=(vga_cols()-42)/2; for(int i=0;i<42;i++) vga_putchar_at(' ',x0+i,mid-3,VGA_CYAN,VGA_CYAN); }
     centre(HAVENDOS_NAME,   mid-1, VGA_LIGHT_CYAN);
     centre(HAVENDOS_VER " " HAVENDOS_CHANNEL, mid, VGA_WHITE);
     centre("\"" HAVENDOS_CODENAME "\"", mid+1, VGA_DARK_GREY);
     centre(HAVENDOS_VENDOR, mid+2, VGA_DARK_GREY);
-    centre("------------------------------------------", mid+4, VGA_DARK_GREY);
+    { int x0=(vga_cols()-42)/2; for(int i=0;i<42;i++) vga_putchar_at(' ',x0+i,mid+4,VGA_BLUE,VGA_BLUE); }
     vga_flush();
 
     /* 600 ms, in 20 ms steps so a keypress cuts it short.  The old screens

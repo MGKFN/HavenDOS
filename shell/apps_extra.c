@@ -58,9 +58,7 @@ extern int  ui_current_theme(void);
    --------------------------------------------------------------- */
 static void appx_pause(void)
 {
-    int y = vga_rows() - 1;
-    vga_puts_at("  Press any key to return to the desktop",
-                0, y, VGA_DARK_GREY, VGA_BLACK);
+    ui_kit_footer("Any key returns to the desktop");
     vga_flush();
     keyboard_waitchar();
 }
@@ -85,10 +83,11 @@ static int appx_ask(const char *title, const char *hint, char *out, int outsz)
     out[0] = 0;
     while (1) {
         /* input field */
+        vga_color_t sf, sb; ui_sel_colors(&sf, &sb);
         for (int i = 0; i < w - 4; i++)
-            vga_putchar_at(' ', x + 2 + i, y + 4, th->win_fg, th->icon_bg);
-        vga_puts_at(out, x + 2, y + 4, th->win_fg, th->icon_bg);
-        vga_putchar_at('_', x + 2 + n, y + 4, th->accent, th->icon_bg);
+            vga_putchar_at(' ', x + 2 + i, y + 4, sf, sb);
+        vga_puts_at(out, x + 2, y + 4, sf, sb);
+        vga_putchar_at('_', x + 2 + n, y + 4, sf, sb);
         vga_flush();
 
         int c = keyboard_waitchar();
@@ -151,7 +150,8 @@ void appx_ascii_art(void)
 void appx_pci(void)
 {
     vga_clear();
-    vga_set_cursor(0, 0);
+    ui_draw_taskbar("PCI Devices");      /* 0.9.5.1: the same bar as every app */
+    vga_set_cursor(0, 2);
     cmd_lspci("-v");
     appx_pause();
 }
@@ -159,7 +159,9 @@ void appx_pci(void)
 void appx_usb(void)
 {
     vga_clear();
-    vga_set_cursor(0, 0);
+    /* bus-label-ok: the title of the USB device list, not a disk label */
+    ui_draw_taskbar("USB Devices");      /* 0.9.5.1: the same bar as every app */
+    vga_set_cursor(0, 2);
     cmd_usb("-v");
     appx_pause();
 }
@@ -167,7 +169,8 @@ void appx_usb(void)
 void appx_bootlog(void)
 {
     vga_clear();
-    vga_set_cursor(0, 0);
+    ui_draw_taskbar("Boot Log");      /* 0.9.5.1: the same bar as every app */
+    vga_set_cursor(0, 2);
     cmd_dmesg_pager();          /* the shell's own pager, not a copy */
     appx_pause();
 }
@@ -175,7 +178,8 @@ void appx_bootlog(void)
 void appx_selftest(void)
 {
     vga_clear();
-    vga_set_cursor(0, 0);
+    ui_draw_taskbar("Self Test");      /* 0.9.5.1: the same bar as every app */
+    vga_set_cursor(0, 2);
     cmd_selftest_v6("");
     appx_pause();
 }
@@ -183,7 +187,8 @@ void appx_selftest(void)
 void appx_neofetch(void)
 {
     vga_clear();
-    vga_set_cursor(0, 0);
+    ui_draw_taskbar("Neofetch");      /* 0.9.5.1: the same bar as every app */
+    vga_set_cursor(0, 2);
     cmd_neofetch_v2();
     appx_pause();
 }
@@ -214,12 +219,14 @@ void appx_manual(void)
 
 void appx_legal(void)
 {
-    vga_clear();
-    vga_set_color(VGA_WHITE, VGA_BLACK);
-    vga_puts_at("Legal", 36, 10, VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts_at("1. Terms of Service", 31, 12, VGA_WHITE, VGA_BLACK);
-    vga_puts_at("2. Privacy Policy",   31, 13, VGA_WHITE, VGA_BLACK);
-    vga_puts_at("ESC. Back",           31, 15, VGA_DARK_GREY, VGA_BLACK);
+    /* 0.9.5.1: the standard bar, a panel and a footer. */
+    ui_kit_begin("Terms and Privacy", "1 terms   2 privacy   ESC back");
+    int px=(vga_cols()-40)/2; if(px<0) px=0;
+    ui_kit_panel(px, 6, 40, 9, "Legal");
+    vga_color_t wb = ui_theme()->win_bg;
+    vga_puts_at("1  Terms of Service", px+3, 9,  VGA_WHITE, wb);
+    vga_puts_at("2  Privacy Policy",   px+3, 11, VGA_WHITE, wb);
+    vga_puts_at("Both are also shown during setup.", px+3, 13, VGA_DARK_GREY, wb);
     vga_flush();
     int c = keyboard_waitchar();
     if (c == '1') legal_show_tos();

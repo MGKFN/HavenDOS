@@ -37,6 +37,17 @@ void ui_draw_taskbar(const char *title);
 void ui_draw_desktop_bars(void);
 void ui_draw_desktop(void);
 void ui_draw_window(int x, int y, int w, int h, const char *title);
+/* v0.9.5.1: the shared look (shell/ui.c, "THE 0.9.5.1 LOOK"). */
+void ui_sel_colors(vga_color_t *fg, vga_color_t *bg);
+void ui_kit_begin(const char *title, const char *keys);
+void ui_kit_footer(const char *keys);
+void ui_kit_footer_at(int y, const char *keys);
+void ui_kit_panel(int x,int y,int w,int h,const char *title);
+void ui_kit_heading(int x,int y,const char *s);
+void ui_kit_kv(int x,int y,int vx,const char *label,const char *value);
+void ui_kit_row(int x,int y,int w,int sel,const char *text);
+void ui_kit_cell(int x,int y,vga_color_t c);
+void ui_kit_bar(int x,int y,int w,int filled,vga_color_t c);
 void ui_draw_cursor(void);
 void ui_erase_cursor(void);
 void ui_draw_corner_clock(void);

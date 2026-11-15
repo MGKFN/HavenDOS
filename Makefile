@@ -28,7 +28,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
-          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/mines.c shell/mines_model.c shell/neofetch.c
+          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/mines.c shell/mines_model.c shell/neofetch.c
 
 SRCS_S  = boot/boot.S
 OBJS_C  = $(SRCS_C:.c=.o)
@@ -319,7 +319,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	  python3 tools/run_suite.py --name test_pmm --min 17 -- /tmp/hd_tp
 	@echo "── test_chrome ────────────────────────────"
 	@$(TESTCC) -o /tmp/hd_tc tests/test_chrome.c && \
-	  python3 tools/run_suite.py --name test_chrome --min 42 -- /tmp/hd_tc
+	  python3 tools/run_suite.py --name test_chrome --min 58 -- /tmp/hd_tc
 	@echo "── test_chat22 ────────────────────────────"
 	@$(TESTCC) -Iinclude -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tch tests/test_chat22.c && \
@@ -370,6 +370,11 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -Iinclude -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tcdb tests/test_cmddb.c && \
 	  python3 tools/run_suite.py --name test_cmddb --min 22 -- /tmp/hd_tcdb
+	@echo "── test_games2 ────────────────────────────"
+	@echo "  2048, Tic-Tac-Toe, the converter and the stopwatch, by arithmetic"
+	@$(TESTCC) -Iinclude -Wno-builtin-declaration-mismatch \
+	           -o /tmp/hd_tg2 tests/test_games2.c && \
+	  python3 tools/run_suite.py --name test_games2 --min 33 -- /tmp/hd_tg2
 	@echo "── test_tiles ─────────────────────────────"
 	@$(TESTCC) -o /tmp/hd_tti tests/test_tiles.c && \
 	  python3 tools/run_suite.py --name test_tiles --min 64 -- /tmp/hd_tti

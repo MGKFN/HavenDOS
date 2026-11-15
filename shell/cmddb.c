@@ -537,6 +537,17 @@ const cmddoc_t cmddb[] = {
       "system network\tthe network tab",
       "neofetch mem disk ifconfig" },
 
+    { "open", NULL, CDB_SYSTEM,
+      "open\nopen <app>",
+      "Open a desktop app from the shell",
+      "Opens any app from the start menu by its id or by the start of its "
+      "name, and comes back to the shell when it closes. With nothing after "
+      "it, lists every app and its id.",
+      "open calc\tthe Calculator\n"
+      "open text editor\tby name\n"
+      "open 2048\ta game",
+      "system settings" },
+
     { "settings", NULL, CDB_SYSTEM,
       "settings [section]",
       "The Settings app",
@@ -1177,6 +1188,69 @@ const cmddoc_t cmddb[] = {
       "any network; it is a screensaver with a plot.",
       NULL,
       "matrix" },
+
+    { "2048", NULL, CDB_APPS,
+      "2048",
+      "Slide and merge tiles to reach 2048",
+      "Arrow keys slide every tile on the board; two tiles with the same "
+      "number merge into one with their sum. Reach 2048 to win, and keep "
+      "going if you like. R starts a new game, Q quits.",
+      NULL,
+      "breakout memory" },
+
+    { "breakout", NULL, CDB_APPS,
+      "breakout",
+      "Knock out a wall of bricks",
+      "Space launches the ball; Left and Right move the paddle. Where the "
+      "ball hits the paddle decides its angle. Three lives; a cleared wall "
+      "comes back faster. Q quits.",
+      NULL,
+      "2048 snake" },
+
+    { "tictactoe", "ttt", CDB_APPS,
+      "tictactoe",
+      "Tic-Tac-Toe against the computer",
+      "You are X. Arrow keys choose a square and Enter places your mark. "
+      "D switches the computer between easy (it makes mistakes) and "
+      "perfect (it never loses). The score is kept until you quit.",
+      NULL,
+      "memory" },
+
+    { "memory", NULL, CDB_APPS,
+      "memory",
+      "Find the eight pairs of cards",
+      "Sixteen cards, face down. Turn two over with Enter; a pair stays "
+      "up, anything else turns back. Fewest moves wins -- your best is "
+      "kept until you quit.",
+      NULL,
+      "tictactoe 2048" },
+
+    { "stopwatch", NULL, CDB_APPS,
+      "stopwatch",
+      "A stopwatch with laps, and a timer",
+      "Big digits, to the hundredth of a second. Space starts and stops, L "
+      "records a lap (up to eight), R resets. Tab switches to the timer: "
+      "Up and Down set the minutes, Space starts it, and it beeps when "
+      "it runs out.",
+      NULL,
+      "timer time" },
+
+    { "convert", NULL, CDB_APPS,
+      "convert",
+      "Convert lengths, weights, temperatures...",
+      "Pick a kind of quantity -- length, weight, temperature, data size, "
+      "speed or time -- and a unit, type a number, and every other unit "
+      "is shown at once. Tab moves between the fields.",
+      NULL,
+      "calc" },
+
+    { "notes", NULL, CDB_APPS,
+      "notes",
+      "Short notes, kept in your home folder",
+      "Up to eighteen one-line notes, saved to HOME/<you>/NOTES.TXT as "
+      "you change them. A adds one, Enter edits, D deletes.",
+      NULL,
+      "todo edit" },
 
     { "todo", NULL, CDB_APPS,
       "todo [list]\ntodo add <task>\ntodo done <n>\ntodo clear",

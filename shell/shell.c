@@ -392,6 +392,7 @@ static void tab_collect(const char *name, int is_dir, uint32_t size){
    `.` (the pipe operator) and `?` (the help alias) are deliberately absent:
    neither is something anyone tab-completes. */
 static const char *shell_cmds[]={
+    "2048","breakout","convert","memory","notes","stopwatch","tictactoe","ttt",
     "adduser","alias","ascii-art","banner","base64","beep","boot","bpkg",
     "calc","calendar","cat","cd","chat","chmod","chown","clear",
     "cls","color","copy","cowsay","cp","crash","curl","dashboard","date",
@@ -402,7 +403,7 @@ static const char *shell_cmds[]={
     "host","hplusplus","htop","i2c","i2chid","ifconfig","install","lock","log","ls",
     "uninstall",
     "layout","lspci","man","matrix","mem","mkdir","motd","music","mv",
-    "neofetch","netstat","notepad","notify","nslookup","paint","pair","passwd","ping",
+    "neofetch","netstat","notepad","notify","nslookup","open","paint","pair","passwd","ping",
     "pipes","play","poweroff","ps","ps1","pwd","quit","quiz",
     "reboot","rename","repeat","res","resolution","rm","rollback","rsa","run",
     "screensaver","script","selftest","seq","set","settings","shutdown","snake","sort",
@@ -2497,7 +2498,6 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
             vga_putchar('\n');
             vga_set_color(VGA_DARK_GREY,VGA_BLACK);
 
-            for(int i=0;i<56;i++) vga_putchar('-');
             vga_putchar('\n');
             vfs_list_dir(shell_cwd, ls_callback);
             vga_set_color(VGA_WHITE,VGA_BLACK);
@@ -3397,6 +3397,42 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"exit")||!strcmp(cmd,"quit"))
         return;
 
+    /* v0.9.5.1: the new games and apps, by name, as `open` would. */
+    else if(!strcmp(cmd,"2048")||!strcmp(cmd,"breakout")||!strcmp(cmd,"tictactoe")||
+            !strcmp(cmd,"ttt")||!strcmp(cmd,"memory")||!strcmp(cmd,"stopwatch")||
+            !strcmp(cmd,"convert")||!strcmp(cmd,"notes")){
+        extern int desktop_open_app(const char *id);
+        desktop_open_app(!strcmp(cmd,"ttt")?"tictactoe":cmd);
+        vga_clear(); toast_clear();
+    }
+    else if(!strcmp(cmd,"open")){
+        extern int desktop_open_by_name(const char*);
+        extern int desktop_app_count(void);
+        extern const char *desktop_app_id(int);
+        extern const char *desktop_app_name(int);
+        if(!arg1[0]){
+            vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
+            vga_puts("  open <app> -- by id or by the start of its name\n\n");
+            for(int i=0;i<desktop_app_count();i++){
+                vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
+                vga_printf("  %-11s",desktop_app_id(i));
+                vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
+                vga_printf("%-20s",desktop_app_name(i));
+                if(i%2) vga_putchar('\n');
+            }
+            vga_putchar('\n');
+            vga_set_color(VGA_WHITE,VGA_BLACK);
+        } else {
+            /* the whole rest of the line: "open text editor" */
+            char want[64]; strncpy(want,arg1,63); want[63]=0;
+            if(arg2[0]){ int l=(int)strlen(want); if(l<62){ want[l]=' '; strncpy(want+l+1,arg2,62-l); want[63]=0; } }
+            if(desktop_open_by_name(want)<0){
+                vga_set_color(VGA_LIGHT_RED,VGA_BLACK);
+                vga_printf("open: no app called '%s' -- 'open' lists them\n",want);
+                vga_set_color(VGA_WHITE,VGA_BLACK);
+            } else { vga_clear(); toast_clear(); }
+        }
+    }
     else if(!strcmp(cmd,"settings")){
         extern void settings_open(const char*);
         settings_open(arg1);
@@ -3426,43 +3462,37 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
 static void show_motd(void){
     theme_t *th=ui_theme();
 
-    /* Shell header bar — same style as desktop taskbar */
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
-    vga_putchar_at('[',0,0,th->accent,th->bar_bg);
-    vga_puts_at(" HavenDOS ",1,0,th->bar_bg,th->accent);
-    vga_putchar_at(']',11,0,th->accent,th->bar_bg);
-    vga_putchar_at('|',12,0,th->bar_fg,th->bar_bg);
-    vga_puts_at("Shell",14,0,th->bar_fg,th->bar_bg);
-    vga_putchar_at('|',72,0,th->bar_fg,th->bar_bg);
-    /* Clock */
+    /* 0.9.5.1: the same bar as every app, and the fortune without the
+       dashed rules around it. */
+    int W=vga_cols();
+    vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
+    for(int x=0;x<W;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
+    vga_puts_at(" HavenDOS ",0,0,sf,sb);
+    vga_puts_at("Shell",11,0,th->bar_fg,th->bar_bg);
     uint8_t h2,m2,s2; rtc_get_time(&h2,&m2,&s2);
     char tb[6];
     tb[0]='0'+h2/10;tb[1]='0'+h2%10;tb[2]=':';
     tb[3]='0'+m2/10;tb[4]='0'+m2%10;tb[5]=0;
-    vga_puts_at(tb,74,0,th->accent,th->bar_bg);
+    vga_puts_at(tb,W-6,0,th->accent,th->bar_bg);
+    vga_set_cursor(0,1);
     vga_putchar('\n');
 
-    /* Compact MOTD */
-    vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-    for(int x=0;x<80;x++) vga_putchar('-');
-    vga_putchar('\n');
-
-    /* Fortune quote */
     int count=0; while(fortunes[count]) count++;
     int idx=(int)(get_ticks()%count);
     vga_set_color(VGA_DARK_GREY,VGA_BLACK);
     vga_puts("  ");
     vga_puts(fortunes[idx]);
-    vga_putchar('\n');
-
-    for(int x=0;x<80;x++) vga_putchar('-');
-    vga_putchar('\n');
+    vga_puts("\n\n");
     vga_set_color(VGA_WHITE,VGA_BLACK);
 }
 
 void shell_run(void){
     char line[128];
     hist_load();   /* restore history from .shell_history on FAT16 */
+    /* 0.9.5.1: start from a clean screen. The motd only draws its own
+       rows, and a row the login left behind stayed on screen under it. */
+    vga_set_color(VGA_WHITE,VGA_BLACK);
+    vga_clear(); vga_flush();
     show_motd();
     vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
     vga_printf("HavenDOS Shell " HAVENDOS_VER "  [user: %s]\n",current_username());

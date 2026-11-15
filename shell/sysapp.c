@@ -36,6 +36,7 @@
 #include "usb.h"
 #include "blkdev.h"
 #include "netdev.h"
+#include "task.h"      /* v0.9.6: the Tasks line */
 #include "net.h"
 #include "netstat.h"
 #include "rtc.h"
@@ -274,8 +275,17 @@ static void tab_overview(void){
         if(b>=0){ sb_s(&s,", "); sb_s(&s,blk_bus_name(b)); sb_s(&s," disk "); sb_u(&s,(uint32_t)b); }
     }
     row_kv("Running",s.b,VGA_WHITE);
-    sb_init(&s); sb_s(&s,"one app at a time -- the shell or the app in front");
-    row_kv("Tasks",s.b,VGA_LIGHT_GREY);
+    /* v0.9.6: the line that used to say "one app at a time". */
+    sb_init(&s);
+    if(!task_ready()) sb_s(&s,"off -- one app at a time (safe mode or `notasks`)");
+    else {
+        int n=task_count(), run=0;
+        for(int t=1;t<TASK_MAX;t++) if(task_running_behind(t)) run++;
+        sb_u(&s,(uint32_t)n); sb_s(&s," open");
+        if(run){ sb_s(&s,", "); sb_u(&s,(uint32_t)run); sb_s(&s," running behind"); }
+        sb_s(&s," -- Alt+Tab switches, `ps` lists");
+    }
+    row_kv("Tasks",s.b,VGA_WHITE);
 }
 
 static void tab_memory(void){

@@ -1,6 +1,7 @@
 #include "../include/io.h"
 #include "version.h"
 #include "../include/vga.h"
+#include "../include/task.h"
 #include "../include/machine.h"
 #include "../include/nvme.h"
 #include "../include/string.h"
@@ -397,10 +398,10 @@ static const char *shell_cmds[]={
     "calc","calendar","cat","cd","chat","chmod","chown","clear",
     "cls","color","copy","cowsay","cp","crash","curl","dashboard","date",
     "del","deluser","df","diff","dir","disk","dmesg","dns",
-    "echo","edit","env","exfat","exit","export","fat16","fat32","find","fortune","gfx","grep",
+    "echo","edit","env","exfat","exit","export","fat16","fat32","fg","find","fortune","gfx","grep",
     "guide","h","hacker","hash","head","help","hex","history",
-    "kpoll",
-    "host","hplusplus","htop","i2c","i2chid","ifconfig","install","lock","log","ls",
+    "kill","kpoll",
+    "host","hplusplus","htop","i2c","i2chid","ifconfig","install","jobs","lock","log","ls",
     "uninstall",
     "layout","lspci","man","matrix","mem","mkdir","motd","music","mv",
     "neofetch","netstat","notepad","notify","nslookup","open","paint","pair","passwd","ping",
@@ -1522,6 +1523,10 @@ static void cmd_ping(const char *a1){
         if(ms>=0){ out_str("  seq="); out_int(i); out_str(" time="); out_int(ms); out_str("ms\n"); replied++; }
         else if(ms==-1){ out_str("  seq="); out_int(i); out_str(" timeout\n"); }
         else { out_str("  ARP failed - host unreachable\n"); break; }
+        /* v0.9.6: between echoes, let the other tasks run -- a `ping &`
+           job otherwise holds the machine for all four. Nothing of the
+           network is held here: icmp_ping() has returned. */
+        task_yield();
     }
     if(!replied) net_explain();
 }
@@ -3219,27 +3224,20 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     }
 
     else if(!strcmp(cmd,"dmesg")) cmd_dmesg_pager();
-    else if(!strcmp(cmd,"ps")){
-        /* v0.9.5: this printed three invented processes with invented CPU
-           and memory figures -- "kernel 98%, desktop 1%, shell 1%" -- and
-           "(multitasking not yet active - planned v0.8.x)", a promise
-           0.8 never kept. What is true: the kernel, its periodic jobs
-           (kpoll), and the one program in front of you. */
-        extern uint32_t boot_ms(void);
-        extern int kpoll_client_count(void);
-        uint32_t up=boot_ms()/1000u;
-        vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-        vga_puts("  WHAT             STATE      SINCE\n");
-        vga_set_color(VGA_WHITE,VGA_BLACK);
-        vga_printf("  kernel           running    boot (%u:%02u:%02u ago)\n",up/3600,(up/60)%60,up%60);
-        vga_printf("  periodic jobs    %-10s %d registered -- `kpoll`\n",
-                   kpoll_client_count()>0?"waiting":"none",kpoll_client_count());
-        vga_printf("  shell            running    you are here (%s)\n",current_username());
-        vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-        vga_puts("\n  HavenDOS runs one program at a time: the shell, or the app it\n"
-                 "  opened. The periodic jobs (DHCP retries, USB plug-in checks) run\n"
-                 "  in the gaps while you type.\n");
-        vga_set_color(VGA_WHITE,VGA_BLACK);
+    else if(!strcmp(cmd,"ps")||!strcmp(cmd,"jobs")){
+        /* v0.9.6: real now. 0.9.5 replaced three invented processes with
+           the truth -- one program at a time -- and 0.9.6 changed the
+           truth. shell/taskswitch.c prints the task table. */
+        extern void cmd_ps(void);
+        cmd_ps();
+    }
+    else if(!strcmp(cmd,"fg")){
+        extern void cmd_fg(const char *);
+        cmd_fg(arg1);
+    }
+    else if(!strcmp(cmd,"kill")){
+        extern void cmd_kill(const char *);
+        cmd_kill(arg1);
     }
 
     else if(!strcmp(cmd,"repeat")){
@@ -3510,9 +3508,18 @@ void shell_run(void){
 
         /* v0.7.11: the desktop pins 80x25 while it is up; restore the shell's
            chosen resolution when control comes back here. */
-        if(vga_rows()!=shell_pref_rows()||vga_cols()!=shell_pref_cols())
+        /* v0.9.6: not with other apps open -- their consoles are laid
+           out for the grid they have, and vga_set_mode() refuses from a
+           console that is not on the screen anyway. */
+        if((vga_rows()!=shell_pref_rows()||vga_cols()!=shell_pref_cols()) &&
+           task_count()<=1)
             vga_set_mode(shell_pref_cols(),shell_pref_rows());
+        /* v0.9.6: at the prompt the shell is PAUSED behind the front --
+           it waits where it is. Running a command it is RUNNING, so a
+           `ping` or a `wget` carries on when you Alt+Tab away. */
+        task_set_policy(TP_PAUSE);
         shell_read_line(line,127,prompt);
+        task_set_policy(TP_RUN);
         if(!line[0]) continue;
         hist_add(line);
 
@@ -3538,6 +3545,22 @@ void shell_run(void){
             if(!strcmp(p,"exit")||!strcmp(p,"quit")) return;
         }
 
+        /* v0.9.6: `<command> &` runs it as a job, in a task of its own
+           behind the front. shell/taskswitch.c has the rules. */
+        {
+            int L=(int)strlen(line);
+            while(L>0&&line[L-1]==' ') line[--L]=0;
+            if(L>=1&&line[L-1]=='&'){
+                line[--L]=0;
+                while(L>0&&line[L-1]==' ') line[--L]=0;
+                const char *p=line; while(*p==' ')p++;
+                extern int shell_start_job(const char *);
+                if(*p) shell_start_job(p);
+                else vga_puts("Usage: <command> &   runs the command behind, as a job\n");
+                continue;
+            }
+        }
+
         /* $VAR expansion */
         {
             char expanded[128];
@@ -3552,6 +3575,17 @@ void shell_run(void){
         run_pipeline(line);
         vga_set_color((vga_color_t)sh_fg,(vga_color_t)sh_bg);
     }
+}
+
+/* v0.9.6: one line, as the prompt would run it after aliases -- for a
+   job (shell/taskswitch.c), which has its own console and no prompt. */
+void shell_exec_line(const char *l){
+    char line[128], expanded[128];
+    strncpy(line,l,127); line[127]=0;
+    expand_vars(line,expanded,128);
+    vga_set_color((vga_color_t)sh_fg,(vga_color_t)sh_bg);
+    run_pipeline(expanded);
+    vga_set_color((vga_color_t)sh_fg,(vga_color_t)sh_bg);
 }
 
 /* ================================================================

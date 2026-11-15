@@ -106,6 +106,8 @@ int  kernel_poll(void);
 void kpoll_enter(void);
 void kpoll_leave(void);
 int  kpoll_depth(void);
+int  kpoll_in_poll(void);              /* v0.9.6: inside kernel_poll()  */
+void kpoll_set_yield(int (*fn)(void)); /* v0.9.6: kpoll_sleep_ms yields */
 
 /* A sleep that polls.  IDLE PATHS ONLY -- kernel/pit.c's sleep_ms() is
    the one a driver calls and it does not poll, which is the whole

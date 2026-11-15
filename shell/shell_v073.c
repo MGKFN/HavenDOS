@@ -234,6 +234,11 @@ void cmd_todo_v3(const char *subcmd, const char *arg) {
 extern void screensaver_run_matrix(void);
 
 void cmd_lock_v3(void) {
+    /* v0.9.6: Alt+Tab reaches this screen like any other keyboard read.
+       Pinned, nothing can be brought forward past it. include/task.h. */
+    extern void task_pin_front(void);
+    extern void task_unpin_front(void);
+    task_pin_front();
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("Screen locked. Press any key and enter password to unlock.\n");
     sleep_ms(500);
@@ -276,6 +281,7 @@ void cmd_lock_v3(void) {
         sleep_ms(3000);
         cmd_lock_v3();
     }
+    task_unpin_front();
 }
 
 /* ── WC standalone ────────────────────────────────────────────── */

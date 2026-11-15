@@ -34,7 +34,7 @@
 
 #define HAVENDOS_VER_MAJOR  0
 #define HAVENDOS_VER_MINOR  9
-#define HAVENDOS_VER_PATCH  5
+#define HAVENDOS_VER_PATCH  6
 /* A fourth number, for a patch release that fixes the release before it
    without adding a feature.  ver_cmp() in fs/update.c already parses four
    components, so 0.8.5.1 compares as newer than 0.8.5 and `update`
@@ -68,14 +68,16 @@
 /* v0.9.2.1 and .2: patches to 0.9.2 -- what its runs on the HP found.
    Each compares newer than the last under ver_cmp(). 0.9.3 is newer than
    0.9.2.2 at the third component, and the fourth goes back to zero. */
-#define HAVENDOS_VER_BUILD  1
+/* v0.9.6: a new third number, so the fourth goes back to zero. 0.9.6 is
+   newer than 0.9.5.1 at the third component. */
+#define HAVENDOS_VER_BUILD  0
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.5.1"
+#define HAVENDOS_VER_NUM    "0.9.6"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"
@@ -85,7 +87,12 @@
    so the road-to-1.0 releases each move up by two. */
 /* "Prometheus", v0.9.4: the one who carried fire to make more of it -- an
    installed system that installs itself. */
-#define HAVENDOS_CODENAME   "Hephaestus"
+/* "Hephaestus", v0.9.5: the smith -- the apps, rebuilt.
+   "Daedalus", v0.9.6: who built the labyrinth, a place of many passages
+   with more than one thing moving in it -- several apps open at once.
+   RM-1003 gave the name to an app-port wave that Hephaestus finished;
+   the handoff said it would take whatever number it reached. */
+#define HAVENDOS_CODENAME   "Daedalus"
 #define HAVENDOS_FULL       HAVENDOS_NAME " " HAVENDOS_VER " " HAVENDOS_CHANNEL \
                             " \"" HAVENDOS_CODENAME "\""
 #define HAVENDOS_VENDOR     "TechHaven Studios"

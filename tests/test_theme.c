@@ -100,6 +100,7 @@ void cfg_set_desk_pattern(int v){ g_cfg_pattern = v; }
 void cfg_save(void){ g_cfg_saves++; }
 
 /* ── the code under test, as it ships ─────────────────────────────── */
+#include "taskstub.inc"     /* v0.9.6: tasks off */
 #include "../shell/ui.c"
 
 static void fs_reset(void){ g_filelen = -1; g_writes = 0; g_file[0] = 0; }

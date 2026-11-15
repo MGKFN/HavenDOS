@@ -662,6 +662,21 @@ void cmd_resolution_v6(const char *arg1){
 
     int old_cols=vga_cols(), old_rows=vga_rows();
 
+    /* v0.9.6: every open app has a console laid out for the grid it has.
+       Changing the grid under them would leave each one scrambled until
+       it happened to redraw -- and one paused at a keyboard read never
+       does. So: only with nothing else open. */
+    {
+        extern int task_count(void);
+        if(task_count() > 1){
+            vga_set_color(VGA_YELLOW,VGA_BLACK);
+            vga_puts("Close the other open apps first -- each one is laid out\n"
+                     "for the current grid. `ps` lists them, `kill <id>` closes.\n");
+            vga_set_color(VGA_WHITE,VGA_BLACK);
+            return;
+        }
+    }
+
     if(!vga_set_mode(cols,rows)){
         /* ── v0.8.8: SAY WHICH REFUSAL IT WAS ───────────────────────────
            This printed one sentence about four text modes for all four

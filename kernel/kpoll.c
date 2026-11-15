@@ -90,6 +90,15 @@ uint32_t kpoll_ticks(void){ return g_ticks; }
 void kpoll_enter(void){ g_depth++; }
 void kpoll_leave(void){ if(g_depth > 0) g_depth--; }
 int  kpoll_depth(void){ return g_depth; }
+/* v0.9.6: kernel/task.c refuses a switch while this is set, for the
+   same reason kernel_poll() refuses to nest. */
+int  kpoll_in_poll(void){ return g_in_poll; }
+
+/* v0.9.6: the idle wait gives other tasks a turn. A pointer rather
+   than a call to task_yield(), so this file still links on its own --
+   tests/test_kpoll.c compiles it with nothing else. */
+static int (*g_yield)(void);
+void kpoll_set_yield(int (*fn)(void)){ g_yield = fn; }
 
 void kpoll_set_enabled(int on){ g_on = on ? 1 : 0; }
 int  kpoll_enabled(void){ return g_on; }
@@ -171,6 +180,12 @@ void kpoll_sleep_ms(uint32_t ms)
     if(want == 0) want = 1;
     for(;;){
         kernel_poll();
+        /* v0.9.6: and let the other tasks run. Time spent in them counts
+           against this sleep, because the clock is read, not summed. A
+           task behind the front that keeps running -- the Stopwatch, the
+           Music Player -- waits here, and that is what keeps it from
+           holding the app in front up for a whole frame. */
+        if(g_yield) g_yield();
         if((get_ticks() - start) >= want) return;
         sleep_ms(10);
     }

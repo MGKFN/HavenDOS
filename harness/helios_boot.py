@@ -111,7 +111,9 @@ def main():
         time.sleep(0.4)
         q.key("ret")
 
-        if q.wait_for("System ready", 180) is None:
+        # 0.9.5.1 clears the screen before the welcome: the prompt comes
+        # after "System ready" either way.
+        if q.wait_any(["System ready", "@havendos"], 180)[0] is None:
             raise RuntimeError("the boot log never completed")
         if q.wait_for("admin@havendos", 90) is None:
             q.key("ret")

@@ -18,8 +18,20 @@ m = re.search(r'static const appreg_t appreg\[\]=\{(.*?)\n\};', text, re.S)
 if not m:
     sys.exit("make_appreg_inc: cannot find appreg[] in " + src)
 
-rows = re.findall(r'\{"([^"]+)",\s*"([^"]+)",\s*"(..)",\s*(\w+),\s*(CAT_\w+)\}',
+# v0.9.6: the trailing fields (fits, tasking) are optional. The old
+# pattern ended at the category, so every row that set `fits` -- the
+# Shell, System, Minefield and Settings -- was silently left out of the
+# counts the suite checks, and a row that set `tasking` would have been
+# dropped too. The count below is compared against the number of rows
+# that look like registry entries at all, so a row this pattern cannot
+# read is a build failure, not a smaller number.
+rows = re.findall(r'\{"([^"]+)",\s*"([^"]+)",\s*"(..)",\s*(\w+),\s*(CAT_\w+)'
+                  r'(?:\s*,\s*\w+)*\s*\}',
                   m.group(1))
+looks = len(re.findall(r'^\s*\{"', m.group(1), re.M))
+if len(rows) != looks:
+    sys.exit("make_appreg_inc: %d registry rows but only %d parsed -- the "
+             "pattern no longer matches the table" % (looks, len(rows)))
 if not rows:
     sys.exit("make_appreg_inc: appreg[] parsed to zero entries")
 

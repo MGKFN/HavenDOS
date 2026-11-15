@@ -54,6 +54,8 @@
 
 static int total = 0, fails = 0;
 static void head(const char *s){ printf("\n  %s\n", s); }
+static long g_yields;
+static int  count_yield(void){ g_yields++; return 0; }
 static void ck(const char *what, int ok, long got){
     total++;
     if(ok) printf("    ok   %s\n", what);
@@ -508,6 +510,21 @@ int main(void)
            sleep_calls - before >= 40, sleep_calls - before);
         ck("  ... and the total slept is about 500 ms",
            sleep_total_ms >= 480 && sleep_total_ms <= 520, sleep_total_ms);
+    }
+    {
+        /* v0.9.6: the polling sleep is also where a task waits while
+           other tasks run. Counted, not assumed -- and a sleep with no
+           hook registered (tasks off) still works. */
+        long y0 = g_yields;
+        kpoll_set_yield(count_yield);
+        kpoll_sleep_ms(100);
+        ck("v0.9.6: a polling sleep gives other tasks a turn, every slice",
+           g_yields - y0 >= 9, g_yields - y0);
+        kpoll_set_yield(0);
+        y0 = g_yields;
+        kpoll_sleep_ms(50);
+        ck("  ... and with no task layer it sleeps exactly as before",
+           g_yields == y0, g_yields - y0);
     }
     /* A client due during the sleep has to have been called before the
        sleep returns -- that is the whole difference from sleep_ms(). */

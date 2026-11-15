@@ -61,3 +61,11 @@
    one side of the spacebar only would be a worse bug than no key at
    all. */
 #define KEY_SUPER     0x15B
+
+/* v0.9.6: Alt+Tab and Shift+Alt+Tab, produced by both keyboard drivers
+   and consumed by keyboard_getchar() itself -- an app never sees them.
+   They go through the extended-key path (0x01 marker, then the low
+   byte), so the low byte only has to be unused, which 0xE0/0xE1 are. */
+#define KEY_TASKSW      0x1E0
+#define KEY_TASKSW_BACK 0x1E1
+

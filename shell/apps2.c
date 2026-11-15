@@ -18,12 +18,16 @@
 #include "vga.h"
 #include "keys.h"
 #include "theme.h"
+#include "task.h"      /* v0.9.6: TP_RUN while the stopwatch counts */
 
 extern int      keyboard_getchar(void);
 extern int      keyboard_waitchar(void);
 extern void     sleep_ms(uint32_t);
 extern uint32_t get_ticks(void);
 extern void     speaker_beep(uint32_t freq, uint32_t ms);
+extern void     speaker_tone(uint32_t freq);   /* v0.9.6 */
+extern void     speaker_off(void);
+extern void     kpoll_sleep_ms(uint32_t ms);
 extern int      vfs_read(const char*, char*, uint32_t);
 extern int      vfs_write(const char*, const char*, uint32_t);
 extern int      vfs_mkdir(const char*);
@@ -94,7 +98,13 @@ void app_stopwatch(void){
             tleft = gone>=acc ? 0 : acc-gone;
             if(!tleft && !rang){
                 running=0; rang=1;
-                for(int i=0;i<3;i++){ speaker_beep(880,150); sleep_ms(100); }
+                /* v0.9.6: timed by the clock and yielding, so a timer
+                   that rings behind the front does not stall the app
+                   in front for the length of the alarm. */
+                for(int i=0;i<3;i++){
+                    speaker_tone(880); kpoll_sleep_ms(150);
+                    speaker_off();     kpoll_sleep_ms(100);
+                }
             }
         }
 
@@ -129,8 +139,17 @@ void app_stopwatch(void){
         }
         vga_end_frame();
 
+        /* v0.9.6: it runs behind the front only while it is counting.
+           Stopped, it has nothing to do there, so it pauses like any
+           app instead of redrawing an unchanging time in a console
+           nobody can see. */
+        task_set_policy(running ? TP_RUN : TP_PAUSE);
         int k=keyboard_getchar();
-        if(k==-1){ sleep_ms(30); continue; }
+        /* v0.9.6: the Stopwatch keeps running behind the front (TK_RUN
+           in the registry), so its idle wait must let the others run:
+           kpoll_sleep_ms() yields, sleep_ms() would hold the app in
+           front up for 30 ms every frame. */
+        if(k==-1){ kpoll_sleep_ms(30); continue; }
         if(k=='q'||k=='Q'||k==27) return;
         if(k=='\t'){
             mode=!mode; running=0; rang=0;

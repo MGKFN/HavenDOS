@@ -40,6 +40,10 @@ void sleep_ms(uint32_t ms){ (void)ms; }
 uint32_t get_ticks(void){ return 12345; }
 void rtc_get_time(uint8_t *h,uint8_t *m,uint8_t *s){ *h=1;*m=2;*s=3; }
 void speaker_beep(uint32_t f,uint32_t ms){ (void)f;(void)ms; }
+void speaker_tone(uint32_t f){ (void)f; }          /* v0.9.6 */
+void speaker_off(void){}
+void kpoll_sleep_ms(uint32_t ms){ (void)ms; }
+void task_set_policy(int p){ (void)p; }
 int  vfs_read(const char *p,char *o,uint32_t n){ (void)p;(void)o;(void)n; return -1; }
 int  vfs_write(const char *p,const char *d,uint32_t n){ (void)p;(void)d; return (int)n; }
 int  vfs_mkdir(const char *p){ (void)p; return 0; }

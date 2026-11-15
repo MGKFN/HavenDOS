@@ -164,3 +164,35 @@ void appguard_fault(uint32_t exc_no, uint32_t eip)
 
     appguard_jump();
 }
+
+/* ── v0.9.6: one guard PER TASK ──────────────────────────────────────
+   Each task runs its app under its own guard (include/task.h). The jump
+   buffer is the task's: it points into that task's stack, so a fault
+   in the task in front must land in ITS frame and a fault in a task
+   running behind must land in that one's. kernel/task.c swaps this
+   state on every switch, the same way it swaps the console.
+
+   The "refused to nest" rule above is unchanged and still holds within
+   a task. It no longer bites across tasks: before 0.9.6 an app opened
+   from the shell (`open notes`) ran UNGUARDED, because the shell's
+   guard was already armed. Now it is its own task with its own guard. */
+void appguard_ctx_save(appguard_ctx_t *c)
+{
+    for(int i = 0; i < 6; i++) c->jb[i] = appguard_jb[i];
+    c->armed = g_armed;
+    c->name  = g_name;
+}
+
+void appguard_ctx_load(const appguard_ctx_t *c)
+{
+    for(int i = 0; i < 6; i++) appguard_jb[i] = c->jb[i];
+    g_armed = c->armed;
+    g_name  = c->name ? c->name : "(none)";
+}
+
+void appguard_ctx_clear(appguard_ctx_t *c)
+{
+    for(int i = 0; i < 6; i++) c->jb[i] = 0;
+    c->armed = 0;
+    c->name  = "(none)";
+}

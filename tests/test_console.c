@@ -283,9 +283,15 @@ int main(void)
     /* The two buffers are sized by the budget. A buffer sized by one
        axis pair while the grid is bounded by the other is the v0.7.12
        stride bug with the operands swapped. */
-    ck("shadow[] is sized by the budget",
-       (int)(sizeof shadow / sizeof shadow[0]) == VGA_CELLS_MAX,
-       (long)(sizeof shadow / sizeof shadow[0]));
+    /* v0.9.6: `shadow` is a pointer now -- to the CURRENT task's
+       console -- and shadow_boot is slot 0's. Every task's console is
+       VGA_CELLS_MAX cells too: kernel/task.c allocates it at the budget
+       and vga_ctx_init() fills exactly that many. */
+    ck("shadow_boot[] is sized by the budget",
+       (int)(sizeof shadow_boot / sizeof shadow_boot[0]) == VGA_CELLS_MAX,
+       (long)(sizeof shadow_boot / sizeof shadow_boot[0]));
+    ck("  ... and the live console starts as the boot one",
+       shadow == shadow_boot, 0);
     ck("fbc_painted[] is sized by the budget",
        (int)(sizeof fbc_painted / sizeof fbc_painted[0]) == VGA_CELLS_MAX,
        (long)(sizeof fbc_painted / sizeof fbc_painted[0]));
@@ -1558,6 +1564,97 @@ int main(void)
            vga_fb_boot_grid(&c, &r) == 0, c);
     }
     fbc_active = 0;
+
+    /* ════════════════════════════════════════════════════════════════
+       v0.9.6: A CONSOLE PER TASK
+       ════════════════════════════════════════════════════════════════
+       kernel/task.c swaps these on every switch. What has to hold:
+       a console behind the front never touches the screen; bringing
+       one forward repaints it from its OWN buffer with nothing drawn
+       again; and a console that is not on the screen cannot change the
+       mode under the one that is. On the TEXT console, because there
+       the screen is sim_text[] and can be read back cell by cell. */
+    head("v0.9.6: a console per task -- the hidden one never paints");
+    {
+        static uint16_t cells_b[VGA_CELLS_MAX];
+        vga_ctx_t a, b, a2;
+        vga_init();
+        vga_set_mode(80, 25);
+        vga_clear(); vga_flush();
+        vga_putchar_at('A', 0, 0, VGA_WHITE, VGA_BLACK);
+        ck("the boot console paints as it draws",
+           (sim_text[0] & 0xFF) == 'A', sim_text[0] & 0xFF);
+
+        vga_ctx_save(&a);
+        ck("saving it records the boot buffer, visible",
+           a.cells == shadow_boot && a.visible == 1, a.visible);
+
+        vga_ctx_init(&b, cells_b);
+        ck("a new console starts hidden, blank, with no viewport",
+           b.visible == 0 && b.vp_w == 0 && (cells_b[0] & 0xFF) == ' ', b.visible);
+        vga_ctx_load(&b);
+        vga_putchar_at('B', 0, 0, VGA_WHITE, VGA_BLACK);
+        vga_puts_at("hidden", 0, 1, VGA_WHITE, VGA_BLACK);
+        vga_flush(); vga_present();
+        ck("a HIDDEN console draws into its own buffer only",
+           (cells_b[0] & 0xFF) == 'B' && (sim_text[0] & 0xFF) == 'A',
+           sim_text[0] & 0xFF);
+        ck("  ... and its caret does not move the screen's",
+           (vga_set_cursor(5, 5), 1), 0);
+        ck("a hidden console cannot change the mode under the front",
+           vga_set_mode(80, 50) == 0 && vga_mode_why() == VGA_MODE_EHIDDEN,
+           vga_mode_why());
+        ck("  ... and says so by name",
+           !strcmp(vga_mode_why_name(), "this console is not on the screen"), 0);
+        ck("  ... and the grid is unchanged", vga_rows() == 25, vga_rows());
+
+        vga_ctx_save(&b);
+        vga_ctx_load(&a);
+        ck("switching back to the front console leaves the screen as it was",
+           (sim_text[0] & 0xFF) == 'A', sim_text[0] & 0xFF);
+        ck("  ... and its own state came back with it",
+           shadow == shadow_boot, 0);
+
+        /* Bring b forward: hide a, show b. Nothing is drawn again --
+           the screen is repainted from b's buffer. */
+        vga_set_visible(0); vga_ctx_save(&a2);
+        b.visible = 1;
+        vga_ctx_load(&b);
+        ck("BROUGHT FORWARD, it is repainted from its own buffer",
+           (sim_text[0] & 0xFF) == 'B' && (sim_text[80] & 0xFF) == 'h',
+           sim_text[0] & 0xFF);
+        vga_putchar_at('C', 2, 0, VGA_WHITE, VGA_BLACK);
+        ck("  ... and paints as it draws now that it is in front",
+           (sim_text[2] & 0xFF) == 'C', sim_text[2] & 0xFF);
+
+        vga_set_visible(0);
+        vga_ctx_save(&b);
+        a2.visible = 1;
+        vga_ctx_load(&a2);
+        ck("and the first comes back exactly as it was left",
+           (sim_text[0] & 0xFF) == 'A' && (sim_text[80] & 0xFF) != 'h',
+           sim_text[0] & 0xFF);
+
+        /* A viewport belongs to the console, not the screen. */
+        vga_ctx_load(&b); b.visible = 0;
+        vga_set_visible(0);
+        vga_viewport_centre(40, 10);
+        vga_ctx_save(&b);
+        vga_ctx_load(&a2);
+        ck("one console's viewport is not another's",
+           !vga_viewport_active() && vga_cols() == 80, vga_cols());
+        ck("  ... and it travels with its own console",
+           b.vp_w == 40 && b.vp_h == 10, b.vp_w);
+
+        /* A freed buffer must not be mistaken for the one on screen. */
+        g_screen_owner = cells_b;
+        vga_forget_cells(cells_b);
+        ck("a freed console is forgotten by the screen",
+           g_screen_owner == 0, 0);
+        vga_forget_cells(shadow_boot);
+        ck("  ... and forgetting one that is not shown changes nothing",
+           g_screen_owner == 0, 0);
+    }
 
     printf("\n%d/%d passed\n", total - fails, total);
     munmap(fb, (size_t)FB_MAX_PX * 4);

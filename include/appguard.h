@@ -136,3 +136,15 @@ uint32_t    appguard_crash_count(void);
 /* Called from isr_handler(), which has already decided the guard is
    armed. Does not return. */
 void appguard_fault(uint32_t exc_no, uint32_t eip) __attribute__((noreturn));
+
+/* v0.9.6: the guard's state, per task. kernel/task.c saves it when a
+   task is switched out and loads the next task's, so each task's
+   fault lands in its own frame. See kernel/appguard.c. */
+typedef struct {
+    uint32_t    jb[6];
+    int         armed;
+    const char *name;
+} appguard_ctx_t;
+void appguard_ctx_save(appguard_ctx_t *c);
+void appguard_ctx_load(const appguard_ctx_t *c);
+void appguard_ctx_clear(appguard_ctx_t *c);

@@ -355,9 +355,18 @@ void mouse_sync(void)
     mouse_in_sync = 0;
 }
 
+/* v0.9.6: the buttons belong to the task in front. A task running
+   behind it still sees where the pointer is, but never a press -- and
+   never CONSUMES one, which matters more: mouse_get_clicks() clears
+   the edge it reads. A pointer, set by kernel/task.c, so this file
+   still links alone. */
+static int (*g_front_check)(void);
+void mouse_set_front_check(int (*fn)(void)){ g_front_check = fn; }
+static int mouse_mine(void){ return !g_front_check || g_front_check(); }
+
 void mouse_get(int *x,int *y,int *btn){
     mouse_sync();
-    *x=mouse_x; *y=mouse_y; *btn=mouse_btn;
+    *x=mouse_x; *y=mouse_y; *btn=mouse_mine()?mouse_btn:0;
 }
 
 /* ── pull the pointer back onto the current LOGICAL grid ──────────────
@@ -401,4 +410,5 @@ int  mouse_mid_packet(void)            { return mouse_cycle>0; }
    asks "was there a click" is a caller that never reads the keyboard,
    and shell/chat.c is one. */
 int  mouse_get_clicks(void)            { mouse_sync();
+                                         if(!mouse_mine()) return 0;
                                          { int e=mouse_btn_edge; mouse_btn_edge=0; return e; } }

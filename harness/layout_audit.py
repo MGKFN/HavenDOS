@@ -77,7 +77,10 @@ def boot_to_desktop(q):
     time.sleep(6)
     q.key("down"); time.sleep(0.4)      # GRUB entry 2: Shell Mode
     q.key("ret")
-    if q.wait_for("System ready", 180) is None:
+    # 0.9.5.1 clears the screen before the shell's welcome, so the boot
+    # log's last line is gone by the time it is read. The prompt comes
+    # after "System ready" either way: wait for whichever is on screen.
+    if q.wait_any(["System ready", "@havendos"], 180)[0] is None:
         raise RuntimeError("the boot log never completed")
     if q.wait_for("admin@havendos", 90) is None:
         q.key("ret")

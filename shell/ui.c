@@ -508,14 +508,22 @@ void ui_force_cursor_redraw(void){ last_mx=-1; last_my=-1; }
    something is. */
 extern int  keyboard_haschar(void);
 extern void sleep_ms(uint32_t);
+extern void kpoll_sleep_ms(uint32_t);
+static int (*g_ui_yield)(void);
+void ui_set_yield(int (*fn)(void)){ g_ui_yield = fn; }
 void ui_idle(uint32_t ms)
 {
     int x0, y0, b0, x, y, b;
     uint32_t done = 0;
-    if(!mouse_is_ready()){ sleep_ms(ms); return; }
+    if(!mouse_is_ready()){ kpoll_sleep_ms(ms); return; }
     mouse_get(&x0, &y0, &b0);
     while(done < ms){
         uint32_t step = (ms - done) < 4u ? (ms - done) : 4u;
+        /* v0.9.6: the desktop's idle wait gives an app running behind
+           it -- a song, a timer -- its turn between slices. A pointer
+           set by kernel/task.c, so ui.c does not need the task layer
+           to link (four suites compile this file). */
+        if(g_ui_yield) g_ui_yield();
         sleep_ms(step);
         done += step;
         mouse_get(&x, &y, &b);      /* pumps USB and I2C */

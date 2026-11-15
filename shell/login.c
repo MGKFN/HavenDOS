@@ -8,6 +8,9 @@
  *   - Mouse-aware tile highlighting
  */
 #include "../include/vga.h"
+#include "../include/task.h"
+#include "../include/klog.h"
+extern void notif_push(const char *);   /* v0.9.6 */
 #include "version.h"
 #include "../include/io.h"
 #include "../include/machine.h"
@@ -815,7 +818,50 @@ void login_welcome(const char *username, int first_boot){
 /* ================================================================
    MAIN LOGIN SCREEN
    ================================================================ */
+/* ── v0.9.6: THE LOGIN SCREEN AND OPEN APPS ─────────────────────────
+   login_screen() is also the lock screen (the start menu's Lock) and
+   Switch user, and it can run with apps open behind it. Two rules:
+
+   1. Nothing comes forward while it is up. It reads the keyboard, so
+      Alt+Tab reaches it; without the pin that walks straight past the
+      lock into whatever was open.
+   2. If a DIFFERENT user signs in, the previous user's apps are
+      closed. Otherwise the next person is one Alt+Tab from somebody
+      else's shell, signed in as them -- an administrator's, as often
+      as not. The same user signing back in finds everything as it was.
+
+   login_screen_inner() is the screen itself, unchanged. */
+static void login_screen_inner(void);
 void login_screen(void){
+    char before[32];
+    strncpy(before, current_username(), sizeof before - 1);
+    before[sizeof before - 1] = 0;
+
+    task_pin_front();
+    login_screen_inner();
+    task_unpin_front();
+
+    if(task_ready() && before[0] && strcmp(before, current_username())){
+        int closed = 0;
+        for(int s = 1; s < TASK_MAX; s++){
+            if(s == task_current()) continue;
+            if(task_state(s) != TS_READY && task_state(s) != TS_WAIT) continue;
+            if(task_kill(s) == 0) closed++;
+        }
+        if(closed){
+            char m[48]; int n = 0;
+            const char *a = "Closed apps left open by ";
+            while(*a && n < 30) m[n++] = *a++;
+            for(int i = 0; before[i] && n < 47; i++) m[n++] = before[i];
+            m[n] = 0;
+            notif_push(m);
+            klog(KLOG_INFO, "login: %d app(s) of %s closed for %s",
+                 closed, before, current_username());
+        }
+    }
+}
+
+static void login_screen_inner(void){
     login_init();
 
     /* Auto-login check */

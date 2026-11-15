@@ -55,6 +55,9 @@ static int g_keys[64], g_nkeys;
 static uint8_t g_mouse[64]; static int g_nmouse;
 static int g_mouse_attach;
 void keyboard_inject(int c){ if(g_nkeys < 64) g_keys[g_nkeys++] = c; }
+/* v0.9.6: the modifier byte, handed over on every report for Alt. */
+static int g_mods = -1, g_nmods;
+void keyboard_usb_mods(uint8_t m){ g_mods = m; g_nmods++; }
 void mouse_feed(uint8_t b){ if(g_nmouse < 64) g_mouse[g_nmouse++] = b; }
 void mouse_usb_attach(void){ g_mouse_attach++; }
 void mouse_usb_forget_all(void){ g_mouse_attach = 0; }
@@ -342,6 +345,39 @@ int main(void)
     n = usb_hid_init();
     ck("only the keyboard (the mouse's endpoints were never added)",
        n == 1 && g_mouse_attach == 0 && g_warns >= 2, n);
+
+    /* ── v0.9.6: Alt+Tab ───────────────────────────────────────────── */
+    head("Alt+Tab is the task switcher's key, not a Tab");
+    {
+        static const uint8_t ALT_TAB[8]   = { 0x04, 0, 0x2B, 0, 0, 0, 0, 0 };
+        static const uint8_t RALT_TAB[8]  = { 0x40, 0, 0x2B, 0, 0, 0, 0, 0 };
+        static const uint8_t SALT_TAB[8]  = { 0x06, 0, 0x2B, 0, 0, 0, 0, 0 };
+        static const uint8_t ALT_ONLY[8]  = { 0x04, 0, 0,    0, 0, 0, 0, 0 };
+        static const uint8_t TAB[8]       = { 0x00, 0, 0x2B, 0, 0, 0, 0, 0 };
+        sim_reset(); plug(1, KEYBOARD, sizeof KEYBOARD, 0x04D9, 0x1503);
+        usb_enumerate(); usb_hid_init();
+        g_nkeys = 0; g_nmods = 0;
+        report(1, 0x81, ALT_ONLY, 8); usb_hid_poll();
+        ck("Alt alone types nothing, and its state is handed over",
+           g_nkeys == 0 && g_nmods == 1 && g_mods == 0x04, g_mods);
+        report(1, 0x81, ALT_TAB, 8); usb_hid_poll();
+        ck("left Alt + Tab is KEY_TASKSW", g_nkeys == 1 && g_keys[0] == KEY_TASKSW,
+           g_nkeys ? g_keys[0] : -1);
+        report(1, 0x81, REP_NONE, 8); usb_hid_poll();
+        ck("  ... and the RELEASE is handed over, so the switcher can commit",
+           g_mods == 0 && g_nkeys == 1, g_mods);
+        report(1, 0x81, RALT_TAB, 8); usb_hid_poll();
+        ck("right Alt + Tab too", g_nkeys == 2 && g_keys[1] == KEY_TASKSW,
+           g_nkeys > 1 ? g_keys[1] : -1);
+        report(1, 0x81, REP_NONE, 8); usb_hid_poll();
+        report(1, 0x81, SALT_TAB, 8); usb_hid_poll();
+        ck("Shift+Alt+Tab goes backwards", g_nkeys == 3 && g_keys[2] == KEY_TASKSW_BACK,
+           g_nkeys > 2 ? g_keys[2] : -1);
+        report(1, 0x81, REP_NONE, 8); usb_hid_poll();
+        report(1, 0x81, TAB, 8); usb_hid_poll();
+        ck("Tab without Alt is still a Tab", g_nkeys == 4 && g_keys[3] == '\t',
+           g_nkeys > 3 ? g_keys[3] : -1);
+    }
 
     head("more boot interfaces than the table holds");
     {

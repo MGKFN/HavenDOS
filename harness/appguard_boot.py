@@ -74,7 +74,10 @@ def boot_to_shell(q, entry_down=1):
         q.key("down")
         time.sleep(0.4)
     q.key("ret")
-    if q.wait_for("System ready", 180) is None:
+    # 0.9.5.1 clears the screen before the shell's welcome, so the boot
+    # log's last line is gone by the time it is read. The prompt comes
+    # after "System ready" either way: wait for whichever is on screen.
+    if q.wait_any(["System ready", "@havendos"], 180)[0] is None:
         raise RuntimeError("the boot log never completed")
     if q.wait_for("admin@havendos", 90) is None:
         q.key("ret")
@@ -300,6 +303,14 @@ def part_guarded(q):
         # to still answer a keystroke. The crash window ends with
         # keyboard_getchar(), so this keypress is also what dismisses
         # it.
+        # Past the notice's 600 ms hold first: the notice DISCARDS keys
+        # for that long on purpose (desktop_app_crashed(), "DRAIN FIRST,
+        # THEN WAIT"), so a key already on its way down cannot dismiss it
+        # unread. Pressing ESC the instant the notice is seen lands inside
+        # the hold about one time in three and is thrown away -- a harness
+        # timing flake, found in 0.9.6 when the notice started coming up
+        # a little sooner.
+        time.sleep(1.0)
         q.key("esc")
         time.sleep(1.5)
         alive = "Start" in q.screen() or "HavenDOS" in q.screen()

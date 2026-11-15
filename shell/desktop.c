@@ -5,6 +5,7 @@
 #include "version.h"
 #include "../include/vga.h"
 #include "../include/appguard.h"
+#include "../include/task.h"
 #include "../include/machine.h"
 extern void screensaver_run_pipes(void);  /* v0.7.5: was used before declaration */
 #include "../include/virtio.h"   /* v0.7.5: was implicit — virtio_blk_sectors() returns uint64_t */
@@ -44,6 +45,9 @@ extern int         vfs_rename(const char*,const char*);
 extern int         vfs_using_disk(void);
 extern int         vfs_using_fat16(void);
 extern const char *current_username(void);
+extern void       *kmalloc(size_t);   /* v0.9.6: app launch records */
+extern void        kfree(void*);
+extern void        notif_push(const char*);
 extern int         current_user_admin(void);
 extern int         get_user_count(void);
 extern const char *get_username(int);
@@ -180,7 +184,24 @@ typedef struct {
        centre it. So it is set per app, deliberately, and only after
        looking. */
     uint8_t     fits;
+    /* ── v0.9.6: WHAT IT DOES BEHIND THE FRONT ───────────────────────
+       TK_PAUSE (0, the default): it stops at its next keyboard read
+       and carries on exactly where it was when it comes back. Games
+       pause; editors wait. Right for nearly everything.
+       TK_RUN: it MAY keep running behind the front, drawing into its
+       own console -- the app sets TP_RUN while it has something to do
+       there (a song playing, a timer counting) and TP_PAUSE otherwise.
+       Only for apps whose idle wait yields (kpoll_sleep_ms) --
+       an app that waits in sleep_ms() would hold the app in front up
+       for a whole frame each time it ran. The Stopwatch (so a timer
+       still rings) and the Music Player (so the song plays on).
+       TK_SOLO: nothing else runs and Alt+Tab is refused while it is
+       open. The installer: it repartitions disks. */
+    uint8_t     tasking;
 } appreg_t;
+#define TK_PAUSE 0
+#define TK_RUN   1
+#define TK_SOLO  2
 
 static const appreg_t appreg[]={
     /* ---- Apps ------------------------------------------------- */
@@ -200,7 +221,7 @@ static const appreg_t appreg[]={
     {"chat",      "BOOT Chat",        "Ch", appx_chat,          CAT_APPS},
     {"asciiart",  "ASCII Art",        "Aa", appx_ascii_art,     CAT_APPS},
     {"notes",     "Notes",            "No", app_notes,          CAT_APPS},
-    {"stopwatch", "Stopwatch",        "Sw", app_stopwatch,      CAT_APPS},
+    {"stopwatch", "Stopwatch",        "Sw", app_stopwatch,      CAT_APPS, 0, TK_RUN},
     {"convert",   "Converter",        "Cv", app_convert,        CAT_APPS},
 
     /* ---- System ----------------------------------------------- */
@@ -214,7 +235,7 @@ static const appreg_t appreg[]={
     {"users",     "User Manager",     "Um", app_usermanager,    CAT_SYSTEM},
     {"audit",     "Login Audit Log",  "Al", app_logviewer,      CAT_SYSTEM},
     {"bpkg",      "Package Manager",  "Pk", app_bpkg,           CAT_SYSTEM},
-    {"install",   "Install HavenDOS", "In", app_install,        CAT_SYSTEM},
+    {"install",   "Install HavenDOS", "In", app_install,        CAT_SYSTEM, 0, TK_SOLO},
     {"selftest",  "Self Test",        "Se", appx_selftest,      CAT_SYSTEM},
 
     /* ---- Hardware --------------------------------------------- */
@@ -243,7 +264,7 @@ static const appreg_t appreg[]={
     {"memory",    "Memory",           "Me", app_memory,         CAT_GAMES},
 
     /* ---- Media ------------------------------------------------ */
-    {"music",     "Music Player",     "Mu", appx_music,         CAT_MEDIA},
+    {"music",     "Music Player",     "Mu", appx_music,         CAT_MEDIA, 0, TK_RUN},
     {"matrix",    "Matrix",           "Mx", app_matrix,         CAT_MEDIA},
     {"stars",     "Starfield",        "**", appx_stars,         CAT_MEDIA},
     {"pipes",     "Pipes",            "Pi", app_pipes,          CAT_MEDIA},
@@ -392,6 +413,7 @@ static void pins_load(void){
 }
 
 static void desktop_run_app(void (*fn)(void), const char *name, int fits);
+int desktop_switch_to(int slot);
 /* v0.9.5.1: `open <app>` -- by id, or by the start of its name. */
 static char lcase(char c){ return (c>='A'&&c<='Z')?(char)(c+32):c; }
 int desktop_open_by_name(const char *w){
@@ -986,12 +1008,76 @@ static void draw_contextmenu(void){
     for(int i=0;i<CTXM_W;i++) vga_putchar_at(' ',x+i,y+1+ctx_nitems,th->win_fg,th->win_bg);
 }
 
+/* ── v0.9.6: OPEN APPS ON THE BAR ────────────────────────────────────
+   One chip per open task, between the user's name and the alerts --
+   grey for paused, green for one still running behind. Clicking a chip
+   brings that app forward, like Alt+Tab. The chips are recorded as
+   they are drawn so the click tests the same cells that were painted:
+   the notification cluster's hit box drifted from its paint once
+   (v0.8.8.7), and this does not get a chance to. */
+#define CHIP_MAX TASK_MAX
+static int chip_x0[CHIP_MAX], chip_x1[CHIP_MAX], chip_slot[CHIP_MAX], nchips;
+
+static void draw_task_chips(void)
+{
+    theme_t *th = ui_theme();
+    const int W = vga_cols(), Y = vga_rows() - 1;
+    int x = 16 + (int)strlen(current_username()) + (current_user_admin() ? 8 : 0) + 1;
+    const int end = W - 25 - 2;          /* ui.c's BELL_X, less a gap */
+    nchips = 0;
+    if(!task_ready()) return;
+    int open = task_count() - 1, shown = 0;
+    for(int sl = 1; sl < TASK_MAX && nchips < CHIP_MAX; sl++){
+        int st = task_state(sl);
+        if(st != TS_READY && st != TS_WAIT) continue;
+        const char *nm = task_name(sl);
+        char c[16]; int n = 0;
+        c[n++] = ' ';
+        if(!strncmp(nm, "job: ", 5)){
+            /* A job's name is its command line; the chip says which job. */
+            uint32_t id = task_id(sl);
+            const char *j = "Job ";
+            while(*j) c[n++] = *j++;
+            if(id >= 10) c[n++] = (char)('0' + (id / 10) % 10);
+            c[n++] = (char)('0' + id % 10);
+        } else
+            while(nm[n-1] && n < 12) { c[n] = nm[n-1]; n++; }
+        c[n++] = ' '; c[n] = 0;
+        int rest = open - shown - 1;     /* chips still to come after this */
+        if(x + n + (rest > 0 ? 5 : 0) > end){
+            if(open - shown > 0 && x + 4 <= end){
+                char m[8]; int k = 0; int v = open - shown;
+                m[k++] = ' '; m[k++] = '+';
+                if(v >= 10) m[k++] = (char)('0' + v / 10);
+                m[k++] = (char)('0' + v % 10); m[k++] = ' '; m[k] = 0;
+                vga_puts_at(m, x, Y, VGA_WHITE, VGA_DARK_GREY);
+            }
+            break;
+        }
+        int run = task_running_behind(sl);
+        vga_puts_at(c, x, Y, VGA_BLACK, run ? VGA_GREEN : VGA_LIGHT_GREY);
+        chip_x0[nchips] = x; chip_x1[nchips] = x + n - 1; chip_slot[nchips] = sl;
+        nchips++; shown++;
+        x += n + 1;
+    }
+    (void)th;
+}
+
+static int task_chip_hit(int mx, int my)
+{
+    if(my != vga_rows() - 1) return -1;
+    for(int i = 0; i < nchips; i++)
+        if(mx >= chip_x0[i] && mx <= chip_x1[i]) return chip_slot[i];
+    return -1;
+}
+
 static void full_draw(int icon_sel, int m_state, int t_sel, int s_sel){
     (void)t_sel; (void)s_sel;
     vga_begin_frame();          /* v0.7.6: compose the whole frame off-screen */
     ui_erase_cursor();
     ui_draw_desktop();
     ui_draw_desktop_bars();
+    draw_task_chips();
     draw_icons(icon_sel, m_state!=0);
     draw_infopanel();
     if(m_state==1||m_state==2) draw_topmenu();
@@ -3133,9 +3219,25 @@ static void desktop_app_surround(int vx, int vy, int vw, int vh,
     }
 }
 
-static void desktop_run_app(void (*fn)(void), const char *name, int fits)
+/* What the registry says this app does behind the front. By function
+   pointer, because that is what every caller of desktop_run_app() has
+   in hand -- the shell's `open` included. */
+static int app_tasking(void (*fn)(void))
+{
+    for(int i = 0; i < NREG; i++) if(appreg[i].fn == fn) return appreg[i].tasking;
+    return TK_PAUSE;
+}
+
+/* ── RUNNING ONE APP, BOXED AND GUARDED ──────────────────────────────
+   Until 0.9.6 this WAS desktop_run_app(). It is now the body of an app
+   task (app_task_entry, below) -- and, called directly, the fallback
+   when no task can be started: no free slot, no memory, safe mode, or
+   `notasks`. Either way the box, the crash guard and the layout check
+   are the same code. */
+static void app_run_inline(void (*fn)(void), const char *name, int fits)
 {
     int boxed = 0;
+    int solo  = (app_tasking(fn) == TK_SOLO);
 
     if(!fn) return;
 
@@ -3174,8 +3276,23 @@ static void desktop_run_app(void (*fn)(void), const char *name, int fits)
        not this app's doing either way. */
     vga_clip_reset();
 
+    if(solo) task_lock();
     if(appguard_enter(name ? name : "an app")){
         /* A fault brought us back. The app is NOT called again. */
+        if(solo) task_unlock();
+        /* v0.9.6: a task running BEHIND the front can fault too. Its
+           notice would be drawn into a console nobody is looking at,
+           and its "press any key" would never get one -- so it stops
+           running, waits to be brought forward, and the bell says so. */
+        if(!task_is_front()){
+            char m[48]; int n = 0;
+            const char *a = name ? name : "An app", *b = " stopped behind";
+            while(*a && n < 30) m[n++] = *a++;
+            while(*b && n < 47) m[n++] = *b++;
+            m[n] = 0;
+            notif_push(m);
+            task_set_policy(TP_PAUSE);
+        }
         desktop_app_crashed();
         if(boxed){ vga_viewport_clear(); mouse_clamp_to_grid(); }
         vga_clear();
@@ -3183,6 +3300,7 @@ static void desktop_run_app(void (*fn)(void), const char *name, int fits)
     }
     fn();
     appguard_leave();
+    if(solo) task_unlock();
 
     /* ── AND SAY SO, IN THE LOG ───────────────────────────────────────
        Reported rather than drawn on screen: the app has just closed
@@ -3211,6 +3329,93 @@ static void desktop_run_app(void (*fn)(void), const char *name, int fits)
        app's window. */
     if(boxed){ vga_viewport_clear(); mouse_clamp_to_grid(); }
     vga_clear();
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   OPENING AN APP, v0.9.6: IN A TASK OF ITS OWN.
+
+   The app gets a stack, a console and a crash guard of its own
+   (include/task.h), is brought to the front, and the caller waits.
+   task_wait_front() returns when the caller is in front again --
+   because the app finished, or because the person switched back with
+   Alt+Tab and left the app open behind. Either way this "returns when
+   the caller has the screen back", which is what every caller was
+   written against; the desktop simply finds more on its taskbar.
+
+   If no task can be started, the app runs here, directly, exactly as
+   it did before 0.9.6. The spawn has already said why in the log.
+   ════════════════════════════════════════════════════════════════════ */
+typedef struct { void (*fn)(void); const char *name; int fits; } app_launch_t;
+
+static void app_task_entry(void *arg)
+{
+    app_launch_t L = *(app_launch_t *)arg;
+    kfree(arg);
+    app_run_inline(L.fn, L.name, L.fits);
+}
+
+/* ── ONE OF EACH ─────────────────────────────────────────────────────
+   Opening an app that is already open brings the open one forward
+   instead of starting a second. Two Notes would each save over the
+   other's NOTES.TXT, and two Settings would each write the config from
+   what it read when it opened. The Shell is the exception: several
+   shells is a thing people want.
+
+   Which task runs which app is recorded here, by slot AND task id --
+   a slot is reused when its task ends, and an id is not. */
+static void   (*slot_fn[TASK_MAX])(void);
+static uint32_t slot_id[TASK_MAX];
+
+static int app_open_slot(void (*fn)(void))
+{
+    if(fn == app_shell) return -1;
+    for(int s = 1; s < TASK_MAX; s++){
+        int st = task_state(s);
+        if((st == TS_READY || st == TS_WAIT) && slot_fn[s] == fn &&
+           slot_id[s] == task_id(s))
+            return s;
+    }
+    return -1;
+}
+
+static void desktop_run_app(void (*fn)(void), const char *name, int fits)
+{
+    if(!fn) return;
+    if(task_ready() && !task_locked()){
+        int open = app_open_slot(fn);
+        if(open >= 0){
+            if(open != task_current()){
+                task_set_front(open);
+                task_wait_front();
+            }
+            return;
+        }
+        app_launch_t *L = (app_launch_t *)kmalloc(sizeof *L);
+        if(L){
+            int tk = app_tasking(fn);
+            L->fn = fn; L->name = name; L->fits = fits;
+            int s = task_spawn(name ? name : "an app", app_task_entry, L,
+                               tk == TK_RUN ? TP_RUN : TP_PAUSE);
+            if(s >= 0){
+                slot_fn[s] = fn; slot_id[s] = task_id(s);
+                task_set_front(s);
+                task_wait_front();
+                return;
+            }
+            kfree(L);
+        }
+    }
+    app_run_inline(fn, name, fits);
+}
+
+/* Bring an open task forward from the desktop, and wait to be brought
+   back -- the taskbar's click and the shell's `fg`. */
+int desktop_switch_to(int slot)
+{
+    if(!task_ready() || slot == task_current()) return 0;
+    if(task_set_front(slot) != 0) return -1;
+    task_wait_front();
+    return 0;
 }
 
 /* v0.9.5: open a registered app by id from outside the desktop -- the
@@ -3518,6 +3723,8 @@ void desktop_layout_audit(void)
    DESKTOP MAIN LOOP
    ================================================================ */
 void desktop_run(void){
+    task_set_name("Desktop");      /* v0.9.6: slot 0, after Shell Mode */
+    task_set_policy(TP_PAUSE);     /* ... whose prompt left it set to run */
     /* v0.7.18: the chrome is derived from vga_rows()/vga_cols() now, so the
        desktop no longer force-switches the display and the user's chosen mode
        survives opening it.  (Apps launched from here still lay out for 80x25
@@ -3658,6 +3865,9 @@ void desktop_run(void){
                        other width. ui.c owns the arithmetic now, so the
                        hit box and the paint cannot drift apart. */
                     if(ui_taskbar_notif_hit(mx,my)){ notif_center(); needs_draw=1; }
+                    /* v0.9.6: an open app's chip brings it forward. */
+                    { int sl = task_chip_hit(mx,my);
+                      if(sl > 0){ desktop_switch_to(sl); needs_draw=1; } }
                 } else if(menu_state==1||menu_state==2){
                     /* Category item click */
                     if(mx<MENU_W&&my>=MENU_ITEM_Y&&my<MENU_ITEM_Y+NTOP){

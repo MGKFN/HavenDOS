@@ -92,12 +92,12 @@ BUGS = [
      "list: 80x25 still works, so every screenshot anybody has looks "
      "identical. Only a grid that is not one of the four register sets "
      "is refused, on a console with no registers",
-     """int vga_set_mode(int cols, int rows){
-    g_mode_why = VGA_MODE_OK;
+     # Re-anchored at v0.9.6: vga_set_mode() first refuses from a
+     # console that is not on the screen, and then reaches this branch.
+     """    if(!g_vis){ g_mode_why = VGA_MODE_EHIDDEN; return 0; }
 
     if(fbc_active){""",
-     """int vga_set_mode(int cols, int rows){
-    g_mode_why = VGA_MODE_OK;
+     """    if(!g_vis){ g_mode_why = VGA_MODE_EHIDDEN; return 0; }
     if(cols!=80 && cols!=90){ g_mode_why = VGA_MODE_ETEXT; return 0; }
     if(rows!=25 && rows!=50 && rows!=30 && rows!=60){
         g_mode_why = VGA_MODE_ETEXT; return 0; }
@@ -480,6 +480,40 @@ int  vga_cols(void){ return g_cols; }"""),
 # Must NOT be caught. A comment reworded: no behaviour changes, so a
 # catch here means the loop is restoring badly or the suite is
 # asserting something that is not behaviour. See tools/inject.py.
+BUGS += [
+    ("a hidden console paints the screen",
+     "v0.9.6: the app behind the front draws over the app in front -- "
+     "two apps on one screen, cell by cell, whichever drew last",
+     """    if (!g_vis) return;                 /* a console behind the front */""",
+     """    /* every console paints */"""),
+    ("bringing a console forward does not repaint it",
+     "v0.9.6: Alt+Tab shows the new app's frame only where it happens to "
+     "draw next; everywhere else the old app stays on screen",
+     """    if(g_vis && g_console_ready && !defer_depth){
+        vga_flush();
+        update_hw_cursor();
+    }
+}
+
+void vga_set_visible(int on)""",
+     """}
+
+void vga_set_visible(int on)"""),
+    ("a hidden console may set the mode",
+     "v0.9.6: a task behind the front reprograms the panel and blanks it "
+     "under the app in front, and every other console's layout is wrong",
+     """    if(!g_vis){ g_mode_why = VGA_MODE_EHIDDEN; return 0; }
+
+    if(fbc_active){""",
+     """
+    if(fbc_active){"""),
+    ("the viewport does not travel with its console",
+     "v0.9.6: a boxed app's viewport is applied to the next task too, so "
+     "a full-screen app comes back squeezed into an 80x25 box",
+     """    g_vp_x = c->vp_x; g_vp_y = c->vp_y; g_vp_w = c->vp_w; g_vp_h = c->vp_h;""",
+     """    /* viewport not restored */"""),
+]
+
 HARMLESS = (
     "a comment is reworded (must not be caught)",
     "nothing about the code changed",

@@ -18,6 +18,14 @@ void speaker_off(void){
     outb(0x61,inb(0x61)&~0x03);
 }
 
+/* v0.9.6: start a tone and return, for a caller that times the note
+   itself. speaker_beep() holds the CPU for the note's length in a busy
+   loop -- which is also not real time: it is calibrated in loop turns,
+   so its notes are as long as the machine is slow. The Music Player
+   times its notes with kpoll_sleep_ms() instead, which follows the
+   clock and lets other tasks run while the note sounds. 0 stops. */
+void speaker_tone(uint32_t freq){ speaker_on(freq); }
+
 static void busy_wait(volatile uint32_t n){ while(n--) __asm__ volatile("nop"); }
 
 void speaker_beep(uint32_t freq, uint32_t ms){

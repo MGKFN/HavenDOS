@@ -1,13 +1,117 @@
 # HavenDOS — handoff, 15 November 2026
 
-Current release: **v0.9.5.1** (channel Beta, codename "Hephaestus"). Paste
+Current release: **v0.9.6** (channel Beta, codename "Daedalus"). Paste
 this file into a new chat to pick up where this left off.
 
-## START HERE: 0.9.5.1 — THE MODERN LOOK EVERYWHERE, NEW GAMES AND APPS
+## START HERE: 0.9.6 "DAEDALUS" — SEVERAL APPS AT ONCE
+
+Kyan chose both halves of the old multitasking promise: cooperative
+tasks with background jobs, and Alt+Tab between open apps that keep
+their state. Both are in. `changelogs/CHANGELOG-v0.9.6.md` has all of
+it; the design argument is the comment at the top of `include/task.h`.
+**Read that comment before touching anything that waits.**
+
+- **Every app is a task** (`kernel/task.c`): its own 96 KB stack with a
+  canary, its own console (`vga_ctx_t`), its own crash guard
+  (`appguard_ctx_t`). Slot 0 is the boot context: the desktop, or the
+  shell in Shell Mode. At most 8 tasks (`TASK_MAX`).
+- **One task is in front** and owns the screen, keys and mouse buttons.
+  The others are PAUSED (they stop at their next keyboard read; the
+  default) or RUNNING (they carry on and draw into their own console).
+  `task_set_policy()` is per task and apps change it as they go:
+  - the shell is paused at its prompt and running during a command;
+  - the Music Player runs only while a song plays;
+  - the Stopwatch runs only while it counts.
+- **Cooperative.** A switch happens only where `kernel_poll()` may
+  already run: `keyboard_getchar()` (through a hook the task layer
+  registers), `kpoll_sleep_ms()` and `ui_idle()`.
+  - `task_yield()` refuses on `kpoll_depth()>0`, inside `kernel_poll()`,
+    or inside `task_lock()`.
+  - `sleep_ms()` does NOT switch and must not.
+  - `tools/check_task_sites.py` (in `make`) refuses task calls in
+    `drivers/ usb/ net/ fs/`, a second caller of `task_switch_stack()`,
+    and `sleep_ms()` in an app the registry marks `TK_RUN`.
+- **Opening an app** (`desktop_run_app()`, `shell/desktop.c`):
+  - It spawns a task, brings it to the front and waits in
+    `task_wait_front()`. That returns when the caller is in front again:
+    the app ended, or the person switched back.
+  - The old body is `app_run_inline()`, used when no task can start (no
+    slot, no memory, safe mode, `notasks` on the boot line).
+  - Opening an app that is already open brings it forward (one of each;
+    the Shell is exempt).
+  - The registry's new `tasking` field is `TK_PAUSE`, `TK_RUN`
+    (Stopwatch, Music Player) or `TK_SOLO` (Install: holds
+    `task_lock()`, no switching).
+- **Alt+Tab** (`shell/taskswitch.c`):
+  - Alt is now tracked on PS/2 (left 38, right E0 38) and on the USB
+    modifier byte (`keyboard_usb_mods()`).
+  - Alt+Tab produces `KEY_TASKSW` (Shift: `KEY_TASKSW_BACK`), which is
+    consumed inside `keyboard_getchar()` and never reaches an app.
+  - The switcher draws over a COPY of the current console and loads the
+    real one back, so the app under it never knows.
+  - The list is in MRU order. Letting go of Alt commits; Enter commits;
+    Esc cancels; X closes the highlighted app.
+- **The desktop bar** shows a chip per open app: grey when paused, green
+  when running behind, "Job N" for a job. Click one to bring it forward.
+- **Shell:**
+  - `ps` (alias `jobs`) lists tasks;
+  - `fg <id|name>` brings one forward; `kill <id|name>` closes one;
+  - `<command> &` runs it as a job: its own task and console, running
+    behind. When it ends it raises an alert, pauses, and any key closes
+    it.
+  - `ping` yields between its echoes. `resolution` refuses while other
+    apps are open.
+- **Security, all three found while writing this:**
+  - The front is PINNED (`task_pin_front()`) while `lock` or
+    `login_screen()` is up. `task_set_front()` refuses, so Alt+Tab
+    cannot leave a lock screen.
+  - When a DIFFERENT user signs in, the previous user's apps are closed.
+    Otherwise their admin shell is one Alt+Tab away for the next person.
+  - The installer is `TK_SOLO`.
+- **Fixed on the way:**
+  - The Music Player had never played a note: `getchar()!=0`, where "no
+    key" is -1.
+  - `tools/make_appreg_inc.py` skipped every registry row with `fits`
+    set (43 of 50 apps counted); it now fails the build on an unparsed
+    row.
+  - The QEMU boot harnesses had not booted since 0.9.5.1, which clears
+    the screen before the welcome. They wait for the prompt too now.
+- **Tests:**
+  - new `test_task`, 99 checks, `-m32`, real switches on real stacks;
+  - `check_task_suite.py`: 19 of 19 caught;
+  - `test_console` +17 (per-task consoles); `check_console_suite.py` +4,
+    all caught;
+  - `test_kpoll` +2; `test_usbhid` +6;
+  - **`make test`: 7138/7138 across 68 suites.**
+  - QEMU: `appguard_boot.py` 19/19 (four crashes, each inside a task),
+    `helios_boot.py` 32/32.
+  - Scripted runs covered the switcher, chips, the Music Player behind
+    (its switch count climbing), a `ping &` job, `kill`, the lock, and
+    opening an open app.
+- **Screenshots:** `HavenDOS-0.9.6-screenshots.zip`. The driver scripts
+  were in `/home/claude/probe` and are not in the repo.
+- **Limits:**
+  - A task runs until it waits: `wget ... &` blocks until done (one
+    `http_get()`), and so does anything that computes without waiting.
+  - No memory protection (unchanged).
+  - No guard page: a stack overflow is caught by the canary at the next
+    switch, and memory below the stack is not repaired.
+  - `kill` leaks what the task allocated, unless it set a cleanup hook.
+  - Two tasks on the network share UDP's one receive slot.
+- **Seen once, not reproduced:** in one scripted run, dismissing a crash
+  notice with Enter left a second Shell open, as if the Desktop had also
+  seen the Enter. The same script run again, and the same steps by
+  themselves with Enter and with X, all behaved. If it happens on the
+  HP, note what was open.
+- **Not proved on the HP.** The framebuffer console and the USB
+  keyboard's Alt bit are what the laptop has to confirm: hold Alt, tap
+  Tab, and see whether the panel comes up and switches on release.
+
+## 0.9.5.1 — THE MODERN LOOK EVERYWHERE, NEW GAMES AND APPS
 
 Kyan (15 Nov) liked 0.9.5's Settings and System look and asked for it on
 every app and screen, including login, setup and the installer, plus new
-games and apps. Done. **NEXT is still 0.9.6 multitasking** (below).
+games and apps. Done. Multitasking followed in 0.9.6 (above).
 
 - **The look is a set of rules plus helpers in `shell/ui.c`**, with
   prototypes in `include/theme.h`. The rules are in the comment block
@@ -159,19 +263,28 @@ promise. All done except multitasking, which is **0.9.6** (see NEXT).
   migration (old index 0 became Midnight), and the old desktop pins
   becoming one System icon.
 
-## NEXT: 0.9.6 — COOPERATIVE MULTITASKING (Kyan chose both options)
+## NEXT, AFTER 0.9.6
 
-- **Cooperative tasks:** kernel tasks that switch when an app waits for a
-  key (`keyboard_waitchar`) or calls yield; background jobs.
-- **Switch between apps:** Alt+Tab between open apps, each keeping its
-  state, with background tasks still running.
-- Do a design pass first. Things to settle:
-  - per-task stacks;
-  - a per-task console (the shadow buffer per app);
-  - how `appguard` and `kpoll` interact with switching;
-  - which apps are safe to suspend mid-loop.
-- `ps` (shell.c) and the System app's "Tasks" line will need updating
-  when tasks exist.
+Nothing is decided; these are the candidates, most useful first:
+
+- **0.9.6 on the HP:**
+  - Alt+Tab with the USB keyboard: does the panel commit when Alt is
+    released?
+  - the chips on a 1024x768 or 1080p bar;
+  - the Music Player through the speaker while another app is in front.
+- **Still open from 0.9.5.1:**
+  - the "Welcome / Create new account" chooser on every boot while
+    `login_done` is unset;
+  - BOOT Chat closing at once with no server;
+  - the shell welcome's fortune wrapping mid-word.
+- **Tasks, next steps:**
+  - a cleanup hook for apps that hold a socket (BOOT Chat), so `kill`
+    can close it;
+  - let `wget` yield between reads so a download can run as a job;
+  - a receive slot per task in `net/udp.c`.
+- **The display road** (0.9.2.2): the monitor lit but showed no picture;
+  `gfx color` photos are still owed (`docs/GFX-ON-HARDWARE-TEST.md`
+  steps 7-8).
 
 ## 0.9.4.1 (13 Nov): FIXES FOUND TAKING THE 1.0 SCREENSHOTS
 
@@ -3312,11 +3425,20 @@ Left, and each has its reason:
 | `check_gfx_readonly.py` | any write in `drivers/xedisp.c`, `shell/gfxcmd.c` or `drivers/edid.c`; in `drivers/xegmbus.c`, any write outside `gmbus_wr()` or a `gmbus_wr()` without its range guard; in `drivers/xemode.c`, any write outside `xm_wr()`, an `xm_wr()` that writes before asking `xm_allowed()`, or an `xm_allowed()` that names an offset of pipe A's path (0.9.0-0.9.2) |
 | `check_harnesses.py` | an injection harness whose baseline will not build |
 | `check_kpoll_sites.py` | `kernel_poll()` outside two named files; a polling sleep in a driver; a client registered outside four |
+| `check_task_sites.py` | (0.9.6) a task call in `drivers/ usb/ net/ fs/`; `task_switch_stack()` outside `kernel/task.c`; `sleep_ms()` in a `TK_RUN` app |
 | `check_kpoll_guard.py` | an entry point that loses its `kpoll_enter()`/`kpoll_leave()` bracket, or returns before the leave; a second copy of the rescan sequence |
 | `check_console_grid.py` | a compile-time constant used as a stride in `drivers/vga.c`; a cell buffer not sized by the budget; the two grid maxima collapsing into one |
 
 Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
+
+## Testing, as of 0.9.6
+
+**7138 of 7138 checks across 68 suites** (0.9.6: `test_task` 99 new,
+`test_console` 292 -> 309, `test_kpoll` 156 -> 158, `test_usbhid` 30 -> 36;
+`check_task_suite.py` 19/19, `check_console_suite.py` 35/35,
+`check_kpoll_suite.py` 17/17; QEMU `appguard_boot.py` 19/19,
+`helios_boot.py` 32/32).
 
 ## Testing, as of 0.9.5
 

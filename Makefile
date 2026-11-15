@@ -20,7 +20,7 @@ LDFLAGS = -m elf_i386 -T boot/linker.ld --oformat elf32-i386 \
 
 SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/machine.c shell/login.c shell/bootanim.c shell/screensaver.c shell/tetris.c \
           drivers/speaker.c drivers/mode13.c drivers/vesa.c \
-          kernel/string.c kernel/idt.c kernel/pit.c kernel/kpoll.c kernel/appguard.c kernel/bootsplash.c kernel/pmm.c kernel/heap.c kernel/errors.c kernel/klog.c \
+          kernel/string.c kernel/idt.c kernel/pit.c kernel/kpoll.c kernel/task.c kernel/appguard.c kernel/bootsplash.c kernel/pmm.c kernel/heap.c kernel/errors.c kernel/klog.c \
           drivers/vga.c drivers/keyboard.c drivers/mouse.c \
           drivers/ata.c drivers/ahci.c drivers/atapi.c drivers/pci.c drivers/pci_bar.c drivers/uhci.c drivers/nvme.c drivers/virtio.c \
           drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/xedisp.c drivers/xegmbus.c drivers/xemode.c drivers/edid.c drivers/rtc.c \
@@ -28,7 +28,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
-          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/mines.c shell/mines_model.c shell/neofetch.c
+          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c
 
 SRCS_S  = boot/boot.S
 OBJS_C  = $(SRCS_C:.c=.o)
@@ -171,6 +171,7 @@ version-sync: include/version.h \
 	python3 tools/check_klog_fmt.py
 	python3 tools/check_usb_buffers.py
 	python3 tools/check_kpoll_sites.py
+	python3 tools/check_task_sites.py
 	python3 tools/check_kpoll_guard.py
 	python3 tools/check_console_grid.py
 	python3 tools/check_tls_stages.py
@@ -595,7 +596,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -Wno-int-to-pointer-cast \
 	           -o /tmp/hd_tcon tests/test_console.c && \
-	  python3 tools/run_suite.py --name test_console --min 217 -- /tmp/hd_tcon
+	  python3 tools/run_suite.py --name test_console --min 309 -- /tmp/hd_tcon
 	@echo "── test_der ───────────────────────────────"
 	@echo "  writing DER, checked against the bytes -- stage 3"
 	@# -fno-builtin and the kernel's own string.c: net/der.c net/x509.c's
@@ -691,7 +692,18 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tkp tests/test_kpoll.c && \
-	  python3 tools/run_suite.py --name test_kpoll --min 156 -- /tmp/hd_tkp
+	  python3 tools/run_suite.py --name test_kpoll --min 158 -- /tmp/hd_tkp
+	@echo "── test_task ──────────────────────────────"
+	@echo "  cooperative tasks, switched for real on real stacks"
+	@# v0.9.6. Built -m32 so kernel/task.c's switch -- eight instructions,
+	@# none privileged -- runs for real in this process: every task in
+	@# the suite is a C function on the stack task_spawn() gave it. The
+	@# console and the crash guard are fakes that remember which one is
+	@# live, so "a task runs on its own console" is checked, not assumed.
+	@$(TESTCC) -m32 -O2 -fno-builtin -Iinclude -Itests \
+	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
+	           -o /tmp/hd_ttask tests/test_task.c && \
+	  python3 tools/run_suite.py --name test_task --min 99 -- /tmp/hd_ttask
 	@echo "── test_netdev ────────────────────────────"
 	@echo "  one NIC layer, its two orders, and what it refuses"
 	@# NET_NO_HW keeps the PCI drivers out: this suite links net/netdev.c
@@ -717,7 +729,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -no-pie -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tuh tests/test_usbhid.c && \
-	  python3 tools/run_suite.py --name test_usbhid --min 30 -- /tmp/hd_tuh
+	  python3 tools/run_suite.py --name test_usbhid --min 36 -- /tmp/hd_tuh
 	@echo "── test_usbmux ────────────────────────────"
 	@echo "  the Apple Mobile Device channel, against a device that speaks it"
 	@$(TESTCC) -no-pie -Iinclude \

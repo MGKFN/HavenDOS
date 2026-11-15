@@ -99,7 +99,24 @@ int  vga_cols(void){ return (g_vp_w > 0) ? g_vp_w : g_cols; }
 int  vga_phys_rows(void){ return g_rows; }
 int  vga_phys_cols(void){ return g_cols; }
 
-static uint16_t shadow[VGA_CELLS_MAX];
+/* ── v0.9.6: THE SHADOW IS A POINTER NOW ─────────────────────────────
+   Each task has a console of its own (include/task.h), and a console
+   is a cell buffer plus the cursor, colour, viewport and frame depth
+   below. `shadow` points at the CURRENT task's buffer; shadow_boot is
+   slot 0's, the one the kernel booted with. Nothing that indexes
+   shadow[] had to change.
+
+   g_vis says whether the current console is the one on the screen.
+   Only the task in front paints: a hidden console draws into its own
+   buffer and put_cell(), vga_flush() and the caret do nothing to the
+   hardware. g_screen_owner is the buffer the screen last showed, so
+   bringing a different one forward repaints every cell from it -- an
+   app comes back exactly as it was left without drawing anything. */
+static uint16_t  shadow_boot[VGA_CELLS_MAX];
+static uint16_t *shadow = shadow_boot;
+static int       g_vis = 1;
+static const uint16_t *g_screen_owner = 0;
+static int       g_caret_idx = -1;      /* the framebuffer caret overlay */
 
 /* ── the framebuffer console ───────────────────────────────────────────
  *
@@ -496,6 +513,7 @@ static void fbc_put(int x, int y, uint16_t entry) { fbc_put_ex(x, y, entry, 1); 
  */
 static inline void put_cell(int idx, uint16_t entry)
 {
+    if (!g_vis) return;                 /* a console behind the front */
     if (fbc_active) {
         if (!fbc_painted_valid) fbc_forget();
         if (fbc_painted[idx] == entry) return;      /* already on screen */
@@ -746,6 +764,7 @@ const char *vga_mode_why_name(void){
         case VGA_MODE_ERANGE:  return "outside the grid limits";
         case VGA_MODE_EBUDGET: return "over the cell budget";
         case VGA_MODE_EPANEL:  return "will not fit this panel";
+        case VGA_MODE_EHIDDEN: return "this console is not on the screen";
     }
     return "unknown";
 }
@@ -776,6 +795,12 @@ const char *vga_mode_why_name(void){
  * skip.  A guard that stops three of five writes is not a guard. */
 int vga_set_mode(int cols, int rows){
     g_mode_why = VGA_MODE_OK;
+
+    /* v0.9.6: a console that is not on the screen does not own the
+       display. A task behind the front that set a mode would blank and
+       reprogram the panel under the app in front -- and the other
+       tasks' buffers are laid out for the old grid. */
+    if(!g_vis){ g_mode_why = VGA_MODE_EHIDDEN; return 0; }
 
     if(fbc_active){
         if(cols < 1 || rows < 1 ||
@@ -1191,6 +1216,20 @@ uint16_t vga_shadow_read(int x, int y){
    one pass, so the screen updates atomically from the user's
    perspective — no intermediate blank frame is ever visible.       */
 void vga_flush(void){
+    if(!g_vis) return;
+    if(g_screen_owner != shadow){
+        /* A different console is coming forward. Nothing has to be
+           forgotten: fbc_painted[] records what is ON THE SCREEN, not
+           what any console holds -- a hidden console never paints, and
+           the caret marks the cell it covers as unknown -- so the diff
+           below repaints exactly the cells where the new console
+           differs from what is showing. (The first version cleared the
+           record and repainted every cell on every switch; the injection
+           harness showed that removing the clear changed nothing.) Text
+           memory is diffed against directly in the same way. */
+        g_screen_owner = shadow;
+        g_caret_idx = -1;
+    }
     if(fbc_active){
         if(!fbc_painted_valid) fbc_forget();
         for(int i=0;i<g_rows*g_cols;i++)
@@ -1215,6 +1254,7 @@ void vga_present(void){
 }
 
 static void update_hw_cursor(void){
+    if(!g_vis) return;                  /* only the front has a caret */
     /* cur_x/cur_y are LOGICAL. The CRTC and the framebuffer caret are
        both physical, so the caret of an app in a centred viewport
        would otherwise blink in the top-left of the panel while its
@@ -1234,9 +1274,12 @@ static void update_hw_cursor(void){
            unknown instead, so a later write of the same character still
            repaints and cannot leave an inverted block behind; putting the old
            cell back records normally, because that value IS the true one. */
-        static int last_idx=-1;
-        if(last_idx>=0 && last_idx<g_rows*g_cols)
-            fbc_put_ex(last_idx%g_cols,last_idx/g_cols,shadow[last_idx],1);
+        /* This console has not been painted since it came forward (it
+           is mid-frame); the frame's end repaints it, and the caret is
+           drawn on the next move after that. */
+        if(g_screen_owner != shadow) return;
+        if(g_caret_idx>=0 && g_caret_idx<g_rows*g_cols)
+            fbc_put_ex(g_caret_idx%g_cols,g_caret_idx/g_cols,shadow[g_caret_idx],1);
         int idx=cpy*g_cols+cpx;     /* physical: see the note above */
         if(idx>=0 && idx<g_rows*g_cols){
             uint16_t e=shadow[idx];
@@ -1244,7 +1287,7 @@ static void update_hw_cursor(void){
             fbc_put_ex(cpx,cpy,sw,0);
             if(!fbc_painted_valid) fbc_forget();
             fbc_painted[idx]=0xFFFF;
-            last_idx=idx;
+            g_caret_idx=idx;
         }
         return;
     }
@@ -1253,6 +1296,7 @@ static void update_hw_cursor(void){
 }
 
 void vga_init(void){
+    shadow = shadow_boot; g_vis = 1; g_screen_owner = shadow;
     cur_x=0;cur_y=0;cur_fg=VGA_LIGHT_GREY;cur_bg=VGA_BLACK;
     for(int i=0;i<VGA_CELLS_MAX;i++) shadow[i]=0xFFFF;
     vga_clear(); vga_flush(); update_hw_cursor();
@@ -1398,3 +1442,77 @@ void vga_getchar_at(int x, int y, uint8_t *ch, uint8_t *attr){
 void vga_putraw_at(uint8_t ch, uint8_t attr, int x, int y){
     vga_write(x,y,(uint16_t)((attr<<8)|ch));
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   PER-TASK CONSOLES.  v0.9.6.
+
+   kernel/task.c saves the current console when it switches a task out
+   and loads the next task's when it switches one in. A console is the
+   cell buffer and every piece of state an app changes by drawing:
+   cursor, colour, viewport, frame depth and the clip count the desktop
+   reads after an app. The grid itself (g_cols/g_rows) is the panel's
+   and is shared -- which is why vga_set_mode() refuses from a console
+   that is not on screen, and why `resolution` refuses with other apps
+   open.
+   ════════════════════════════════════════════════════════════════════ */
+void vga_ctx_init(vga_ctx_t *c, uint16_t *cells)
+{
+    uint16_t blank = make_entry(' ', VGA_LIGHT_GREY, VGA_BLACK);
+    for(int i = 0; i < VGA_CELLS_MAX; i++) cells[i] = blank;
+    c->cells = cells;
+    c->cur_x = c->cur_y = 0;
+    c->fg = VGA_LIGHT_GREY; c->bg = VGA_BLACK;
+    c->vp_x = c->vp_y = c->vp_w = c->vp_h = 0;
+    c->defer = 0;
+    c->visible = 0;
+    c->clip_n = 0; c->clip_maxx = -1; c->clip_maxy = -1;
+}
+
+void vga_ctx_save(vga_ctx_t *c)
+{
+    c->cells = shadow;
+    c->cur_x = cur_x; c->cur_y = cur_y;
+    c->fg = cur_fg;   c->bg = cur_bg;
+    c->vp_x = g_vp_x; c->vp_y = g_vp_y; c->vp_w = g_vp_w; c->vp_h = g_vp_h;
+    c->defer = defer_depth;
+    c->visible = g_vis;
+    c->clip_n = g_clip_n; c->clip_maxx = g_clip_maxx; c->clip_maxy = g_clip_maxy;
+}
+
+void vga_ctx_load(const vga_ctx_t *c)
+{
+    shadow = c->cells ? c->cells : shadow_boot;
+    cur_x = c->cur_x; cur_y = c->cur_y;
+    cur_fg = c->fg;   cur_bg = c->bg;
+    g_vp_x = c->vp_x; g_vp_y = c->vp_y; g_vp_w = c->vp_w; g_vp_h = c->vp_h;
+    defer_depth = c->defer;
+    g_vis = c->visible;
+    g_clip_n = c->clip_n; g_clip_maxx = c->clip_maxx; g_clip_maxy = c->clip_maxy;
+    /* Coming forward: paint it now, unless it is mid-frame -- then the
+       frame's own end commits it, which is what the frame is for. */
+    if(g_vis && g_console_ready && !defer_depth){
+        vga_flush();
+        update_hw_cursor();
+    }
+}
+
+void vga_set_visible(int on)
+{
+    g_vis = on ? 1 : 0;
+    if(g_vis && g_console_ready && !defer_depth){
+        vga_flush();
+        update_hw_cursor();
+    }
+}
+
+int       vga_visible(void)    { return g_vis; }
+
+/* A task's buffer is about to be freed. If the screen last showed it,
+   forget that -- the heap may hand the same address to the next task's
+   console, and "the screen already shows this buffer" would then skip
+   the repaint and leave the dead task's last frame up. */
+void vga_forget_cells(const uint16_t *cells)
+{
+    if(g_screen_owner == cells) g_screen_owner = 0;
+}
+uint16_t *vga_boot_cells(void) { return shadow_boot; }

@@ -137,6 +137,9 @@ void utoa(uint32_t v, char *buf, int base)
     buf[n] = 0;
 }
 
+#include "taskstub.inc"     /* v0.9.6: tasks off */
+void notif_push(const char *m){ (void)m; }
+void klog(int l, const char *f, ...){ (void)l; (void)f; }
 #include "../shell/login.c"
 
 /* ── checks ──────────────────────────────────────────────────────── */

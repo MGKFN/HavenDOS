@@ -23,6 +23,7 @@ void irq_enable_basic(void);
 void irq_enable_mouse(void);
 void pit_init(uint32_t hz);
 #include "../include/kpoll.h"
+#include "../include/task.h"
 #include "../include/pit.h"
 void pmm_init(uint32_t mem_size);
 void heap_init(void);
@@ -299,6 +300,7 @@ static void diag_leds_binary(uint32_t answer){
     diag_leds(m);
 }
 
+static int g_no_tasks = 0;      /* v0.9.6: `notasks` on the command line */
 static void apply_cmdline(const char *s){
     if(!s||!s[0]) return;
     const char *p = s;
@@ -330,6 +332,10 @@ static void apply_cmdline(const char *s){
         /* v0.8.9.6: the way back from write-combining, if a machine
            turns up whose framebuffer does not like it. */
         else if(tok_eq(p,"nowc"))         highfb_nowc=1;
+        /* v0.9.6: apps run one at a time, called directly, exactly as
+           in 0.9.5 -- the way back if task switching misbehaves on some
+           machine. Safe mode implies it. */
+        else if(tok_eq(p,"notasks"))      g_no_tasks=1;
         else if(tok_eq(p,"live"))         g_live=1;
         /* v0.8.5.2 -- the escape hatch for a firmware that will not hand
            the xHCI over. If SMM keeps its USB legacy emulation running,
@@ -1527,6 +1533,22 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
 
     /* First-boot after fresh install: run post-install setup wizard */
     int first_boot = !cfg_setup_done();
+
+    /* v0.9.6: tasks. After the heap and the console, before anything
+       that can open an app. Not in safe mode, which keeps the 0.9.5
+       behaviour of one program at a time, and not with `notasks`. */
+    if(boot_mode != MODE_SAFE && !g_no_tasks){
+        extern void task_init(void);
+        extern void taskswitch_init(void);
+        task_init();
+        taskswitch_init();                 /* Alt+Tab: shell/taskswitch.c */
+        if(boot_mode == MODE_SHELL) task_set_name("Shell");
+        klog(KLOG_OK, "tasks: on, up to %d open at once (Alt+Tab switches)",
+             TASK_MAX);
+    } else {
+        klog(KLOG_INFO, "tasks: off (%s) -- one app at a time",
+             g_no_tasks ? "`notasks`" : "safe mode");
+    }
 
     klog(KLOG_OK, "System ready");
 

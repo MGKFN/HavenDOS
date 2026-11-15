@@ -242,6 +242,7 @@ int  vga_set_mode(int cols, int rows);
 #define VGA_MODE_ERANGE  2   /* outside 1..VGA_COLS_MAX/VGA_ROWS_MAX     */
 #define VGA_MODE_EBUDGET 3   /* cols*rows over VGA_CELLS_MAX             */
 #define VGA_MODE_EPANEL  4   /* will not fit this panel even at scale 1  */
+#define VGA_MODE_EHIDDEN 5   /* v0.9.6: the console is not on the screen */
 int         vga_mode_why(void);
 const char *vga_mode_why_name(void);
 void vga_force_text_mode(void);          /* blind recovery to stock 80x25 */
@@ -261,3 +262,25 @@ void vga_getchar_at(int x, int y, uint8_t *ch, uint8_t *attr);
 void vga_putraw_at(uint8_t ch, uint8_t attr, int x, int y);
 void vga_shadow_write(int x, int y, uint16_t val);
 uint16_t vga_shadow_read(int x, int y);
+
+/* ── v0.9.6: a console per task ───────────────────────────────────────
+   include/task.h says what a task is; drivers/vga.c says why the grid
+   is shared and everything else is not. `cells` is VGA_CELLS_MAX long. */
+typedef struct {
+    uint16_t   *cells;
+    int         cur_x, cur_y;
+    vga_color_t fg, bg;
+    int         vp_x, vp_y, vp_w, vp_h;
+    int         defer;
+    int         visible;
+    uint32_t    clip_n;
+    int         clip_maxx, clip_maxy;
+} vga_ctx_t;
+
+void      vga_ctx_init(vga_ctx_t *c, uint16_t *cells);
+void      vga_ctx_save(vga_ctx_t *c);
+void      vga_ctx_load(const vga_ctx_t *c);
+void      vga_set_visible(int on);
+int       vga_visible(void);
+uint16_t *vga_boot_cells(void);
+void      vga_forget_cells(const uint16_t *cells);

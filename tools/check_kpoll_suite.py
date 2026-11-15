@@ -209,14 +209,15 @@ BUGS = [
     ("the polling sleep polls once, at the end",
      "a four-second DHCP wait that polls after its four seconds has "
      "not polled during the only four seconds that mattered",
+     # Re-anchored at v0.9.6: the loop gained a yield between the poll
+     # and the clock check (other tasks run while this one sleeps).
      """    for(;;){
-        kernel_poll();
-        if((get_ticks() - start) >= want) return;
-        sleep_ms(10);
-    }""",
+        kernel_poll();""",
      """    sleep_ms(ms);
     kernel_poll();
-    (void)start; (void)want;"""),
+    (void)start; (void)want; return;
+    for(;;){
+        kernel_poll();"""),
 
     ("`late` is not counted",
      "the only number that can tell 'the work is slow' from 'the poll "
@@ -234,6 +235,14 @@ BUGS = [
      """    for(int i = 0; i < KPOLL_REASONS; i++) g_refusals[i] = 0;""",
      """    /* counters not cleared */"""),
 ]
+
+BUGS.append(
+    ("the polling sleep does not yield",
+     "v0.9.6: an app running behind the front -- the Stopwatch, the "
+     "Music Player -- waits here, and without the yield it holds the "
+     "app in front up for every one of those waits",
+     """        if(g_yield) g_yield();""",
+     """        /* no yield */"""))
 
 HARMLESS = (
     "a comment is reworded (must not be caught)",

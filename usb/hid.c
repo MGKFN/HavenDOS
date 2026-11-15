@@ -51,6 +51,7 @@
 #include "../include/klog.h"
 
 extern void keyboard_inject(int c);
+extern void keyboard_usb_mods(uint8_t mods);   /* v0.9.6: Alt, for Alt+Tab */
 extern void mouse_feed(uint8_t data);
 /* v0.8.8.1: and the pointer-present count, which is drivers/mouse.c's
    because "is there a pointing device" is one question with two
@@ -149,12 +150,21 @@ static void keyboard_report(hid_t *h, const uint8_t *r)
     if ((r[0] & MOD_GUI) && !(h->last[0] & MOD_GUI))
         keyboard_inject(KEY_SUPER);
 
+    /* v0.9.6: Alt is a modifier bit here too (0x04 left, 0x40 right),
+       and the switcher needs to see it RELEASED -- so the whole byte is
+       handed over on every report, not just its edges. */
+    keyboard_usb_mods(r[0]);
+
     for (i = 2; i < 8; i++) {
         uint8_t u = r[i];
         int was = 0;
         if (u == 0 || u == 1) continue;        /* 1 is "too many keys" */
         for (j = 2; j < 8; j++) if (h->last[j] == u) { was = 1; break; }
         if (was) continue;
+        if (u == 0x2B && (r[0] & 0x44)) {      /* Alt+Tab         */
+            keyboard_inject((r[0] & 0x22) ? KEY_TASKSW_BACK : KEY_TASKSW);
+            continue;
+        }
         {
             int k = usage_to_key(u, r[0]);
             if (k) keyboard_inject(k);

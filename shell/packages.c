@@ -18,6 +18,8 @@
  */
 
 #include "../include/vga.h"
+#include "../include/task.h"
+#include "../include/kpoll.h"
 #include "version.h"
 #include "../include/string.h"
 #include "../include/types.h"
@@ -49,6 +51,8 @@ extern void sleep_ms(uint32_t);
 extern int  keyboard_getchar(void);
 extern int  keyboard_waitchar(void);
 extern void speaker_beep(uint32_t freq, uint32_t ms);
+extern void speaker_tone(uint32_t freq);
+extern void speaker_off(void);
 extern void utoa(uint32_t n, char *buf, int base);
 extern void itoa(int32_t  n, char *buf, int base);
 /* rtc seconds via rtc_get_time */
@@ -383,10 +387,16 @@ void pkg_music(void)
     ui_kit_footer("1-9 play a song   any key stops it   Q quit");
 
     while(1) {
+        /* v0.9.6: in the song list there is nothing to do behind the
+           front, so it PAUSES there like any app, and only runs behind
+           while a song is playing -- otherwise it spins in this wait
+           against whatever is in front, a switch per turn of each loop. */
+        task_set_policy(TP_PAUSE);
         int k=keyboard_waitchar();
         if(k=='q'||k=='Q'||k==27) break;
         int si=k-'1';
         if(si<0||si>=SONG_COUNT) continue;
+        task_set_policy(TP_RUN);
 
         /* Clear status area */
         for(int x=0;x<80;x++) vga_putchar_at(' ',x,16,VGA_BLACK,VGA_BLACK);
@@ -394,13 +404,31 @@ void pkg_music(void)
         vga_puts_at(songs[si].name,23,16,VGA_LIGHT_CYAN,VGA_BLACK);
         vga_puts_at("Press any key to stop",29,18,VGA_DARK_GREY,VGA_BLACK);
 
+        /* v0.9.6: TWO FIXES.
+
+           It never played. "Any key stops it" was written as
+           `keyboard_getchar()!=0`, and "no key" is -1, not 0 -- so the
+           loop stopped before its first note, every time, on every
+           machine. The status line said "Now playing" over silence.
+
+           And it now plays BEHIND the front. Each note is started with
+           speaker_tone() and timed with kpoll_sleep_ms(), which follows
+           the clock and lets the other tasks run while the note sounds
+           -- so the song carries on while you Alt+Tab to something
+           else. Behind the front this task never gets a key (getchar
+           says "no key" to it), so only you, in front of it, can stop
+           the song. A gap between notes keeps repeated ones apart. */
         const note_t *m=songs[si].melody;
+        task_set_cleanup(speaker_off);   /* `kill` stops the sound   */
         for(int ni=0;m[ni].ms;ni++) {
-            if(keyboard_getchar()!=0) break;
-            if(m[ni].freq) speaker_beep(m[ni].freq,m[ni].ms);
-            else           sleep_ms(m[ni].ms);
+            if(keyboard_getchar()!=-1) break;
+            speaker_tone(m[ni].freq);
+            kpoll_sleep_ms(m[ni].ms);
+            speaker_off();
+            kpoll_sleep_ms(m[ni].freq ? 15 : 0);
         }
-        speaker_beep(0,0);
+        speaker_off();
+        task_set_cleanup(0);
 
         for(int x=0;x<80;x++) vga_putchar_at(' ',x,16,VGA_BLACK,VGA_BLACK);
         for(int x=0;x<80;x++) vga_putchar_at(' ',x,18,VGA_BLACK,VGA_BLACK);

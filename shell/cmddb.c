@@ -607,13 +607,38 @@ const cmddoc_t cmddb[] = {
       NULL,
       "date timer" },
 
-    { "ps", NULL, CDB_SYSTEM,
+    { "ps", "jobs", CDB_SYSTEM,
       "ps",
-      "What is running",
-      "Lists what is running. Today that is the kernel and the one app "
-      "or shell in front of you: HavenDOS runs one program at a time.",
-      NULL,
-      "system kpoll" },
+      "Open apps, jobs and the desktop",
+      "Lists every task: the desktop, each open app and each job, most "
+      "recently used first. STATE is \"in front\" for the one you are "
+      "using, \"running\" for one that carries on behind it, and "
+      "\"paused\" for one waiting to be brought back. STACK is how much "
+      "of its own stack it has used.\n\n"
+      "Alt+Tab switches between them. Tasks are off in safe mode and "
+      "with `notasks` on the boot line.",
+      "ps\tlist what is open",
+      "fg kill system" },
+
+    { "fg", NULL, CDB_SYSTEM,
+      "fg <id>\nfg <name>",
+      "Bring an open app or job forward",
+      "Brings an open task to the front, as Alt+Tab does, by the id `ps` "
+      "shows or the start of its name. The shell stays open behind it; "
+      "Alt+Tab comes back.",
+      "fg 3\tshow job 3\nfg notes\tback to Notes",
+      "ps kill" },
+
+    { "kill", NULL, CDB_SYSTEM,
+      "kill <id>\nkill <name>",
+      "Close an open app or job",
+      "Closes a task that is behind the front, by the id `ps` shows or "
+      "the start of its name. Use it on an app that is stuck, or a job "
+      "you no longer want. It is stopped where it was waiting; anything "
+      "it had allocated stays allocated until the next reboot. The "
+      "desktop and the task you type it in cannot be closed this way.",
+      "kill 4\tclose task 4",
+      "ps fg" },
 
     { "dmesg", NULL, CDB_SYSTEM,
       "dmesg\ndmesg . grep <word>",

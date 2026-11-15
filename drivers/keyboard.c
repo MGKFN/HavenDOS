@@ -16,6 +16,10 @@ extern void usb_hid_poll(void);
 static char kbd_buf[KBD_BUF];
 static int  kbd_head=0, kbd_tail=0;
 static int  shift=0, shift_l=0, shift_r=0, ctrl=0, caps=0, e0=0;
+/* v0.9.6: Alt, for Alt+Tab. PS/2 left (38) and right (E0 38) tracked
+   apart for the same reason the shifts are; USB reports its own in the
+   modifier byte (keyboard_usb_mods()). */
+static int  alt_l=0, alt_r=0, alt_usb=0;
 
 static const char sc_lo[128]={
     0,27,'1','2','3','4','5','6','7','8','9','0','-','=','\b',
@@ -83,7 +87,7 @@ static void process_sc(uint8_t sc){
                 case 0x1C: push_key('\n');  return; /* Num Enter   */
                 case 0x1D: ctrl=1;          return; /* Right Ctrl  */
                 case 0x35: push_key('/');   return; /* Num /       */
-                case 0x38: return;                  /* Right Alt   */
+                case 0x38: alt_r=1; return;         /* Right Alt   */
                 /* v0.8.8.4: both Windows keys, as one code. They used
                    to fall past this switch and be discarded, so the
                    key did nothing anywhere in the system. */
@@ -93,6 +97,7 @@ static void process_sc(uint8_t sc){
         } else {
             /* Break codes for extended modifier keys */
             if(sc==0x1D){ ctrl=0; return; }
+            if(sc==0x38){ alt_r=0; return; }
             /* The GUI keys' releases, swallowed so a release is not
                mistaken for a second press. */
             if(sc==0x5B||sc==0x5C){ return; }
@@ -105,6 +110,12 @@ static void process_sc(uint8_t sc){
     if(sc==0x2A){shift_l=(rel?0:1);shift=(shift_l||shift_r);return;}
     if(sc==0x36){shift_r=(rel?0:1);shift=(shift_l||shift_r);return;}
     if(sc==0x1D){ctrl=(rel?0:1);return;}
+    if(sc==0x38){alt_l=(rel?0:1);return;}
+    /* v0.9.6: Alt+Tab is the task switcher's, not the app's. */
+    if(sc==0x0F && !rel && (alt_l||alt_r)){
+        push_key(shift ? KEY_TASKSW_BACK : KEY_TASKSW);
+        return;
+    }
     if(sc==0x3A&&!rel){caps=!caps;return;}
     if(!rel){
         switch(sc){
@@ -218,7 +229,7 @@ static uint8_t kbc_recv(void){
 static void kbd_irq(void); /* forward declaration */
 void keyboard_init(void){
     /* Reset all modifier state */
-    shift=0; shift_l=0; shift_r=0; ctrl=0; caps=0; e0=0;
+    shift=0; shift_l=0; shift_r=0; ctrl=0; caps=0; e0=0; alt_l=0; alt_r=0;
     kbd_head=0; kbd_tail=0;
 
     kbc_flush();
@@ -253,7 +264,7 @@ void keyboard_init(void){
        registered, leaving shift_l=1 stuck in the buffer flush above.
        Drain any remaining bytes and force-clear everything.           */
     kbc_flush();
-    shift=0; shift_l=0; shift_r=0; ctrl=0; e0=0;
+    shift=0; shift_l=0; shift_r=0; ctrl=0; e0=0; alt_l=0; alt_r=0;
     kbd_head=0; kbd_tail=0;
 }
 
@@ -369,7 +380,44 @@ static void kbd_irq(void){ kbc_drain(1); }
  * safe, which is the whole point of the guard. */
 extern int kernel_poll(void);
 
+/* ── v0.9.6: TASKS ───────────────────────────────────────────────────
+ * kernel/task.c registers two hooks at task_init(). Pointers rather
+ * than calls, so the suites that compile this file alone still link.
+ *
+ *   g_gate    asked before every read. 1: this task may have the key.
+ *             0: it is behind the front -- "no key". Calling it is also
+ *             where tasks switch: include/task.h says why here.
+ *   g_switch  runs the Alt+Tab switcher (shell/taskswitch.c).
+ *
+ * KEY_TASKSW never reaches an app. It is taken here, the switcher runs,
+ * and the loop goes round again -- through the gate, so a task that has
+ * just been sent behind the front stops here rather than reading on. */
+static int  (*g_gate)(void);
+static void (*g_switch)(int back);
+void keyboard_set_task_hooks(int (*gate)(void), void (*sw)(int)){
+    g_gate = gate; g_switch = sw;
+}
+int kbd_alt(void){ return alt_l || alt_r || alt_usb; }
+void keyboard_usb_mods(uint8_t mods){ alt_usb = (mods & 0x44) ? 1 : 0; }
+
+static int kbd_getchar_raw(void);
 int keyboard_getchar(void){
+    for(;;){
+        if(g_gate && !g_gate()) return -1;
+        int c = kbd_getchar_raw();
+        if(c == KEY_TASKSW || c == KEY_TASKSW_BACK){
+            if(g_switch) g_switch(c == KEY_TASKSW_BACK);
+            continue;
+        }
+        return c;
+    }
+}
+
+/* The read without the gate, for the switcher's own loop -- it runs
+ * inside keyboard_getchar() and must not recurse into it. */
+int keyboard_getchar_raw(void){ return kbd_getchar_raw(); }
+
+static int kbd_getchar_raw(void){
     kernel_poll();
     kbd_poll();
     usb_hid_poll();   /* USB keyboards and mice, same queues */

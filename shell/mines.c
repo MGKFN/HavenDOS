@@ -37,6 +37,7 @@
    the neighbourhoods at all.
    ════════════════════════════════════════════════════════════════════ */
 #include "../include/types.h"
+#include "../include/uimouse.h"
 #include "../include/string.h"
 #include "../include/vga.h"
 #include "../include/mines.h"
@@ -256,6 +257,7 @@ static void finish(void)
 
 void app_mines(void)
 {
+    um_set_mode(0);   /* v0.9.6.3: Mines reads the mouse itself */
     int last_secs = -1;
 
     new_game();

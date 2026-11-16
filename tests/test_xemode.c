@@ -64,6 +64,8 @@ static int owner(uint32_t off)
     if(off >= 0xC4000u && off < 0xC6000u) return -1;          /* south */
     if(off >= 0x61000u && off < 0x62000u) return W_PWB;
     if(off >= 0x71000u && off < 0x72000u) return W_PWB;
+    if(off >= 0x68900u && off < 0x68B00u) return W_PWB;       /* B scalers */
+    if(off >= 0x68100u && off < 0x68300u) return W_PWA;       /* A scalers */
     if(off >= 0x4AC00u && off < 0x4B000u) return W_PWB;       /* gamma B */
     if(off >= 0x49100u && off < 0x49200u) return W_PWB;       /* CSC B   */
     if(off >= 0x70000u && off < 0x71000u)
@@ -73,7 +75,8 @@ static int owner(uint32_t off)
 
 static int pipe_a_side(uint32_t off)
 {
-    return (off >= 0x60000u && off < 0x61000u) ||   /* transcoder A */
+    return (off >= 0x68100u && off < 0x68300u) ||   /* A's scalers  */
+           (off >= 0x60000u && off < 0x61000u) ||   /* transcoder A */
            (off >= 0x70000u && off < 0x71000u) ||   /* pipe A       */
            off == 0x64000u ||                       /* DDI A buffer */
            (off >= 0x162000u && off < 0x163000u) || /* combo PHY A  */
@@ -248,6 +251,9 @@ static void hp(void)
     R(0x44300, 8u << 19); R(0x44304, 8u << 19);       /* S3, S4 off: the plan wakes them */
     R(0x4438C, 7u << 26);                             /* MBUS not joined, no pipe */
     R(0x7027C, 0x07BF0000u);                          /* A plane 1: blocks 0-1983 */
+    /* v0.9.6.3, SYNTHETIC: pipe A's scaler 1, 1024x768 onto the panel */
+    R(0x68180, 0x80000000u); R(0x68170, 0x00000000u); R(0x68174, 0x07800438u);
+    R(0x4421C, 0x00000000u);                          /* fatal mask: none */
     R(0x7017C, 0x07FF07C0u);                          /* A cursor: 1984-2047     */
     /* REAL (0.9.2's `gfx plan` on the HP, which printed them as copied
        from pipe A): level 0 and the SAGV level enabled, the rest not. */
@@ -402,6 +408,11 @@ int main(void)
 
     regs   = calloc(SPAN / 4, sizeof *regs);
     before = calloc(SPAN / 4, sizeof *before);
+    /* v0.9.6.3: the default fills the monitor keeping the shape; the
+       sections up to "filling the monitor" are 0.9.6.2's centred box */
+    head("the default fit");
+    ck("XM_FIT_KEEP unless Settings says otherwise", xm_get_fit() == XM_FIT_KEEP, xm_get_fit());
+    xm_set_fit(XM_FIT_CENTRE);
     memset(&KID, 0, sizeof KID);
     KID.is_hdmi = 1; KID.port = GFX_PORT_B; KID.gmbus_pin = 2; KID.hdmi_level = -1;
 
@@ -522,7 +533,7 @@ int main(void)
     ck("  ... the PLL and that port A stays put",
        has("DPLL0  148.5 MHz  cfg 001001D0 00000E84  (port A stays on DPLL1)"), nl);
     ck("  ... DVI on DDI B", has("DDI B: DVI signalling, 4 lanes, vswing entry 6"), nl);
-    ck("  ... the plane", has("plane  1024x768 at 448,156, unscaled"), nl);
+    ck("  ... the picture", has("picture 1024x768 -> 1024x768 at 448,156: centred, unscaled"), nl);
     ck("  ... every operation listed", nl > P.nops, nl);
     ck("  ... the DDI_FUNC_CTL line", has("wr   061400 = 91030000") , nl);
     ck("  ... no line wider than the screen", longest <= GFX_LINE_MAX, longest);
@@ -854,6 +865,127 @@ int main(void)
        xm_plan_color(&S, XM_RGB_BLUE, &P) == XM_ENOTLIT && P.nops == 0, P.why);
     nl = 0; xm_report_live(&D, cap);
     ck("  ... and `gfx b` says the pipe is stopped", has(": STOPPED"), nl);
+
+    /* ── v0.9.6.3: filling the monitor ─────────────────────────── */
+    head("filling the monitor: pipe B's own scaler");
+    {
+        uint32_t x, y, w2, h2;
+        xm_fit_window(1920, 1080, 1024, 768, XM_FIT_KEEP, &x, &y, &w2, &h2);
+        ck("4:3 on the LG's 16:9, shape kept: 1440x1080 at 240,0",
+           x == 240 && y == 0 && w2 == 1440 && h2 == 1080, w2);
+        xm_fit_window(1920, 1200, 1024, 768, XM_FIT_KEEP, &x, &y, &w2, &h2);
+        ck("  ... on 16:10: 1600x1200 at 160,0", x == 160 && w2 == 1600 && h2 == 1200, w2);
+        xm_fit_window(1280, 1024, 1024, 768, XM_FIT_KEEP, &x, &y, &w2, &h2);
+        ck("  ... on 5:4, bars top and bottom: 1280x960 at 0,32",
+           x == 0 && y == 32 && w2 == 1280 && h2 == 960, h2);
+        xm_fit_window(1024, 768, 1024, 768, XM_FIT_KEEP, &x, &y, &w2, &h2);
+        ck("  ... on 4:3 it is the whole screen", x == 0 && y == 0 && w2 == 1024 && h2 == 768, w2);
+        xm_fit_window(1920, 1080, 1024, 768, XM_FIT_STRETCH, &x, &y, &w2, &h2);
+        ck("stretched: the whole 1920x1080", x == 0 && y == 0 && w2 == 1920 && h2 == 1080, w2);
+        xm_fit_window(1920, 1080, 1024, 768, XM_FIT_CENTRE, &x, &y, &w2, &h2);
+        ck("centred: 0.9.6.2's box at 448,156", x == 448 && y == 156 && w2 == 1024, x);
+        ck("scaler phase, i915's formula: 1024->1440 is 36C0, 1024->1920 3110",
+           xm_ps_phase(1024, 1440) == 0x36C0u && xm_ps_phase(1024, 1920) == 0x3110u,
+           xm_ps_phase(1024, 1440));
+        ck("  ... and shrinking 768->720 trips: 0223", xm_ps_phase(768, 720) == 0x0223u,
+           xm_ps_phase(768, 720));
+    }
+    hp(); lg(); xm_set_fit(XM_FIT_KEEP);
+    r = plan_hp();
+    ck("KEEP: planned at the monitor's own 1920x1080", r == XM_OK && P.fit == XM_FIT_KEEP &&
+       P.mode.hactive == 1920 && P.mode.vactive == 1080, r);
+    ck("  ... PIPESRC is the picture, 1024x768: 03FF02FF",
+       op_index(&P, 0x6101C, 0x03FF02FFu) >= 0 && op_index(&P, 0x6101C, 0x077F0437u) < 0, 0);
+    ck("  ... scaler 1 of pipe B: on, bound to the pipe, medium filter",
+       op_index(&P, 0x68980, 0x80000000u) >= 0, 0);
+    ck("  ... window 1440x1080 at 240,0", op_index(&P, 0x68970, 240u << 16) >= 0 &&
+       op_index(&P, 0x68974, (1440u << 16) | 1080u) >= 0, 0);
+    ck("  ... phases 36C0 both ways (1024->1440 and 768->1080)",
+       op_index(&P, 0x68988, 0x36C0u) >= 0 && op_index(&P, 0x68994, 0x36C0u) >= 0, 0);
+    ck("  ... the plane at 0,0 inside the pipe", op_index(&P, 0x7118C, 0) >= 0, 0);
+    ck("  ... the scaler is set up before the transcoder starts",
+       op_index(&P, 0x68980, 0x80000000u) < op_index(&P, 0x71008, 0x80000000u) ||
+       op_index(&P, 0x71008, 0x80000000u) < 0, 0);
+    ck("  ... fatal errors masked, then put back to what they were (WA 14011503117)",
+       op_index(&P, 0x4421C, 0xFFFFFFFFu) >= 0 &&
+       op_index(&P, 0x4421C, 0) > op_index(&P, 0x4421C, 0xFFFFFFFFu), 0);
+    ck("  ... the plan fits its array", P.nops < XM_MAX_OPS, P.nops);
+    dev_ok(); memcpy(before, regs, SPAN); w_total = 0; w_forbidden = 0;
+    r = xm_apply(&D, &P, &RES);
+    ck("KEEP applied on the model: every write read back, pipe A untouched",
+       r == XM_OK && w_forbidden == 0 && pipe_a_unchanged(), r);
+    ck("  ... the mask ends as it began", regs[0x4421C / 4] == 0, regs[0x4421C / 4]);
+    ck("  ... and pipe A's own scaler is as the firmware left it",
+       regs[0x68180 / 4] == 0x80000000u && regs[0x68174 / 4] == 0x07800438u, 0);
+    nl = 0; longest = 0; xm_report_plan(&S, &P, 1, cap);
+    ck("  ... the plan screen says where the picture goes",
+       has("picture 1024x768 -> 1440x1080 at 240,0: fitted, shape kept") && longest <= GFX_LINE_MAX, nl);
+
+    dev_ok(); xm_read(&D, &S);
+    ck("lit and scaled: the state reads B's scaler on", (S.b_ps[0] & 0x80000000u) != 0, S.b_ps[0]);
+    xm_plan_off(&S, &P);
+    ck("`gfx off` switches B's scaler off and clears its window",
+       op_index(&P, 0x68980, 0) >= 0 && op_index(&P, 0x68974, 0) >= 0, 0);
+    r = xm_apply(&D, &P, &RES);
+    ck("  ... applied, and pipe A still untouched", r == XM_OK && w_forbidden == 0 &&
+       regs[0x68980 / 4] == 0 && pipe_a_unchanged(), r);
+
+    hp(); lg(); xm_set_fit(XM_FIT_STRETCH); r = plan_hp();
+    ck("STRETCH: 1920x1080 at 0,0, phases 3110 and 2B6D",
+       r == XM_OK && op_index(&P, 0x68974, (1920u << 16) | 1080u) >= 0 &&
+       op_index(&P, 0x68970, 0) >= 0 && op_index(&P, 0x68994, 0x3110u) >= 0 &&
+       op_index(&P, 0x68988, xm_ps_phase(768, 1080)) >= 0, r);
+    hp(); lg(); R(0x68980, 0x80000000u); xm_set_fit(XM_FIT_KEEP); r = plan_hp();
+    ck("B's scaler already on: refused as busy, nothing planned",
+       r == XM_EBUSY && P.nops == 0, r);
+    hp(); lg(); xm_set_fit(XM_FIT_KEEP); plan_hp();
+    ck("allow-list: pipe A's scaler is refused, B's allowed",
+       !xm_allowed(0x68180, 0, 0, 0, &P) && !xm_allowed(0x68174, 0, 0, 0, &P) &&
+       xm_allowed(0x68980, 0, 0x80000000u, 0, &P), 0);
+    ck("  ... the fatal mask: all ones or its old value, nothing else",
+       xm_allowed(0x4421C, 0, 0xFFFFFFFFu, 0, &P) && xm_allowed(0x4421C, ~0u, 0, 0, &P) &&
+       !xm_allowed(0x4421C, 0, 0x00000010u, 0, &P), 0);
+    xm_set_fit(XM_FIT_CENTRE);
+
+    /* ── v0.9.6.3: the monitor watcher ────────────────────────── */
+    head("the monitor lights by itself: plugged in, unplugged, refused");
+    {
+        xm_hp_t h = { -1, 0, 0 };
+        int a1, a2, a3;
+        a1 = xm_hotplug_step(&h, 1, 0, 1);
+        a2 = xm_hotplug_step(&h, 1, 0, 1);
+        ck("plugged at boot: nothing on the first read, LIGHT on the second",
+           a1 == XM_HP_NONE && a2 == XM_HP_LIGHT, a2);
+        xm_hotplug_lit(&h, 1);
+        a3 = xm_hotplug_step(&h, 1, 1, 1);
+        ck("  ... lit: nothing more, second after second", a3 == XM_HP_NONE &&
+           xm_hotplug_step(&h, 1, 1, 1) == XM_HP_NONE, a3);
+        a1 = xm_hotplug_step(&h, 0, 1, 1);
+        a2 = xm_hotplug_step(&h, 0, 1, 1);
+        ck("unplugged: OFF on the second read that agrees", a1 == XM_HP_NONE && a2 == XM_HP_OFF, a2);
+        a1 = xm_hotplug_step(&h, 1, 0, 1);
+        a2 = xm_hotplug_step(&h, 0, 0, 1);
+        a3 = xm_hotplug_step(&h, 0, 0, 1);
+        ck("a connector that flickers in for one read: nothing", a1 == 0 && a2 == 0 && a3 == 0, a1);
+        xm_hotplug_step(&h, 1, 0, 0);
+        ck("auto off (Settings): plugged in, nothing", xm_hotplug_step(&h, 1, 0, 0) == XM_HP_NONE, 0);
+        h.state = -1; h.done = 0; h.tries = 0;
+        xm_hotplug_step(&h, 1, 0, 1);
+        a1 = xm_hotplug_step(&h, 1, 0, 1);
+        ck("  ... a refused light is tried again next second",
+           a1 == XM_HP_LIGHT && xm_hotplug_lit(&h, 0) == 0 && xm_hotplug_step(&h, 1, 0, 1) == XM_HP_LIGHT, a1);
+        ck("  ... and the third refusal gives up, saying so once",
+           xm_hotplug_lit(&h, 0) == 0 && xm_hotplug_step(&h, 1, 0, 1) == XM_HP_LIGHT &&
+           xm_hotplug_lit(&h, 1 - 1) == 1 && xm_hotplug_step(&h, 1, 0, 1) == XM_HP_NONE, h.tries);
+        xm_hotplug_step(&h, 0, 0, 1); xm_hotplug_step(&h, 0, 0, 1);
+        xm_hotplug_step(&h, 1, 0, 1);
+        ck("  ... until the cable comes out and goes back in",
+           xm_hotplug_step(&h, 1, 0, 1) == XM_HP_LIGHT, h.tries);
+        h.state = -1; h.done = 0; h.tries = 0;
+        xm_hotplug_step(&h, 1, 1, 1);
+        ck("lit by `gfx on` before the watcher saw it: left alone",
+           xm_hotplug_step(&h, 1, 1, 1) == XM_HP_NONE, 0);
+    }
 
     /* ── v0.9.6.1: `gfx try` and the underrun rate ─────────────── */
     head("`gfx try`: five changes to the plane, and everything put back");

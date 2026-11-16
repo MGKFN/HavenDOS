@@ -1,4 +1,5 @@
 #include "../include/klog.h"
+#include "../include/uimouse.h"
 #include "../include/keys.h"
 #include "../include/io.h"
 #include "../include/instdisk.h"
@@ -1660,6 +1661,7 @@ static void ed_save_prompt(void){
 
 /* ── Main editor loop ────────────────────────────────────── */
 static void app_texteditor_run(void){
+    um_set_mode(0);   /* v0.9.6.3: Notepad reads the mouse itself */
     vga_clear();
     ui_draw_taskbar("Text Editor");
     int crow=0,ccol=0,srow=0,scol=0;
@@ -2096,6 +2098,7 @@ static void fm_draw(int sel, int scroll){
 }
 
 static void app_filemanager(void){
+    um_set_mode(0);   /* v0.9.6.3: Files reads the mouse itself */
     int sel=0, scroll=0;
     fm_cwd[0]=0;   /* always start at root */
     const int VISIBLE=14;
@@ -2529,6 +2532,7 @@ static void app_todo(void){
 #define GW 36
 #define GH 17
 static void app_snake(void){
+    um_set_mode(UM_HINTS | UM_RIGHT);   /* v0.9.6.3: no wheel in a game */
     static int sx[400],sy[400];
     int sl=3,dx=1,dy=0,dead=0,sc=0,fx,fy;
     for(int i=0;i<sl;i++){sx[i]=12-i;sy[i]=8;}
@@ -2606,6 +2610,7 @@ static void app_snake(void){
 }
 
 static void app_tetris_wrap(void){
+    um_set_mode(UM_HINTS | UM_RIGHT);
     vga_clear();
     app_tetris();
 }
@@ -3724,6 +3729,7 @@ void desktop_layout_audit(void)
    DESKTOP MAIN LOOP
    ================================================================ */
 void desktop_run(void){
+    um_set_mode(0);   /* v0.9.6.3: the desktop reads the mouse itself */
     task_set_name("Desktop");      /* v0.9.6: slot 0, after Shell Mode */
     task_set_policy(TP_PAUSE);     /* ... whose prompt left it set to run */
     /* v0.7.18: the chrome is derived from vga_rows()/vga_cols() now, so the
@@ -4092,6 +4098,7 @@ void desktop_run(void){
    PONG
    ================================================================ */
 static void app_pong(void){
+    um_set_mode(UM_HINTS | UM_RIGHT);
     #define PG_X1 2
     #define PG_X2 77
     #define PG_Y1 2

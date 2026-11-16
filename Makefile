@@ -28,7 +28,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
-          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/migratecmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c
+          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/migratecmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c shell/uimouse.c
 
 SRCS_S  = boot/boot.S
 OBJS_C  = $(SRCS_C:.c=.o)
@@ -580,7 +580,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_txm tests/test_xemode.c && \
-	  python3 tools/run_suite.py --name test_xemode --min 236 -- /tmp/hd_txm
+	  python3 tools/run_suite.py --name test_xemode --min 265 -- /tmp/hd_txm
 	@echo "── test_rsa ───────────────────────────────"
 	@echo "  Miller-Rabin and RSA keygen, against CPython and openssl"
 	@# net/rsa.c arrived with a suite and a harness and was never added
@@ -632,7 +632,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@# and are named at the end of drivers/i2c_hid.c. Under ASAN.
 	@$(TESTCC) -g -fsanitize=address,undefined -Iinclude -Itests \
 	           -o /tmp/hd_tih tests/test_i2c_hid.c && \
-	  python3 tools/run_suite.py --name test_i2c_hid --min 84 -- /tmp/hd_tih
+	  python3 tools/run_suite.py --name test_i2c_hid --min 90 -- /tmp/hd_tih
 	@echo "── test_hid_rd ────────────────────────────"
 	@echo "  HID report descriptors, judged by hid_parser -- under ASAN"
 	@# The parser that makes a trackpad possible: I2C-HID has no boot
@@ -728,6 +728,14 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tun tests/test_usbnet.c && \
 	  python3 tools/run_suite.py --name test_usbnet --min 125 -- /tmp/hd_tun
+	@echo "── test_uimouse ───────────────────────────"
+	@echo "  the mouse in every app: clicks, hints, wheel, right-click"
+	@# v0.9.6.3: shell/uimouse.c against a model screen, mouse and task
+	@# layer. tools/check_uimouse_suite.py plants 14 defects. Under ASAN.
+	@$(TESTCC) -g -fsanitize=address,undefined -Iinclude -Itests \
+	           -Wno-builtin-declaration-mismatch \
+	           -o /tmp/hd_tum tests/test_uimouse.c && \
+	  python3 tools/run_suite.py --name test_uimouse --min 50 -- /tmp/hd_tum
 	@echo "── test_usbhid ────────────────────────────"
 	@echo "  USB keyboards and mice, on every interface of a device"
 	@# v0.9.2.1: a wireless receiver's mouse is on interface 1. Links
@@ -735,7 +743,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -no-pie -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tuh tests/test_usbhid.c && \
-	  python3 tools/run_suite.py --name test_usbhid --min 36 -- /tmp/hd_tuh
+	  python3 tools/run_suite.py --name test_usbhid --min 39 -- /tmp/hd_tuh
 	@echo "── test_usbmux ────────────────────────────"
 	@echo "  the Apple Mobile Device channel, against a device that speaks it"
 	@$(TESTCC) -no-pie -Iinclude \

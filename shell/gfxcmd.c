@@ -39,7 +39,15 @@
 
 extern int keyboard_waitchar(void);
 extern void sleep_ms(uint32_t ms);
+extern int  cfg_monitor_auto(void);  extern void cfg_set_monitor_auto(int);
+extern int  cfg_monitor_fit(void);   extern void cfg_set_monitor_fit(int);
+extern void cfg_save(void);
+#include "../include/klog.h"
+extern void toast_info(const char *m);
+extern void toast_warning(const char *m);
+static int  g_gfx_busy;              /* a `gfx` command is running     */
 static void put_u(uint32_t v);
+static void cmd_fit_auto(const char *arg, const char *v);
 
 static int g_stop;
 
@@ -284,7 +292,7 @@ void cmd_gfx(const char *arg, const char *arg2)
     if(arg && *arg && strcmp(arg, "regs") && strcmp(arg, "vbt") &&
        strcmp(arg, "edid") && strcmp(arg, "plan") && strcmp(arg, "on") &&
        strcmp(arg, "off") && strcmp(arg, "color") && strcmp(arg, "b") &&
-       strcmp(arg, "try")){
+       strcmp(arg, "try") && strcmp(arg, "fit") && strcmp(arg, "auto")){
         vga_puts("usage: gfx         the display engine, as the firmware left it\n");
         vga_puts("       gfx regs    every register read, offset and value\n");
         vga_puts("       gfx vbt     what the Video BIOS Table says is wired\n");
@@ -295,10 +303,17 @@ void cmd_gfx(const char *arg, const char *arg2)
         vga_puts("       gfx b       pipe B as it runs, read only\n");
         vga_puts("       gfx color [blue|red|green|white|off]  pipe B's background\n");
         vga_puts("       gfx try     five changes to the plane, one at a time (asks)\n");
+        vga_puts("       gfx fit [keep|stretch|centre]  how the picture fills the monitor\n");
+        vga_puts("       gfx auto [on|off]  light the monitor by itself when plugged in\n");
         vga_puts("Only `gfx on`, `off`, `color` and `try` change what a screen shows.\n");
         return;
     }
 
+    if(arg && (!strcmp(arg, "fit") || !strcmp(arg, "auto"))){
+        cmd_fit_auto(arg, arg2);
+        return;
+    }
+    g_gfx_busy = 1;
     gfx_open(&g_dev);
     gfx_read(&g_dev, &g_regs);
     if(g_dev.why == GFX_OK){
@@ -323,4 +338,135 @@ void cmd_gfx(const char *arg, const char *arg2)
     else if(arg && !strcmp(arg, "regs")) gfx_report_regs(&g_dev, &g_regs, emit);
     else if(arg && !strcmp(arg, "vbt")) gfx_report_vbt(&g_vbt, emit);
     else                                gfx_report(&g_dev, &g_regs, &g_vbt, emit);
+    g_gfx_busy = 0;
+}
+
+/* ── v0.9.6.3: gfx fit, gfx auto ─────────────────────────────────── */
+static void cmd_fit_auto(const char *arg, const char *v)
+{
+    if(!strcmp(arg, "fit")){
+        int f = -1;
+        if(v && (!strcmp(v, "keep") || !strcmp(v, "fit")))      f = XM_FIT_KEEP;
+        else if(v && (!strcmp(v, "stretch") || !strcmp(v, "fill"))) f = XM_FIT_STRETCH;
+        else if(v && (!strcmp(v, "centre") || !strcmp(v, "center") || !strcmp(v, "none")))
+            f = XM_FIT_CENTRE;
+        else if(v && *v){ vga_puts("gfx fit keep | stretch | centre\n"); return; }
+        if(f >= 0){ cfg_set_monitor_fit(f); cfg_save(); xm_set_fit(f); }
+        vga_puts("Monitor picture: "); vga_puts(xm_fit_name(xm_get_fit()));
+        vga_puts(f >= 0 ? ". Saved; `gfx off` then `gfx on` shows it now.\n" : ".\n");
+        return;
+    }
+    if(v && !strcmp(v, "on"))  { cfg_set_monitor_auto(1); cfg_save(); }
+    else if(v && !strcmp(v, "off")){ cfg_set_monitor_auto(0); cfg_save(); }
+    else if(v && *v){ vga_puts("gfx auto on | off\n"); return; }
+    vga_puts(cfg_monitor_auto() ? "The monitor lights by itself when it is plugged in.\n"
+                                : "The monitor is lit only by `gfx on`.\n");
+}
+
+/* ── v0.9.6.3: the monitor, by itself ─────────────────────────────────
+   A kpoll client, once a second, from the shell's idle points (never
+   from an interrupt). It reads two registers: DDI B's hot-plug line
+   and whether transcoder B is on. Two reads in a row decide, so a
+   connector being pushed in, or a monitor waking, does not flap.
+
+     plugged, not lit, auto on  -> `gfx on`, without the question
+     unplugged, lit             -> `gfx off`
+
+   A failed attempt is not repeated until the cable comes out: the same
+   EDID or the same refusal would only fail again, every second. What
+   happened is in `dmesg` and, on the desktop, a toast. */
+static int g_mon_open;
+static xm_state_t  g_mxs;
+static xm_plan_t   g_mplan;
+static xm_result_t g_mres;
+
+int gfx_monitor_light(void)
+{
+    uint32_t got = 0;
+    xm_read(&g_dev, &g_mxs);
+    memset(g_raw, 0, sizeof g_raw);
+    memset(&g_edid, 0, sizeof g_edid);
+    gmbus_read_edid(&g_dev, hdmi_pin(), g_raw, &got, &g_tr);
+    if(got) edid_parse(g_raw, got, &g_edid);
+    else g_edid.why = EDID_ESHORT;
+    xm_plan_on(&g_mxs, got ? &g_edid : 0, hdmi_child(), &g_mplan);
+    if(g_mplan.why) return g_mplan.why;
+    xm_apply(&g_dev, &g_mplan, &g_mres);
+    return g_mres.why;
+}
+
+static xm_hp_t g_hp = { -1, 0, 0 };
+
+static void mon_work(void)
+{
+    int in, act, why;
+    if(g_gfx_busy) return;
+    if(!g_mon_open){
+        g_mon_open = 1;
+        gfx_open(&g_dev);
+        if(g_dev.why == GFX_OK) gfx_vbt_find(&g_dev, &g_vbt);
+    }
+    if(g_dev.why != GFX_OK) return;          /* not an Xe: nothing to watch */
+
+    in  = xm_hpd_b(&g_dev);
+    act = xm_hotplug_step(&g_hp, in, xm_b_lit(&g_dev), cfg_monitor_auto());
+    if(act == XM_HP_LIGHT){
+        g_gfx_busy = 1;
+        why = gfx_monitor_light();
+        g_gfx_busy = 0;
+        if(why == XM_OK){
+            char m[64]; int n = 0;
+            const char *pre = "Monitor on: ", *f = xm_fit_name(g_mplan.fit);
+            while(*pre) m[n++] = *pre++;
+            while(*f && n < 62) m[n++] = *f++;
+            m[n] = 0;
+            xm_hotplug_lit(&g_hp, 1);
+            klog(KLOG_OK, "monitor: lit by itself, %ux%u, %s",
+                 (unsigned)g_mplan.mode.hactive, (unsigned)g_mplan.mode.vactive,
+                 xm_fit_name(g_mplan.fit));
+            toast_info(m);
+        } else {
+            /* A monitor still waking can miss its first EDID read */
+            klog(KLOG_WARN, "monitor: plugged in, not lit: %s (try %d of 3)",
+                 xm_why_name(why), g_hp.tries + 1);
+            if(xm_hotplug_lit(&g_hp, 0)) toast_warning("Monitor not lit -- `gfx on` says why");
+        }
+    } else if(act == XM_HP_OFF){
+        g_gfx_busy = 1;
+        xm_read(&g_dev, &g_mxs);
+        xm_plan_off(&g_mxs, &g_mplan);
+        if(!g_mplan.why) xm_apply(&g_dev, &g_mplan, &g_mres);
+        g_gfx_busy = 0;
+        klog(KLOG_INFO, "monitor: unplugged, pipe B off");
+    }
+}
+
+/* Settings > Display: a new fit, shown now. A monitor that is lit is
+   switched off and lit again with it; one that is not just keeps the
+   setting for next time. Returns an XM_* code. */
+int gfx_monitor_refit(int fit)
+{
+    int why = XM_OK;
+    xm_set_fit(fit);
+    cfg_set_monitor_fit(fit); cfg_save();
+    if(g_gfx_busy) return XM_OK;
+    if(!g_mon_open){ g_mon_open = 1; gfx_open(&g_dev); if(g_dev.why == GFX_OK) gfx_vbt_find(&g_dev, &g_vbt); }
+    if(g_dev.why != GFX_OK || !xm_b_lit(&g_dev)) return XM_OK;
+    g_gfx_busy = 1;
+    xm_read(&g_dev, &g_mxs);
+    xm_plan_off(&g_mxs, &g_mplan);
+    if(!g_mplan.why) xm_apply(&g_dev, &g_mplan, &g_mres);
+    why = g_mplan.why ? g_mplan.why : g_mres.why;
+    if(!why) why = gfx_monitor_light();
+    g_gfx_busy = 0;
+    return why;
+}
+int gfx_monitor_lit(void){ return g_dev.why == GFX_OK && xm_b_lit(&g_dev); }
+
+/* From kernel/main.c, once the config is loaded. */
+void gfx_monitor_register(void)
+{
+    extern int kpoll_register(const char *name, uint32_t interval_ms, void (*fn)(void));
+    xm_set_fit(cfg_monitor_fit());
+    kpoll_register("monitor", 1000, mon_work);  /* kpoll-site-ok: the HDMI watcher, once at boot; g_gfx_busy keeps it off a running `gfx` */
 }

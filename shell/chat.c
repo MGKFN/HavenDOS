@@ -50,6 +50,7 @@
  */
 
 #include "../include/types.h"
+#include "../include/uimouse.h"
 #include "../include/string.h"
 #include "../include/vga.h"
 #include "../include/net.h"
@@ -1748,6 +1749,8 @@ void cmd_bootchat(const char *arg1)
     vga_clear();
     ui_force_cursor_redraw();
     mouse_get_clicks();               /* flush any stale click edge */
+    int um_was = um_mode();
+    um_set_mode(0);                   /* v0.9.6.3: Chat reads the mouse itself */
 
     while(running){
         uint8_t rb[512];
@@ -2057,6 +2060,7 @@ void cmd_bootchat(const char *arg1)
     tcp_close(fd);
 
     ui_erase_cursor();
+    um_set_mode(um_was);
     vga_clear();
     vga_flush();
     vga_set_cursor(0, 0);

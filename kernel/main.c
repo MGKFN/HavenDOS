@@ -1471,14 +1471,20 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
         extern void net_kpoll_register(void);
         extern int  usb_hc_count(void);
         extern void usb_kpoll_register(void);
+        extern void gfx_monitor_register(void);
         net_kpoll_register();
         if (usb_hc_count() > 0) usb_kpoll_register();
+        gfx_monitor_register();          /* v0.9.6.3: HDMI, by itself */
         klog(KLOG_OK, "kpoll: %d periodic task(s) at %d Hz",
              kpoll_client_count(), KPOLL_HZ);
     }
 
     create_sysfiles();
     shell_init();
+    {   /* v0.9.6.3: the mouse in every app (shell/uimouse.c) */
+        extern void um_init(void);
+        um_init();
+    }
 
     extern int  vfs_exists(const char*);
     extern void login_welcome(const char*, int);

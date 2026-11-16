@@ -28,6 +28,11 @@ CC = ["gcc", "-std=gnu99", "-no-pie", "-Iinclude", "-Itests",
       "-fsanitize=address,undefined"]
 
 BUGS = [
+    ("the wheel's sign is lost",
+     "every notch scrolls down, whichever way the wheel turns",
+     """    if (len >= 4 && r[3]) mouse_wheel_add((int8_t)r[3]);""",
+     """    if (len >= 4 && r[3]) mouse_wheel_add(r[3]);"""),
+
     ("only the first interface is driven again (0.9.2's bug)",
      "the receiver's mouse, on interface 1, is never looked at",
      """        for (k = 0; k < sv.n && g_nhid < HID_MAX; k++)""",

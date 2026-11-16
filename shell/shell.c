@@ -1,4 +1,5 @@
 #include "../include/io.h"
+#include "../include/uimouse.h"
 #include "version.h"
 #include "../include/vga.h"
 #include "../include/task.h"
@@ -3523,7 +3524,12 @@ void shell_run(void){
            it waits where it is. Running a command it is RUNNING, so a
            `ping` or a `wget` carries on when you Alt+Tab away. */
         task_set_policy(TP_PAUSE);
+        /* v0.9.6.3: at the prompt the shell is a terminal -- no wheel,
+           no right-click; a command it runs (settings, gfx try, the
+           pager) gets the whole mouse */
+        um_set_mode(UM_ZONES | UM_HINTS | UM_POINTER);
         shell_read_line(line,127,prompt);
+        um_set_mode(UM_ALL);
         task_set_policy(TP_RUN);
         if(!line[0]) continue;
         hist_add(line);

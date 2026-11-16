@@ -233,6 +233,7 @@ int ihid_decode(ihid_dev_t *d, const uint8_t *report, uint32_t len,
         return IHID_E_PARAM;
     *dx = *dy = 0; *have = 0;
     if (!d->is_pointer) return IHID_E_NOPTR;
+    d->wheel = 0;
     if (len < 2) return IHID_E_SHORT;
 
     /* The report begins with its own two-byte length, then the report
@@ -274,6 +275,45 @@ int ihid_decode(ihid_dev_t *d, const uint8_t *report, uint32_t len,
             btn |= (k == 0) ? 1 : (k == 1) ? 2 : 4;
     }
 
+    /* v0.9.6.3: a wheel field, when there is one, is a delta */
+    if (d->rd.i_wheel >= 0 &&
+        hrd_field_value(&d->rd.field[d->rd.i_wheel], data, dlen, &v) == HRD_OK && v)
+        d->wheel = (int)v;
+
+    /* v0.9.6.3: two fingers on a touchpad scroll instead of pointing.
+       One notch per 1/24 of the pad's height, so a full-height drag is
+       24 lines either way whatever the pad's units. Fingers moving DOWN
+       scroll down -- the arrow key a person expects -- which is HID's
+       negative wheel. */
+    {
+        int32_t ct = -1;
+        if (d->rd.i_contacts >= 0 &&
+            hrd_field_value(&d->rd.field[d->rd.i_contacts], data, dlen, &ct) == HRD_OK &&
+            ct >= 2 && tip && !d->rd.field[d->rd.i_x].relative) {
+            const hrd_field_t *fy = &d->rd.field[d->rd.i_y];
+            int32_t notch = (fy->logical_max - fy->logical_min) / 24;
+            if (notch < 1) notch = 1;
+            if (!d->scrolling || !d->touching) {
+                d->scrolling = 1; d->touching = 1; d->scroll_acc = 0;
+                d->last_x = x; d->last_y = y;
+            } else {
+                d->scroll_acc += y - d->last_y;
+                d->last_x = x; d->last_y = y;
+                while (d->scroll_acc >=  notch) { d->scroll_acc -= notch; d->wheel--; }
+                while (d->scroll_acc <= -notch) { d->scroll_acc += notch; d->wheel++; }
+            }
+            *buttons = btn;
+            *have = d->wheel != 0 || (btn != d->last_buttons);
+            d->last_buttons = btn;
+            return IHID_OK;
+        }
+        if (d->scrolling && ct >= 0 && ct < 2) {
+            /* back to one finger: re-anchor, so the pointer does not
+               jump by the scroll's travel */
+            d->scrolling = 0; d->touching = 0;
+        }
+    }
+
     if (d->rd.field[d->rd.i_x].relative) {
         /* A mouse, not a touchpad: the report IS the delta. */
         *dx = (int)x;
@@ -297,7 +337,7 @@ int ihid_decode(ihid_dev_t *d, const uint8_t *report, uint32_t len,
     }
 
     *buttons = btn;
-    *have = moved || (btn != d->last_buttons);
+    *have = moved || (btn != d->last_buttons) || d->wheel != 0;
     d->last_buttons = btn;
     return IHID_OK;
 }
@@ -342,6 +382,7 @@ static uint8_t    g_report[64];
 
 extern void sleep_ms(uint32_t);
 extern void mouse_feed_i2c(int dx, int dy, int buttons);
+extern void mouse_wheel_add(int notches);
 extern void mouse_i2c_attach(void);
 
 int i2c_hid_init(void)
@@ -424,6 +465,7 @@ void i2c_hid_poll(void)
                 != IHID_OK)
             continue;
         if (have) mouse_feed_i2c(dx, dy, btn);
+        if (d->wheel) mouse_wheel_add(d->wheel);
     }
 }
 

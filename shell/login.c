@@ -8,6 +8,7 @@
  *   - Mouse-aware tile highlighting
  */
 #include "../include/vga.h"
+#include "../include/uimouse.h"
 #include "../include/task.h"
 #include "../include/klog.h"
 extern void notif_push(const char *);   /* v0.9.6 */
@@ -842,6 +843,7 @@ void login_welcome(const char *username, int first_boot){
    login_screen_inner() is the screen itself, unchanged. */
 static void login_screen_inner(void);
 void login_screen(void){
+    um_set_mode(0);   /* v0.9.6.3: the login screen reads the mouse itself */
     char before[32];
     strncpy(before, current_username(), sizeof before - 1);
     before[sizeof before - 1] = 0;

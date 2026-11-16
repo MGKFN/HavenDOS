@@ -3,6 +3,7 @@
  * Modern TUI: taskbar, themes, corner clock, box-drawing windows
  */
 #include "../include/theme.h"
+#include "../include/uimouse.h"
 #include "version.h"
 #include "../include/vga.h"
 extern int keyboard_waitchar(void);
@@ -291,6 +292,7 @@ void ui_kit_footer(const char *keys){ ui_kit_footer_at(vga_rows()-1, keys); }
 
 /* A full-screen app frame: black body, top bar, optional footer. */
 void ui_kit_begin(const char *title, const char *keys){
+    um_frame();   /* v0.9.6.3: a new screen, new clickable rows */
     const int H=vga_rows();
     for(int y=0;y<H;y++) vga_fill_row(y,' ',VGA_LIGHT_GREY,VGA_BLACK);
     ui_draw_taskbar(title);
@@ -318,6 +320,7 @@ void ui_kit_kv(int x,int y,int vx,const char *label,const char *value){
 
 /* A list row, highlighted when selected. */
 void ui_kit_row(int x,int y,int w,int sel,const char *text){
+    um_row(0, x, y, w, sel);   /* v0.9.6.3 */
     vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
     vga_color_t fg = sel?sf:VGA_LIGHT_GREY, bg = sel?sb:VGA_BLACK;
     for(int i=0;i<w;i++) vga_putchar_at(' ',x+i,y,fg,bg);

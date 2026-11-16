@@ -53,6 +53,7 @@
 extern void keyboard_inject(int c);
 extern void keyboard_usb_mods(uint8_t mods);   /* v0.9.6: Alt, for Alt+Tab */
 extern void mouse_feed(uint8_t data);
+extern void mouse_wheel_add(int notches);
 /* v0.8.8.1: and the pointer-present count, which is drivers/mouse.c's
    because "is there a pointing device" is one question with two
    sources. A USB mouse used to feed coordinates nothing would draw --
@@ -200,6 +201,9 @@ static void mouse_report(const uint8_t *r, int len)
     mouse_feed(b0);
     mouse_feed((uint8_t)(dx & 0xFF));
     mouse_feed((uint8_t)(dy & 0xFF));
+    /* v0.9.6.3: most mice send the wheel as a fourth byte even in the
+       boot protocol, which only promises three */
+    if (len >= 4 && r[3]) mouse_wheel_add((int8_t)r[3]);
 }
 
 /* ── discovery ───────────────────────────────────────────────────────

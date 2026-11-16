@@ -1314,7 +1314,13 @@ void vga_init(void){
    for 1-2 full VGA refresh cycles (~14ms each) = obvious flicker.
    vga_flush() at the end of full_draw() handles any cells that stayed
    blank (background areas not covered by UI elements). */
+/* v0.9.6.3: shell/uimouse.c forgets the clickable zones of a screen
+   that has been wiped. A pointer, so this file still links alone. */
+static void (*g_clear_hook)(void);
+void vga_set_clear_hook(void (*fn)(void)){ g_clear_hook = fn; }
+
 void vga_clear(void){
+    if(g_clear_hook) g_clear_hook();
     uint16_t blank=make_entry(' ',cur_fg,cur_bg);
     /* THE VIEWPORT, NOT THE SCREEN. An app clearing its own console
        must not wipe what the desktop drew around it -- that surround

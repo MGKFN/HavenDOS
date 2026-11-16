@@ -401,6 +401,13 @@ int kbd_alt(void){ return alt_l || alt_r || alt_usb; }
 void keyboard_usb_mods(uint8_t mods){ alt_usb = (mods & 0x44) ? 1 : 0; }
 
 static int kbd_getchar_raw(void);
+/* v0.9.6.3: the mouse in every app. shell/uimouse.c turns clicks, the
+   wheel and the right button into keys for the task in front, and
+   draws the pointer while it waits. A pointer, so this file still
+   links alone; called with the key about to be returned, or -1. */
+static int (*g_mhook)(int);
+void keyboard_set_mouse_hook(int (*fn)(int)){ g_mhook = fn; }
+
 int keyboard_getchar(void){
     for(;;){
         if(g_gate && !g_gate()) return -1;
@@ -409,6 +416,7 @@ int keyboard_getchar(void){
             if(g_switch) g_switch(c == KEY_TASKSW_BACK);
             continue;
         }
+        if(g_mhook) c = g_mhook(c);
         return c;
     }
 }

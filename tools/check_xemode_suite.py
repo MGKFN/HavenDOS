@@ -119,6 +119,63 @@ BUGS = [
      """    return start >= DDB_HALF || end >= DDB_HALF || end < start;""",
      """    return end < start;"""),
 
+    ("the allow-list reaches pipe A's scalers too (0.9.6.3)",
+     "pipe A scales the firmware's picture onto the panel; a write there "
+     "and the laptop's own screen is wrong or dark",
+     """    if(off >= 0x68900u && off < 0x68B00u) return 1;      /* B's scalers  */""",
+     """    if(off >= 0x68100u && off < 0x68B00u) return 1;"""),
+
+    ("the fatal-error mask may be set to anything",
+     "a mask written with bits cleared unmasks errors the firmware hid; "
+     "one left half-set hides real ones",
+     """        return val == 0xFFFFFFFFu || (p && p->on == 1 && val == p->ecc_old);""",
+     """        return 1;"""),
+
+    ("the fit window ignores the shape",
+     "KEEP stretches a 4:3 picture to 16:9: letters a third too wide",
+     """        if(W * h >= H * w){ b = H; a = (H * w + h / 2u) / h; }""",
+     """        if(W * h >= H * w){ b = H; a = W; }"""),
+
+    ("the scaler phase has no trip bit",
+     "i915's initial phase: a scaler started half a pixel off on a downscale",
+     """    else trip = PS_PHASE_TRIP;""",
+     """    else trip = 0;"""),
+
+    ("PIPESRC stays the monitor's mode when scaling",
+     "the scaler is fed 1920x1080 from a 1024x768 plane: nothing to scale, "
+     "the plane is a box again and the window is wrong",
+     """        wr(p, R_B_SRC, ((w - 1u) << 16) | (h - 1u), 0xFFFFFFFFu, "PIPESRC: the picture");""",
+     """        wr(p, R_B_SRC, ((p->mode.hactive - 1u) << 16) | (p->mode.vactive - 1u), 0xFFFFFFFFu, "PIPESRC: the picture");"""),
+
+    ("`gfx off` leaves the scaler on",
+     "the next `gfx on` is refused as busy forever after",
+     """            wr(p, R_B_PS_CTRL(n), 0, 0xFFFFFFFFu, "scaler off");""",
+     """            (void)n;"""),
+
+    ("pipe B's scaler already on is not refused",
+     "a second scaler setup over a running one",
+     """    if(p->fit != XM_FIT_CENTRE && ((s->b_ps[0] | s->b_ps[1]) & PS_SCALER_EN))
+        return refuse(p, XM_EBUSY);""",
+     """    (void)s->b_ps;"""),
+
+    ("the watcher believes one read",
+     "a connector half pushed in lights and unlights the monitor in a loop",
+     """        h->state = in; h->done = 0;
+        if(!in) h->tries = 0;
+        return XM_HP_NONE;""",
+     """        h->state = in; h->done = 0;
+        if(!in) h->tries = 0;"""),
+
+    ("the watcher never gives up",
+     "a monitor the plan refuses is re-planned every second, forever",
+     """    if(h->tries < 3){ h->done = 0; return 0; }""",
+     """    h->done = 0; return 0;"""),
+
+    ("the watcher ignores the Settings switch",
+     "auto off in Settings, and the monitor still lights by itself",
+     """    if(in && !lit && autoon && h->tries < 3) return XM_HP_LIGHT;""",
+     """    if(in && !lit && h->tries < 3) return XM_HP_LIGHT;"""),
+
     ("a joined MBUS is not refused",
      "with MBUS joined pipe A owns all four DBUF slices; B's allocation "
      "would overlap it and both pipes underrun",
@@ -222,8 +279,8 @@ BUGS = [
 
     ("the plane is not centred",
      "1024x768 in the top-left corner of a 1920x1080 frame",
-     """    p->pos_x = (p->mode.hactive - w) / 2u;""",
-     """    p->pos_x = 0;"""),
+     """    *ww = a; *hh = b; *x = (W - a) / 2u; *y = (H - b) / 2u;""",
+     """    *ww = a; *hh = b; *x = 0; *y = (H - b) / 2u;"""),
 
     ("the line time is truncated, not rounded up",
      "skl_linetime_wm is DIV_ROUND_UP: 118 instead of 119",

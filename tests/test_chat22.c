@@ -55,6 +55,8 @@ void vga_flush(void){}
 void ui_draw_cursor(void){}
 void ui_erase_cursor(void){}
 void ui_force_cursor_redraw(void){}
+int  um_mode(void){ return 0x1F; }
+void um_set_mode(int m){ (void)m; }
 
 /* ── fake network: nothing is sent, but what WOULD be sent is recorded,
       because "does the client mark a message read" is a real question ── */

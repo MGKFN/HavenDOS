@@ -59,6 +59,8 @@ void keyboard_inject(int c){ if(g_nkeys < 64) g_keys[g_nkeys++] = c; }
 static int g_mods = -1, g_nmods;
 void keyboard_usb_mods(uint8_t m){ g_mods = m; g_nmods++; }
 void mouse_feed(uint8_t b){ if(g_nmouse < 64) g_mouse[g_nmouse++] = b; }
+static int g_wheel_fed;
+void mouse_wheel_add(int n){ g_wheel_fed += n; }
 void mouse_usb_attach(void){ g_mouse_attach++; }
 void mouse_usb_forget_all(void){ g_mouse_attach = 0; }
 
@@ -291,6 +293,14 @@ int main(void)
        g_configures == cfgs && g_setcfg == setc, g_configures - cfgs);
     report(0, 0x82, MOVE, 4); g_nmouse = 0; usb_hid_poll();
     ck("  ... and the mouse still moves", g_nmouse == 3, g_nmouse);
+    ck("  ... a fourth byte of 0 scrolls nothing", g_wheel_fed == 0, g_wheel_fed);
+    {   /* v0.9.6.3: the wheel, as most mice send it even in boot protocol */
+        static const uint8_t WHEEL[4] = { 0x00, 0, 0, (uint8_t)-2 };
+        report(0, 0x82, WHEEL, 4); g_nmouse = 0; usb_hid_poll();
+        ck("a wheel byte of -2: two notches toward the user", g_wheel_fed == -2, g_wheel_fed);
+        report(0, 0x82, WHEEL, 3); g_wheel_fed = 0; usb_hid_poll();
+        ck("  ... a three-byte report has no wheel to read", g_wheel_fed == 0, g_wheel_fed);
+    }
 
     /* ── vendor first ─────────────────────────────────────────────── */
     head("a receiver whose FIRST interface is not boot protocol");

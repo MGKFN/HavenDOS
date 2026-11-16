@@ -142,6 +142,13 @@ typedef struct {
     int      touching;
     int32_t  last_x, last_y;
     int      last_buttons;
+    /* v0.9.6.3: scrolling. `wheel` is what the LAST decoded report
+       scrolled, in notches, + away from the user (HID's sense): a wheel
+       field when the descriptor has one, otherwise two fingers dragged
+       on a touchpad -- which then moves the pointer not at all. */
+    int      wheel;
+    int      scrolling;            /* two fingers down: scroll mode     */
+    int32_t  scroll_acc;           /* finger travel not yet a notch     */
 } ihid_dev_t;
 
 /* Validate and unpack the 30-byte HID descriptor. IHID_E_SIG when the

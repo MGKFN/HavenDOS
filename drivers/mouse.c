@@ -409,6 +409,27 @@ int  mouse_mid_packet(void)            { return mouse_cycle>0; }
 /* Pumped for the same reason mouse_get() is: a caller that only ever
    asks "was there a click" is a caller that never reads the keyboard,
    and shell/chat.c is one. */
+/* v0.9.6.3: the scroll wheel, in notches, + away from the user. Fed
+   by usb/hid.c (a mouse's fourth byte) and drivers/i2c_hid.c (a wheel
+   field, or two fingers on the pad); read and cleared by whoever is in
+   front, like the clicks. Bounded, so a wheel spun while nothing reads
+   it does not scroll a list for a minute afterwards. */
+static int mouse_wheel_acc = 0;
+void mouse_wheel_add(int n)
+{
+    mouse_wheel_acc += n;
+    if(mouse_wheel_acc >  8) mouse_wheel_acc =  8;
+    if(mouse_wheel_acc < -8) mouse_wheel_acc = -8;
+}
+int  mouse_get_wheel(void)
+{
+    int w;
+    mouse_sync();
+    if(!mouse_mine()) return 0;
+    w = mouse_wheel_acc; mouse_wheel_acc = 0;
+    return w;
+}
+
 int  mouse_get_clicks(void)            { mouse_sync();
                                          if(!mouse_mine()) return 0;
                                          { int e=mouse_btn_edge; mouse_btn_edge=0; return e; } }

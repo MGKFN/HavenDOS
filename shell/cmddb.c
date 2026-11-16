@@ -926,13 +926,16 @@ const cmddoc_t cmddb[] = {
       "i2c" },
 
     { "gfx", NULL, CDB_HW,
-      "gfx\ngfx regs|vbt|edid|plan|b\ngfx on|off\ngfx color <colour>",
+      "gfx\ngfx regs|vbt|edid|plan|b\ngfx on|off\ngfx color <colour>\ngfx try\ngfx fit [keep|stretch|centre]\ngfx auto [on|off]",
       "Intel display engine tools",
       "Looks at the Intel display engine as the firmware left it: regs "
       "dumps its registers, vbt reads the Video BIOS Table, edid reads "
       "the monitor's EDID, plan says what gfx on would do. on lights the "
-      "HDMI output after asking, off darkens it again. Everything else "
-      "is read-only.",
+      "HDMI output after asking, off darkens it again. fit chooses how "
+      "the picture fills the monitor (shape kept, stretched, or a box in "
+      "the middle) and auto whether a monitor plugged in lights by "
+      "itself; both are in Settings > Display too. try tests changes to "
+      "the picture layer one at a time. Everything else is read-only.",
       NULL,
       "resolution" },
 

@@ -36,6 +36,7 @@
 #include "vga.h"
 #include "version.h"
 #include "keys.h"
+#include "uimouse.h"
 #include "theme.h"
 #include "net.h"
 #include "netdev.h"
@@ -132,7 +133,7 @@ static void utoa_s(uint32_t v, char *o){
 
 /* A row on the page: label on the left, value right-aligned to a column,
    highlighted when selected. */
-static void row(int y, int sel, const char *label, const char *value, vga_color_t vcol){
+static void row_draw(int y, int sel, const char *label, const char *value, vga_color_t vcol){
     vga_color_t sf, sb; sel_colors(&sf,&sb);
     vga_color_t bg = sel ? sb : VGA_BLACK;
     fill(PX, y, PW, bg);
@@ -142,11 +143,33 @@ static void row(int y, int sel, const char *label, const char *value, vga_color_
         put(vx, y, value, sel?sf:vcol, bg);
     }
 }
+/* v0.9.6.3: a row that can be chosen is also a row that can be clicked */
+static void row(int y, int sel, const char *label, const char *value, vga_color_t vcol){
+    row_draw(y, sel, label, value, vcol);
+    um_row(0, PX, y, PW, sel);
+}
+/* ...and a line of information is neither */
+static void info(int y, const char *label, const char *value, vga_color_t vcol){
+    row_draw(y, 0, label, value, vcol);
+}
 
 static void frame(int sect, int focus_page, const char *keys){
     const theme_t *th=ui_theme();
     W=vga_cols(); H=vga_rows();
     PX=SIDE_W+2; PW=W-PX-1;
+    /* v0.9.6.3: the mouse. A page row needs the focus on the page
+       first (Enter); a section is reached from the sidebar (ESC) by
+       arrows, and opened with Enter. */
+    um_frame();
+    if(!focus_page){ int k='\n'; um_group_prefix(0,&k,1); }
+    for(int i=0;i<S_N && 2+i<H-2;i++){
+        int seq[UM_SEQ_MAX], n=0;
+        if(focus_page) seq[n++]=27;
+        for(int j=sect;j<i && n<UM_SEQ_MAX-1;j++) seq[n++]=KEY_DOWN;
+        for(int j=sect;j>i && n<UM_SEQ_MAX-1;j--) seq[n++]=KEY_UP;
+        seq[n++]='\n';
+        um_keys(0,2+i,SIDE_W,1,seq,n);
+    }
     for(int y=0;y<H;y++)
         vga_fill_row(y,' ',VGA_LIGHT_GREY,VGA_BLACK);
     vga_fill_row(0,' ',th->bar_fg,th->bar_bg);
@@ -192,6 +215,8 @@ static int confirm(const char *q){
     fill(PX,y,PW,VGA_BLACK);
     put(PX+1,y,q,VGA_YELLOW,VGA_BLACK);
     put(PX+3+(int)strlen(q),y,"Y / N",VGA_WHITE,VGA_BLACK);
+    um_key(PX+3+(int)strlen(q),y,1,1,'y');      /* v0.9.6.3: click Y or N */
+    um_key(PX+7+(int)strlen(q),y,1,1,'n');
     vga_flush();
     int k=keyboard_waitchar();
     return k=='y'||k=='Y';
@@ -279,10 +304,33 @@ static const struct { const char *label, *arg; } disp_opts[] = {
 };
 #define NDISP ((int)(sizeof disp_opts/sizeof disp_opts[0]))
 
+/* v0.9.6.3: the HDMI monitor, two rows under the console sizes */
+extern int  cfg_monitor_auto(void);  extern void cfg_set_monitor_auto(int);
+extern int  cfg_monitor_fit(void);
+extern int  gfx_monitor_refit(int fit);
+extern int  gfx_monitor_lit(void);
+extern const char *xm_fit_name(int fit);
+extern const char *xm_why_name(int why);
+#define DISP_MON_AUTO (NDISP)
+#define DISP_MON_FIT  (NDISP+1)
+
 static int page_display(int k, int *sel){
     if(k==KEY_UP && *sel>0) (*sel)--;
-    else if(k==KEY_DOWN && *sel<NDISP-1) (*sel)++;
-    else if(k=='\n'||k=='\r'){
+    else if(k==KEY_DOWN && *sel<DISP_MON_FIT) (*sel)++;
+    else if(*sel==DISP_MON_AUTO && (k=='\n'||k=='\r'||k==' '||k==KEY_LEFT||k==KEY_RIGHT)){
+        cfg_set_monitor_auto(!cfg_monitor_auto()); cfg_save();
+        say(VGA_LIGHT_GREEN, cfg_monitor_auto() ? "The monitor lights by itself when plugged in."
+                                                : "The monitor lights only with `gfx on`.");
+    }
+    else if(*sel==DISP_MON_FIT && (k=='\n'||k=='\r'||k==' '||k==KEY_LEFT||k==KEY_RIGHT)){
+        /* keep -> stretch -> keep; centre is `gfx fit centre` only */
+        int f = cfg_monitor_fit()==2 ? 1 : 2, r;
+        say(VGA_YELLOW, "Applying...");
+        r = gfx_monitor_refit(f);
+        say(r ? VGA_YELLOW : VGA_LIGHT_GREEN, r ? xm_why_name(r)
+            : gfx_monitor_lit() ? "Monitor picture changed." : "Saved for the monitor.");
+    }
+    else if(*sel<NDISP && (k=='\n'||k=='\r')){
         /* The resolution command is the one tested path into a mode
            change, with its revert-if-it-will-not-sync guard; use it. */
         vga_clear(); vga_set_cursor(0,0);
@@ -301,10 +349,17 @@ static int page_display(int k, int *sel){
     cur[p++]=' '; cur[p++]='x'; cur[p++]=' ';
     for(char *c=b;*c;c++) cur[p++]=*c;
     cur[p]=0;
-    row(3,0,"Shell console",cur,VGA_WHITE);
+    info(3,"Shell console",cur,VGA_WHITE);
     put(PX+1,4,"The desktop and apps adapt to the grid; older apps are",VGA_DARK_GREY,VGA_BLACK);
     put(PX+1,5,"centred in an 80x25 box on a bigger one.",VGA_DARK_GREY,VGA_BLACK);
     for(int i=0;i<NDISP;i++) row(7+i,*sel==i,disp_opts[i].label,0,VGA_WHITE);
+    {
+        int y = 8+NDISP;
+        put(PX+1,y++,"HDMI monitor",VGA_DARK_GREY,VGA_BLACK);
+        row(y++,*sel==DISP_MON_AUTO,"Light it by itself", cfg_monitor_auto()?"on":"off",VGA_WHITE);
+        row(y++,*sel==DISP_MON_FIT, "Picture", cfg_monitor_fit()==2?"stretched":
+                                              cfg_monitor_fit()==0?"centred":"fitted",VGA_WHITE);
+    }
     return 1;
 }
 
@@ -519,13 +574,13 @@ static int page_network(int k, int *sel){
         put(PX+1,y++,"`lspci` and `usb eth` show what the machine has.",VGA_DARK_GREY,VGA_BLACK);
         y++;
     } else {
-        row(y++,0,"Adapter",netdev_bus_name(0),VGA_WHITE);
-        row(y++,0,"Link",netdev_link_up(0)?"up":"down",netdev_link_up(0)?VGA_WHITE:VGA_YELLOW);
-        ip_s(net_get_ip(),b);  row(y++,0,"Address",b,VGA_WHITE);
-        ip_s(net_get_gw(),b);  row(y++,0,"Gateway",b,VGA_WHITE);
-        ip_s(net_get_dns(),b); row(y++,0,"DNS",b,VGA_WHITE);
+        info(y++,"Adapter",netdev_bus_name(0),VGA_WHITE);
+        info(y++,"Link",netdev_link_up(0)?"up":"down",netdev_link_up(0)?VGA_WHITE:VGA_YELLOW);
+        ip_s(net_get_ip(),b);  info(y++,"Address",b,VGA_WHITE);
+        ip_s(net_get_gw(),b);  info(y++,"Gateway",b,VGA_WHITE);
+        ip_s(net_get_dns(),b); info(y++,"DNS",b,VGA_WHITE);
         int src=net_config_source();
-        row(y++,0,"Came from",src==NET_CFG_DHCP?"DHCP":src==NET_CFG_MANUAL?"set by hand":"fallback -- does not route",
+        info(y++,"Came from",src==NET_CFG_DHCP?"DHCP":src==NET_CFG_MANUAL?"set by hand":"fallback -- does not route",
             src==NET_CFG_FALLBACK?VGA_YELLOW:VGA_WHITE);
         y++;
     }
@@ -591,14 +646,14 @@ static int page_about(int k, int *sel){
     put(PX+1,3,"HavenDOS",th->accent,VGA_BLACK);
     put(PX+10,3,HAVENDOS_VER_NUM " " HAVENDOS_CHANNEL " \"" HAVENDOS_CODENAME "\"",VGA_WHITE,VGA_BLACK);
     put(PX+1,4,"Written from scratch in C and x86 assembly.",VGA_LIGHT_GREY,VGA_BLACK);
-    row(6,0,"Made by",HAVENDOS_VENDOR,VGA_WHITE);
-    row(7,0,"Kernel","x86 32-bit, Multiboot, GRUB 2",VGA_WHITE);
-    row(8,0,"Memory",mem,VGA_WHITE);
-    row(9,0,"Hostname",cfg_hostname(),VGA_WHITE);
-    row(10,0,"Signed in as",current_username(),VGA_WHITE);
-    row(12,0,"Source and releases","github.com/MGKFN/HavenDOS",VGA_WHITE);
-    row(13,0,"Updates","`update` installs a new kernel",VGA_WHITE);
-    row(14,0,"Everything else","`system`, `help`, `guide`",VGA_WHITE);
+    info(6,"Made by",HAVENDOS_VENDOR,VGA_WHITE);
+    info(7,"Kernel","x86 32-bit, Multiboot, GRUB 2",VGA_WHITE);
+    info(8,"Memory",mem,VGA_WHITE);
+    info(9,"Hostname",cfg_hostname(),VGA_WHITE);
+    info(10,"Signed in as",current_username(),VGA_WHITE);
+    info(12,"Source and releases","github.com/MGKFN/HavenDOS",VGA_WHITE);
+    info(13,"Updates","`update` installs a new kernel",VGA_WHITE);
+    info(14,"Everything else","`system`, `help`, `guide`",VGA_WHITE);
     put(PX+1,16,HAVENDOS_EA_LINE1,VGA_YELLOW,VGA_BLACK);
     return 1;
 }
@@ -607,7 +662,7 @@ static int page_about(int k, int *sel){
 static const char *page_keys(int s){
     switch(s){
     case S_APPEAR:   return "Up/Down choose  Enter apply  Left back";
-    case S_DISPLAY:  return "Up/Down choose  Enter apply  Left back";
+    case S_DISPLAY:  return "Up/Down choose  Enter apply/change  Left back";
     case S_DESKTOP:  return "Enter/D desktop icon  F favourite  Left back";
     case S_SHELL:    return "Up/Down choose  Left/Right change  ESC back";
     case S_ACCOUNTS: return "P password  A role  D delete  H hide  L auto-login  ESC back";

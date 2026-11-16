@@ -98,6 +98,8 @@ typedef struct {
     /* B, as it is now */
     uint32_t  b_conf, b_func, b_ctl, b_gamma, b_csc, b_frm, b_isr;
     uint32_t  ddi_b_buf, ddi_b_clk;
+    uint32_t  a_ps[2], b_ps[2];   /* v0.9.6.3: PS_CTRL, scalers 1 and 2  */
+    uint32_t  err_mask;           /* XELPD_DISPLAY_ERR_FATAL_MASK        */
 } xm_state_t;
 
 /* ── the plan: every operation, in order ─────────────────────────── */
@@ -107,6 +109,7 @@ typedef struct {
                              (the PHY's group register, all four lanes) */
 #define XM_OP_WSET    3   /* wait until (off & set) == set               */
 #define XM_OP_WCLR    4   /* wait until (off & clr) == 0                 */
+#define XM_OP_DELAY   5   /* wait val milliseconds (v0.9.6.3)            */
 
 typedef struct {
     uint8_t   op;
@@ -118,7 +121,7 @@ typedef struct {
     const char *what;         /* a few words, for the screen            */
 } xm_op_t;
 
-#define XM_MAX_OPS 112
+#define XM_MAX_OPS 128
 typedef struct {
     int       why;            /* XM_OK, or the refusal                  */
     int       on;             /* 1 lights, 0 turns off                  */
@@ -127,6 +130,9 @@ typedef struct {
     uint32_t  cfgcr0, cfgcr1, port_khz;
     int       level, reversal;          /* HDMI vswing entry, lanes     */
     uint32_t  plane_w, plane_h, pos_x, pos_y;
+    int       fit;                      /* XM_FIT_*: what was planned   */
+    uint32_t  win_x, win_y, win_w, win_h;   /* the picture on the mode  */
+    uint32_t  ecc_old;                  /* the fatal mask, to restore   */
     uint32_t  ddb_start, ddb_end;       /* blocks, end inclusive        */
     uint32_t  linetime;
     int       wm_dropped;               /* WM levels too big, disabled  */
@@ -164,6 +170,26 @@ int  xm_wrpll(uint32_t port_khz, uint32_t dssm, uint32_t *cfgcr0, uint32_t *cfgc
 int  xm_plan_on (const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
                  xm_plan_t *p);
 int  xm_plan_off(const xm_state_t *s, xm_plan_t *p);
+
+/* v0.9.6.3: filling the monitor with pipe B's scaler. CENTRE is
+   0.9.6.2's unscaled box; KEEP fits it keeping 4:3; STRETCH fills. */
+#define XM_FIT_CENTRE  0
+#define XM_FIT_KEEP    1
+#define XM_FIT_STRETCH 2
+void        xm_set_fit(int fit);
+int         xm_get_fit(void);
+const char *xm_fit_name(int fit);
+void        xm_fit_window(uint32_t W, uint32_t H, uint32_t w, uint32_t h, int fit,
+                          uint32_t *x, uint32_t *y, uint32_t *ww, uint32_t *hh);
+uint32_t    xm_ps_phase(uint32_t src, uint32_t dst);
+int         xm_hpd_b(const gfx_dev_t *dev);   /* DDI B's hot-plug line live */
+int         xm_b_lit(const gfx_dev_t *dev);   /* transcoder B enabled      */
+typedef struct { int state, done, tries; } xm_hp_t;   /* state -1 at start */
+#define XM_HP_NONE  0
+#define XM_HP_LIGHT 1
+#define XM_HP_OFF   2
+int         xm_hotplug_step(xm_hp_t *h, int in, int lit, int autoon);
+int         xm_hotplug_lit(xm_hp_t *h, int ok);    /* 1: give up, warn  */
 
 /* v0.9.2.2: the background colour of pipe B (PIPE_BOTTOM_COLOR), what
    the pipe shows where no plane is. 10 bits a channel: R 29:20, G 19:10,

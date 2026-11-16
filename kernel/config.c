@@ -41,6 +41,11 @@ static char g_autologin_user[16]   = "";
    lot. */
 static int  g_verbose_boot         = 0;
 static int  g_post_screen          = 1;
+/* v0.9.6.3: the HDMI monitor. Lit by itself when one is plugged in
+   (Settings > Display turns that off), and its picture fitted keeping
+   the 4:3 shape (1) or stretched to fill (2) -- XM_FIT_* values. */
+static int  g_monitor_auto         = 1;
+static int  g_monitor_fit          = 1;
 /* v0.8.8.4: OFF BY DEFAULT. It was 120, and until this release the
    desktop ignored the value anyway and fired at a hardcoded 30
    seconds -- see shell/screensaver.c. Now that the number is read, 0
@@ -118,6 +123,12 @@ void cfg_load(void){
             g_verbose_boot=cfg_val_int(line,"verbose_boot");
         else if(cfg_startswith(line,"post_screen="))
             g_post_screen=cfg_val_int(line,"post_screen");
+        else if(cfg_startswith(line,"monitor_auto="))
+            g_monitor_auto=cfg_val_int(line,"monitor_auto") ? 1 : 0;
+        else if(cfg_startswith(line,"monitor_fit=")){
+            int f=cfg_val_int(line,"monitor_fit");
+            g_monitor_fit=(f>=0&&f<=2)?f:1;
+        }
         else if(cfg_startswith(line,"screensaver_timeout="))
             g_screensaver_timeout=cfg_val_int(line,"screensaver_timeout");
         else if(cfg_startswith(line,"autologin_timeout="))
@@ -171,6 +182,8 @@ void cfg_save(void){
     EMIT_KS("autologin_user",       g_autologin_user);
     EMIT_KV("verbose_boot",         g_verbose_boot);
     EMIT_KV("post_screen",          g_post_screen);
+    EMIT_KV("monitor_auto",         g_monitor_auto);
+    EMIT_KV("monitor_fit",          g_monitor_fit);
     EMIT_KV("screensaver_timeout",  g_screensaver_timeout);
     EMIT_KV("autologin_timeout",    g_autologin_timeout);
     EMIT_KV("console_cols",         g_console_cols);
@@ -204,6 +217,10 @@ int         cfg_verbose_boot(void)            { return g_verbose_boot; }
 void        cfg_set_verbose_boot(int v)       { g_verbose_boot=v; }
 int         cfg_post_screen(void)             { return g_post_screen; }
 void        cfg_set_post_screen(int v)        { g_post_screen=v; }
+int         cfg_monitor_auto(void)            { return g_monitor_auto; }
+void        cfg_set_monitor_auto(int v)       { g_monitor_auto=v?1:0; }
+int         cfg_monitor_fit(void)             { return g_monitor_fit; }
+void        cfg_set_monitor_fit(int v)        { if(v>=0&&v<=2) g_monitor_fit=v; }
 int         cfg_screensaver_timeout(void)     { return g_screensaver_timeout; }
 void        cfg_set_screensaver_timeout(int v){ g_screensaver_timeout=v; }
 int         cfg_autologin_timeout(void)       { return g_autologin_timeout; }

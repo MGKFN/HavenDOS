@@ -51,6 +51,8 @@ const char *current_username(void){ return "kyan"; }
 
 #include "../shell/games2.c"
 #include "../shell/apps2.c"
+/* v0.9.6.3: shell/uimouse.c is not linked here */
+void um_set_mode(int m){ (void)m; }
 
 static int total, fails;
 static void ck(const char *w, int ok, const char *d){

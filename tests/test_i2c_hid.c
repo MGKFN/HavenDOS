@@ -58,6 +58,8 @@ static void klog(int lv, const char *f, ...){ (void)lv;(void)f; }
 #define KLOG_WARN 1
 #define KLOG_OK   2
 static void mouse_feed_i2c(int dx,int dy,int b){ (void)dx;(void)dy;(void)b; }
+static int  g_wheel_fed;
+static void mouse_wheel_add(int n){ g_wheel_fed += n; }
 static void mouse_i2c_attach(void){ }
 static uint32_t slept_ms; static int sleeps;
 static void sleep_ms(uint32_t ms){ slept_ms += ms; sleeps++; }
@@ -576,6 +578,35 @@ int main(void)
         touch_report(1, 500, 500, 0, 1);
         ihid_decode(d, dev.inrep, dev.inrep_len, &dx, &dy, &btn, &have);
         ck("the release is", have && btn == 0, btn);
+    }
+
+    head("v0.9.6.3: two fingers scroll, and do not point");
+    {
+        ihid_dev_t *d = &found[0];
+        d->touching = 0; d->last_buttons = 0; d->scrolling = 0;
+        touch_report(1, 1000, 1000, 0, 2);
+        ihid_decode(d, dev.inrep, dev.inrep_len, &dx, &dy, &btn, &have);
+        ck("the first two-finger report anchors: no wheel, no movement",
+           d->wheel == 0 && dx == 0 && dy == 0 && !have, d->wheel);
+        touch_report(1, 1000, 1340, 0, 2);       /* 340 down = 2 notches of 170 */
+        ihid_decode(d, dev.inrep, dev.inrep_len, &dx, &dy, &btn, &have);
+        ck("fingers down 2/24 of the pad: wheel -2 (scroll down), pointer still",
+           d->wheel == -2 && dx == 0 && dy == 0 && have, d->wheel);
+        touch_report(1, 1000, 1300, 0, 2);       /* 40 up: not a notch yet */
+        ihid_decode(d, dev.inrep, dev.inrep_len, &dx, &dy, &btn, &have);
+        ck("less than a notch: nothing yet", d->wheel == 0 && !have, d->wheel);
+        touch_report(1, 1000, 1170, 0, 2);       /* 130 more up: 170 in all */
+        ihid_decode(d, dev.inrep, dev.inrep_len, &dx, &dy, &btn, &have);
+        ck("  ... and the remainder carries: wheel +1", d->wheel == 1, d->wheel);
+        touch_report(1, 1500, 1500, 0, 1);
+        ihid_decode(d, dev.inrep, dev.inrep_len, &dx, &dy, &btn, &have);
+        ck("back to one finger: re-anchored, no jump by the scroll's travel",
+           dx == 0 && dy == 0 && d->wheel == 0, dx);
+        touch_report(1, 1510, 1520, 0, 1);
+        ihid_decode(d, dev.inrep, dev.inrep_len, &dx, &dy, &btn, &have);
+        ck("  ... then it points again", dx == 10 && dy == 20, dx);
+        touch_report(0, 1510, 1520, 0, 0);
+        ihid_decode(d, dev.inrep, dev.inrep_len, &dx, &dy, &btn, &have);
     }
 
     head("a report for a different report id is ignored, not misread");

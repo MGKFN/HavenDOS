@@ -14,6 +14,7 @@
    needs the network, the disk or anything that can fail.
    ================================================================ */
 #include "types.h"
+#include "uimouse.h"
 #include "string.h"
 #include "vga.h"
 #include "keys.h"
@@ -141,6 +142,7 @@ static void g2_draw(int over, int won){
 }
 
 void app_2048(void){
+    um_set_mode(UM_HINTS | UM_RIGHT);   /* v0.9.6.3: no wheel in a game */
     rng_seed();
     for(;;){
         memset(g2,0,sizeof g2); g2_score=0;
@@ -183,6 +185,7 @@ void app_2048(void){
 static uint8_t bricks[BK_ROWS][BK_COLS];
 
 void app_breakout(void){
+    um_set_mode(UM_HINTS | UM_RIGHT);   /* v0.9.6.3: no wheel in a game */
     static const vga_color_t rowcol[BK_ROWS]={VGA_RED,VGA_BROWN,VGA_GREEN,VGA_CYAN,VGA_BLUE};
     rng_seed();
     uint32_t score=0, best=0;

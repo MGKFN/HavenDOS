@@ -192,6 +192,22 @@ static const uint32_t k_dbuf[4] = { 0x45008u, 0x44FE8u, 0x44300u, 0x44304u };
 #define R_B_CSC     0x49128u   /* PIPE_CSC_MODE                        */
 #define R_B_ISR     0x44410u   /* GEN8_DE_PIPE_ISR(PIPE_B)             */
 #define   PIPE_UNDERRUN     BIT(31)
+/* v0.9.6.3: pipe scalers (skl_scaler.c, intel_display_regs.h). Pipe A
+   scales the firmware's 1024x768 to the panel with one; pipe B gets its
+   own, so the picture fills the monitor. Pipe A's are READ only. */
+#define R_A_PS_CTRL(i)   (0x68180u + 0x100u * (i))
+#define R_B_PS_CTRL(i)   (0x68980u + 0x100u * (i))
+#define R_B_PS_WIN_POS   0x68970u
+#define R_B_PS_WIN_SZ    0x68974u
+#define R_B_PS_VPHASE    0x68988u
+#define R_B_PS_HPHASE    0x68994u
+#define R_B_PS_ECC       0x689D0u
+#define   PS_SCALER_EN      BIT(31)
+#define   PS_BINDING_MASK   (7u << 25)
+#define   PS_PHASE_TRIP     BIT(0)
+/* WA 14011503117 (ADL-P): mask fatal display errors while a scaler is
+   switched on -- its ECC can trip once -- then put the mask back */
+#define R_ERR_FATAL_MASK 0x4421Cu
 /* shared registers with a B part */
 #define R_B_CLKSEL  0x46144u   /* TRANS_CLK_SEL(TRANSCODER_B)          */
 #define R_B_LINETIME 0x45274u  /* WM_LINETIME(PIPE_B)                  */
@@ -296,7 +312,14 @@ void xm_read(const gfx_dev_t *dev, xm_state_t *s)
         s->b_csc   = GFX_RD(m, R_B_CSC);
         s->b_frm   = GFX_RD(m, R_B_FRM);
         s->b_isr   = GFX_RD(m, R_B_ISR);
+        s->b_ps[0] = GFX_RD(m, R_B_PS_CTRL(0));
+        s->b_ps[1] = GFX_RD(m, R_B_PS_CTRL(1));
     }
+    if(s->pw_drv & PW_STATE(PW_A)){
+        s->a_ps[0] = GFX_RD(m, R_A_PS_CTRL(0));
+        s->a_ps[1] = GFX_RD(m, R_A_PS_CTRL(1));
+    }
+    s->err_mask = GFX_RD(m, R_ERR_FATAL_MASK);
 }
 
 /* ════ 2. PLANNING -- pure ══════════════════════════════════════════ */
@@ -397,6 +420,14 @@ static void rmwg(xm_plan_t *p, uint32_t grp, uint32_t ln0, uint32_t clr,
     xm_op_t *o = op(p, XM_OP_RMWG, grp, what);
     if(o){ o->rb = ln0; o->clr = clr; o->set = set; o->hold = clr | set; }
 }
+static void delay(xm_plan_t *p, uint32_t ms, const char *what)
+{
+    xm_op_t *o;
+    if(p->nops >= XM_MAX_OPS){ p->why = XM_EREFUSED; return; }
+    o = &p->ops[p->nops++];
+    memset(o, 0, sizeof *o);
+    o->op = XM_OP_DELAY; o->val = ms; o->what = what;
+}
 static void wset(xm_plan_t *p, uint32_t off, uint32_t bits, const char *what)
 {
     xm_op_t *o = op(p, XM_OP_WSET, off, what);
@@ -429,6 +460,51 @@ static const uint8_t k_hdmi_trans[7][5] = {
     { 0x6, 0x7F, 0x35, 0x00, 0x0A },     /* 600 / 850,    3.0     */
 };
 
+/* ── v0.9.6.3: filling the monitor ──────────────────────────────────
+   The firmware's picture is 1024x768. Unscaled it is a box in the
+   middle of a 1920x1080 monitor (0.9.6.2). Pipe B's scaler stretches
+   it, keeping its shape (XM_FIT_KEEP, 1440x1080 with bars) or not
+   (XM_FIT_STRETCH, edge to edge, as the panel does). */
+static int g_fit = XM_FIT_KEEP;
+void xm_set_fit(int fit){ if(fit >= XM_FIT_CENTRE && fit <= XM_FIT_STRETCH) g_fit = fit; }
+int  xm_get_fit(void){ return g_fit; }
+const char *xm_fit_name(int fit)
+{
+    return fit == XM_FIT_STRETCH ? "stretched to fill"
+         : fit == XM_FIT_KEEP    ? "fitted, shape kept" : "centred, unscaled";
+}
+
+/* Where the picture goes on a W x H mode. Sizes are kept even: the
+   scaler's window wants that, and a 1-pixel bar on one side is ugly. */
+void xm_fit_window(uint32_t W, uint32_t H, uint32_t w, uint32_t h, int fit,
+                   uint32_t *x, uint32_t *y, uint32_t *ww, uint32_t *hh)
+{
+    uint32_t a, b;
+    if(fit == XM_FIT_STRETCH || !w || !h){ a = W; b = H; }
+    else if(fit == XM_FIT_KEEP){
+        /* 13-bit sizes: every product fits 32 bits */
+        if(W * h >= H * w){ b = H; a = (H * w + h / 2u) / h; }
+        else              { a = W; b = (W * h + w / 2u) / w; }
+        a &= ~1u; b &= ~1u;
+        if(a > W) a = W;
+        if(b > H) b = H;
+    } else { a = w; b = h; }
+    *ww = a; *hh = b; *x = (W - a) / 2u; *y = (H - b) / 2u;
+}
+
+/* skl_scaler_calc_phase(1, scale, false): scale is src/dst in 16.16 */
+uint32_t xm_ps_phase(uint32_t src, uint32_t dst)
+{
+    int32_t scale, phase = -0x8000;
+    uint32_t trip = 0;
+    if(!dst) return 0;
+    scale = (int32_t)(((src & 0x1FFFu) << 16) / dst);   /* 13 bits << 16 fits */
+    phase += scale / 2;
+    if(phase < 0) phase = 0x10000 + phase;
+    else trip = PS_PHASE_TRIP;
+    return (((uint32_t)phase >> 2) & (0x7FFFu << 1)) | trip;
+}
+
 int xm_plan_on(const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
                xm_plan_t *p)
 {
@@ -458,10 +534,23 @@ int xm_plan_on(const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
     p->plane_w = w; p->plane_h = h;
 
     if(!e || e->why != EDID_OK) return refuse(p, XM_ENOMON);
-    k = edid_pick(e, EDID_TMDS_NOSCRAMBLE_KHZ, w, h);
-    if(k < 0)
-        return refuse(p, edid_pick(e, EDID_TMDS_NOSCRAMBLE_KHZ, 0, 0) >= 0
-                         ? XM_EFIT : XM_ENOMODE);
+    /* Scaled, the monitor runs its own best mode and the scaler does
+       the rest -- as long as the picture is not shrunk by 3 or more,
+       the scaler's limit. Centred, the mode must hold the plane. */
+    p->fit = g_fit;
+    if(p->fit != XM_FIT_CENTRE){
+        k = edid_pick(e, EDID_TMDS_NOSCRAMBLE_KHZ, 0, 0);
+        if(k >= 0 && (e->modes[k].hactive * 3u <= w || e->modes[k].vactive * 3u <= h)) k = -1;
+        if(k < 0) p->fit = XM_FIT_CENTRE;
+    }
+    if(p->fit != XM_FIT_CENTRE && ((s->b_ps[0] | s->b_ps[1]) & PS_SCALER_EN))
+        return refuse(p, XM_EBUSY);
+    if(p->fit == XM_FIT_CENTRE){
+        k = edid_pick(e, EDID_TMDS_NOSCRAMBLE_KHZ, w, h);
+        if(k < 0)
+            return refuse(p, edid_pick(e, EDID_TMDS_NOSCRAMBLE_KHZ, 0, 0) >= 0
+                             ? XM_EFIT : XM_ENOMODE);
+    }
     p->mode = e->modes[k];
 
     if((s->b_gamma & (BIT(31) | BIT(30))) || (s->b_csc & (BIT(31) | BIT(30))))
@@ -492,8 +581,10 @@ int xm_plan_on(const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
     p->level = (child && child->hdmi_level >= 0 && child->hdmi_level < 7)
                ? child->hdmi_level : 6;
     p->reversal = (child && child->lane_reversal) || (s->ddi_b_buf & DDI_BUF_REVERSAL);
-    p->pos_x = (p->mode.hactive - w) / 2u;
-    p->pos_y = (p->mode.vactive - h) / 2u;
+    xm_fit_window(p->mode.hactive, p->mode.vactive, w, h, p->fit,
+                  &p->win_x, &p->win_y, &p->win_w, &p->win_h);
+    if(p->fit == XM_FIT_CENTRE){ p->pos_x = p->win_x; p->pos_y = p->win_y; }
+    else                       { p->pos_x = 0; p->pos_y = 0; }
     p->ddb_start = DDB_B_START; p->ddb_end = DDB_B_END;
     alloc = DDB_B_END - DDB_B_START + 1u;
 
@@ -537,8 +628,13 @@ int xm_plan_on(const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
     wr(p, R_B_DIP, 0, 0xFFFFFFFFu, "infoframes off");
 
     /* ── pipe and transcoder (hsw_crtc_enable) ─────────────────── */
-    wr(p, R_B_SRC, ((p->mode.hactive - 1u) << 16) | (p->mode.vactive - 1u),
-       0xFFFFFFFFu, "PIPESRC");
+    /* PIPESRC is what the pipe is fed: the mode, or -- scaled -- the
+       picture, which the scaler then stretches onto the mode */
+    if(p->fit == XM_FIT_CENTRE)
+        wr(p, R_B_SRC, ((p->mode.hactive - 1u) << 16) | (p->mode.vactive - 1u),
+           0xFFFFFFFFu, "PIPESRC");
+    else
+        wr(p, R_B_SRC, ((w - 1u) << 16) | (h - 1u), 0xFFFFFFFFu, "PIPESRC: the picture");
     /* bdw_set_pipe_misc: 8 bpc, PIXEL_ROUNDING_TRUNC */
     wr(p, R_B_MISC, BIT(8), BIT(8) | (7u << 5), "PIPE_MISC");
     /* intel_set_transcoder_timings, display 13: VBLANK_START unused (1) */
@@ -557,6 +653,16 @@ int xm_plan_on(const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
     /* icl_set_pipe_chicken */
     rmw(p, R_B_CHICKEN, 0, BIT(30) | BIT(15) | BIT(7), BIT(30) | BIT(15) | BIT(7),
         "PIPE_CHICKEN");
+    /* skl_pfit_enable: scaler 1, bound to the pipe, medium filter */
+    if(p->fit != XM_FIT_CENTRE){
+        p->ecc_old = s->err_mask;
+        wr(p, R_ERR_FATAL_MASK, 0xFFFFFFFFu, 0, "fatal errors masked (WA)");
+        wr(p, R_B_PS_CTRL(0), PS_SCALER_EN, 0xFFFFFFFFu, "scaler: on, the pipe's");
+        wr(p, R_B_PS_VPHASE, xm_ps_phase(h, p->win_h), 0xFFFFFFFFu, "scaler: v phase");
+        wr(p, R_B_PS_HPHASE, xm_ps_phase(w, p->win_w), 0xFFFFFFFFu, "scaler: h phase");
+        wr(p, R_B_PS_WIN_POS, (p->win_x << 16) | p->win_y, 0xFFFFFFFFu, "scaler: where");
+        wr(p, R_B_PS_WIN_SZ,  (p->win_w << 16) | p->win_h, 0xFFFFFFFFu, "scaler: how big");
+    }
     /* MBUS credits and watermarks: pipe A's, for a plane this size */
     rmw(p, R_B_DBOX, DBOX_FIELDS, s->a_dbox & DBOX_FIELDS, DBOX_FIELDS,
         "MBUS credits (as A)");
@@ -627,6 +733,11 @@ int xm_plan_on(const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
     wr(p, R_B_OFFSET, s->a_offset, 0xFFFFFFFFu, "PLANE_OFFSET (as A)");
     wr(p, R_B_CTL,    s->a_ctl,    0xFFFFFFFFu, "PLANE_CTL (as A)");
     wr(p, R_B_SURF,   s->a_surf,   0xFFFFF000u, "PLANE_SURF: the framebuffer");
+    if(p->fit != XM_FIT_CENTRE){                /* adl_scaler_ecc_unmask */
+        delay(p, 50, "three frames");
+        wr(p, R_B_PS_ECC, 1, 0, "scaler: ECC status cleared");
+        wr(p, R_ERR_FATAL_MASK, p->ecc_old, 0, "fatal error mask back");
+    }
 
     if(p->why) return refuse(p, p->why);       /* ran out of room */
     return XM_OK;
@@ -644,6 +755,14 @@ int xm_plan_off(const xm_state_t *s, xm_plan_t *p)
         rmw(p, R_B_CTL, PLANE_EN, 0, PLANE_EN, "plane off");
         wr(p, R_B_SURF, 0, 0xFFFFF000u, "plane: arm");
     }
+    for(n = 0; n < 2; n++)                      /* skl_detach_scaler */
+        if(s->pipe_b_powered && (s->b_ps[n] & PS_SCALER_EN)){
+            wr(p, R_B_PS_CTRL(n), 0, 0xFFFFFFFFu, "scaler off");
+            if(n == 0){
+                wr(p, R_B_PS_WIN_POS, 0, 0xFFFFFFFFu, "scaler window: none");
+                wr(p, R_B_PS_WIN_SZ, 0, 0xFFFFFFFFu, "scaler size: none");
+            }
+        }
     if(s->pipe_b_powered && (s->b_conf & TRANSCONF_EN)){
         rmw(p, R_B_CONF, TRANSCONF_EN, 0, TRANSCONF_EN, "TRANSCONF: disable");
         wclr(p, R_B_CONF, TRANSCONF_STATE, "transcoder B stopped");
@@ -766,6 +885,47 @@ int xm_plan_trial(const xm_snap_t *sn, int n, xm_plan_t *p)
     return XM_OK;
 }
 
+/* v0.9.6.3: the two questions the monitor watcher asks every second.
+   Two reads, nothing written. */
+int xm_hpd_b(const gfx_dev_t *dev)
+{
+    if(!dev || dev->why != GFX_OK || !dev->mmio) return 0;
+    return (GFX_RD(dev->mmio, R_SDEISR) & SDE_HPD_B) != 0;
+}
+int xm_b_lit(const gfx_dev_t *dev)
+{
+    if(!dev || dev->why != GFX_OK || !dev->mmio) return 0;
+    if(!(GFX_RD(dev->mmio, R_PWR_DRV) & PW_STATE(PW_B))) return 0;
+    return (GFX_RD(dev->mmio, R_B_CONF) & TRANSCONF_EN) != 0;
+}
+
+/* v0.9.6.3: the monitor watcher's decisions, pure, once a second.
+   A change of the hot-plug line is believed on the second read that
+   agrees; each state is acted on once; a monitor that would not light
+   is tried three times, a second apart, then left until it is
+   unplugged. shell/gfxcmd.c does what this says. */
+int xm_hotplug_step(xm_hp_t *h, int in, int lit, int autoon)
+{
+    in = in ? 1 : 0;
+    if(in != h->state){
+        h->state = in; h->done = 0;
+        if(!in) h->tries = 0;
+        return XM_HP_NONE;
+    }
+    if(h->done) return XM_HP_NONE;
+    h->done = 1;
+    if(in && !lit && autoon && h->tries < 3) return XM_HP_LIGHT;
+    if(!in && lit) return XM_HP_OFF;
+    return XM_HP_NONE;
+}
+int xm_hotplug_lit(xm_hp_t *h, int ok)
+{
+    if(ok){ h->tries = 0; return 0; }
+    h->tries++;
+    if(h->tries < 3){ h->done = 0; return 0; }
+    return 1;                           /* give up: say so, once */
+}
+
 uint32_t xm_underrun_hits(const gfx_dev_t *dev, uint32_t reads)
 {
     uint32_t i, hits = 0;
@@ -794,6 +954,11 @@ int xm_allowed(uint32_t off, uint32_t old, uint32_t val, uint32_t dpclka,
     if(off >= 0x71000u && off < 0x72000u) return 1;      /* pipe B       */
     if(off >= PHYB && off < PHYB + 0x1000u) return 1;    /* combo PHY B  */
     if(off == R_DDI_BUF_B || off == R_B_CLKSEL || off == R_B_LINETIME) return 1;
+    if(off >= 0x68900u && off < 0x68B00u) return 1;      /* B's scalers  */
+    /* the fatal-error mask: all ones while the scaler starts, then back
+       to exactly what it was -- never anything else */
+    if(off == R_ERR_FATAL_MASK)
+        return val == 0xFFFFFFFFu || (p && p->on == 1 && val == p->ecc_old);
 
     if(off == R_PWR_DDI_DRV)            /* add DDI B's request, only that */
         return !(ch & ~PW_REQ(DDI_IO_B)) && (val & PW_REQ(DDI_IO_B));
@@ -873,6 +1038,9 @@ int xm_apply(const gfx_dev_t *dev, const xm_plan_t *p, xm_result_t *res)
                 res->bad_got = v;
                 why = XM_ETIMEOUT;
             }
+            break;
+        case XM_OP_DELAY:
+            XM_SLEEP_MS(o->val);
             break;
         default:
             why = XM_EREFUSED;
@@ -1038,9 +1206,10 @@ void xm_report_plan(const xm_state_t *s, const xm_plan_t *p, int full,
         Xs(&l, "  DDI B: DVI signalling, 4 lanes, vswing entry "); Xu(&l, (uint32_t)p->level);
         if(p->reversal) Xs(&l, ", lanes reversed");
         XE(&l, GFX_T_TEXT);
-        Xs(&l, "  plane  "); Xu(&l, p->plane_w); Xc(&l, 'x'); Xu(&l, p->plane_h);
-        Xs(&l, " at "); Xu(&l, p->pos_x); Xc(&l, ','); Xu(&l, p->pos_y);
-        Xs(&l, ", unscaled: the panel's picture, GTT "); Xh(&l, s->a_surf, 8);
+        Xs(&l, "  picture "); Xu(&l, p->plane_w); Xc(&l, 'x'); Xu(&l, p->plane_h);
+        Xs(&l, " -> "); Xu(&l, p->win_w); Xc(&l, 'x'); Xu(&l, p->win_h);
+        Xs(&l, " at "); Xu(&l, p->win_x); Xc(&l, ','); Xu(&l, p->win_y);
+        Xs(&l, ": "); Xs(&l, xm_fit_name(p->fit));
         XE(&l, GFX_T_TEXT);
         Xs(&l, "  buffer blocks "); Xu(&l, p->ddb_start); Xc(&l, '-'); Xu(&l, p->ddb_end);
         Xs(&l, " of slices 3-4, line time "); Xu(&l, p->linetime); Xs(&l, "/8 us");

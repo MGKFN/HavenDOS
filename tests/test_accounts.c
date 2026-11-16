@@ -141,6 +141,8 @@ void utoa(uint32_t v, char *buf, int base)
 void notif_push(const char *m){ (void)m; }
 void klog(int l, const char *f, ...){ (void)l; (void)f; }
 #include "../shell/login.c"
+/* v0.9.6.3: shell/uimouse.c is not linked here */
+void um_set_mode(int m){ (void)m; }
 
 /* ── checks ──────────────────────────────────────────────────────── */
 static int fails = 0, total = 0;

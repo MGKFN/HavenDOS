@@ -3,6 +3,83 @@
 Current release: **v0.9.6** (channel Beta, codename "Daedalus"). Paste
 this file into a new chat to pick up where this left off.
 
+## START HERE: 0.9.6.3 (16 Nov) — THE MONITOR FILLS, AND THE MOUSE WORKS EVERYWHERE
+
+0.9.6.2 lit the LG (photo, 16 Nov: the HavenDOS screen in the middle of
+it). Kyan then asked for the picture to fill the monitor automatically,
+and for mouse support in Settings and every app. By his decision, both
+ship in 0.9.6.3, bending the fixes-only rule once.
+
+- **Pipe B's scaler** (`drivers/xemode.c`; the comment above
+  `xm_fit_window` explains it):
+  - `XM_FIT_KEEP` (the default) or `STRETCH` runs the monitor's own best
+    mode;
+  - PIPESRC is the picture (1024×768), and the plane sits at 0,0;
+  - scaler 1 of pipe B (PS_CTRL 0x68980 = 0x80000000, i.e. pipe-bound,
+    medium filter) gets a window from `xm_fit_window()` and phases from
+    `xm_ps_phase()` (i915's `skl_scaler_calc_phase`);
+  - on the LG, KEEP is 1440×1080 at 240,0, with phases 36C0/36C0;
+  - WA 14011503117: `XELPD_DISPLAY_ERR_FATAL_MASK` (0x4421C) is set to
+    all ones, then 50 ms later (the new `XM_OP_DELAY`) PS_ECC_STAT is
+    cleared and the mask restored to its old value;
+  - the allow-list gains pipe B's scalers (0x68900–0x68AFF), and the mask
+    may only be all-ones or `p->ecc_old`;
+  - `gfx off` detaches the scaler;
+  - `XM_FIT_CENTRE` is 0.9.6.2 exactly;
+  - the scaler arithmetic is 32-bit (the kernel has no `__udivdi3`).
+- **The monitor watcher:**
+  - `mon_work` in `shell/gfxcmd.c`, a kpoll client running once a second
+    (the line is marked kpoll-site-ok);
+  - its decisions are the pure `xm_hotplug_step` / `xm_hotplug_lit`:
+    believe a change on the second agreeing read, act once per state,
+    three tries then quiet until replugged, and OFF on unplug;
+  - `g_gfx_busy` keeps it off a running `gfx` command.
+- **Config:** `monitor_auto=1` and `monitor_fit=1`. Settings > Display
+  has an "HDMI monitor" section; `gfx fit` and `gfx auto` do the same,
+  and `gfx_monitor_refit()` re-lights the monitor if it is on.
+- **The mouse layer** (`shell/uimouse.c`, `include/uimouse.h`):
+  - `drivers/keyboard.c` calls a hook from `keyboard_getchar()`
+    (`keyboard_set_mouse_hook`), so it only runs for the task in front;
+  - it turns a click on a registered row (`um_row`: arrows from the
+    selected row, Enter on the selected one) or button (`um_keys`), or on
+    a key hint read off the bottom two rows (`um_hint_key`), into keys;
+    the wheel becomes Up/Down (at most 5) and right-click becomes ESC;
+  - the pointer is an inverted cell, hidden before every key leaves;
+  - the tables are per task slot, reset when a slot's `task_id` changes;
+  - `vga_clear()` calls `um_frame()` through `vga_set_clear_hook`;
+  - **modes:** 0 for the desktop, Notes, Files, Mines, Chat (saved and
+    restored around its loop) and login; HINTS|RIGHT for the games; the
+    shell prompt is ZONES|HINTS|POINTER while reading a line and ALL
+    while a command runs;
+  - **Settings** registers every row (`row()`; information lines are
+    `info()`), the sidebar sections (with ESC when the focus is on the
+    page) and Y/N. `ui_kit_begin` and `ui_kit_row` register too.
+- **The wheel in the drivers:**
+  - `mouse_wheel_add` / `mouse_get_wheel` in `drivers/mouse.c`, bounded
+    at ±8;
+  - USB: byte 3 when the report has 4 bytes or more;
+  - I2C: the wheel field, or two contacts, where the y travel in 1/24ths
+    of the pad's range makes notches and the pointer doesn't move.
+- **Tests:**
+  - `test_uimouse` 51 (new), `check_uimouse_suite` 14/14;
+  - `test_xemode` 274, `check_xemode_suite` 43/43;
+  - `test_i2c_hid` 90, `test_usbhid` 39, `check_usbhid_suite` 8/8;
+  - 7356/7356 across 70 suites;
+  - QEMU: `harness/mouse_apps.py` 14/14 three runs in a row, `appguard_boot`
+    19/19, `resolution_tasks` 8/8, `hid_boot` 3/3, `gfx_boot` 15/15.
+- **`harness/qemu.py` `mouse_to`** now uses 4 counts per column and 8
+  per row in single steps. `mouse_apps.py` also finds the pointer on a
+  screenshot and corrects it, because QEMU's HID queue drops counts when
+  it fills. `desktop_layout`'s bell click passes again. Its two
+  drawer-layout checks fail on 0.9.6.2 as well and are not this
+  release's.
+- **Unproven on the HP:**
+  - the scaler's picture;
+  - auto-on at boot and on plug-in;
+  - two-finger scroll on the real pad (contact counts may arrive
+    differently);
+  - the USB wheel.
+
 ## START HERE: 0.9.6.2 (16 Nov) — THE MONITOR'S BUFFER
 
 Fixes only. The changelog has the photos' numbers.
@@ -3547,6 +3624,8 @@ Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
 ## Testing, as of 0.9.6
+
+**7356 of 7356 checks across 70 suites** (0.9.6.3: `test_uimouse` 51 new, `test_xemode` 236 -> 274, `test_i2c_hid` 84 -> 90, `test_usbhid` 36 -> 39).
 
 **7258 of 7258 checks across 69 suites** (0.9.6.2: `test_xemode` 226 -> 236).
 

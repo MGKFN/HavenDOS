@@ -186,19 +186,26 @@ class Qemu:
         and a correct taskbar hit box looked like a dead one. They are
         derived from the grid the readback is set to now, with the old
         values as a floor so 80x25 behaviour is unchanged."""
-        DIV = 4                      # MOUSE_DIVISOR in drivers/mouse.c
-        def walk(axis, cells):
-            step = DIV if cells > 0 else -DIV
-            for _ in range(abs(int(cells))):
+        # v0.9.6.3: since 0.8.9.6 drivers/mouse.c moves MOUSE_SPAN (320)
+        # counts across the WIDTH and keeps a count the same number of
+        # pixels on both axes -- on QEMU's 1280x800 at 80x25 that is 4
+        # counts a column and 8 a row, not 4 and 4. And single counts:
+        # QEMU merges events a poll has not collected, and a merged
+        # report over six counts is accelerated (doubled).
+        cx = max(1, round(320 / self._cols))
+        cy = max(1, round(320 * 800 / 1280 / self._rows))
+        def walk(axis, counts, step):
+            for _ in range(abs(int(counts))):
                 self.cmd_qmp("input-send-event",
                              events=[{"type": "rel",
-                                      "data": {"axis": axis, "value": step}}])
-                time.sleep(0.010)
-        walk("x", -max(100, self._cols * 2))     # into the left edge
-        walk("y", -max(40,  self._rows * 2))     # and the top edge
-        time.sleep(0.15)
-        walk("x", x)
-        walk("y", y)
+                                      "data": {"axis": axis,
+                                               "value": step if counts > 0 else -step}}])
+                time.sleep(0.004 if step > 1 else 0.008)
+        walk("x", -60, 40)                       # into the left edge
+        walk("y", -40, 40)                       # and the top edge
+        time.sleep(0.3)
+        walk("x", x * cx, 1)
+        walk("y", y * cy, 1)
         time.sleep(settle)
 
     def click(self, x, y, button="left", settle=0.6):

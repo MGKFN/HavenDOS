@@ -3,6 +3,33 @@
 Current release: **v0.9.6** (channel Beta, codename "Daedalus"). Paste
 this file into a new chat to pick up where this left off.
 
+## START HERE: 0.9.6.2 (16 Nov) — THE MONITOR'S BUFFER
+
+Fixes only. The changelog has the photos' numbers.
+
+- **The cause of the one-colour monitor.**
+  - **What the HP showed:** none of `gfx try`'s four trials gave a
+    picture, and the underrun rate barely moved: 1504 before, then 1346,
+    1342, 1485 and 1497 of 20000, even with a 64×64 plane. So it wasn't
+    bandwidth.
+  - **The bug:** on display 13, `PLANE_BUF_CFG` is counted from the start
+    of the pipe's MBUS half (i915 `skl_crtc_allocate_ddb` subtracts
+    `mbus_ddb_offset()`, which is 2048 for S3/S4). 0.9.6.1 wrote pipe B's
+    buffer as absolute 2048–4031.
+  - **The fix:** `DDB_B_START`/`DDB_B_END` are now 0/1983. The panel's
+    check uses the new `DDB_A_LIMIT` (2048), and `DDB_HALF` is 2048.
+- **`gfx try` trial 5 (YELLOW)** moves a live buffer to 0–1983. Every
+  trial now writes BUF_CFG from the snapshot, so trial 0 restores it.
+- **`xm_buf_outside()`:** `gfx b` prints a four-line diagnosis when
+  pipe B's buffer reaches past block 2047.
+- **`gfx on`** samples the underrun rate (20,000 reads) after lighting.
+- **Next:** if `gfx on` now gives a picture with 0 underruns, the
+  monitor works. Then come the remaining 0.9.6.x items from the HP list
+  (Alt+Tab, bar, music behind, migrate list, resolution on the HP), then
+  0.9.7. If the monitor still shows only colour, the suspects left are
+  the SAGV watermarks and CDCLK.
+- **Tests:** `test_xemode` 236, `check_xemode_suite` 33/33; 7258/7258 overall.
+
 ## START HERE: 0.9.6.1 (16 Nov) — THE FIRST FIXES FROM THE HP
 
 Fixes only (THS-RM-1004 section 12); the changelog has every detail.
@@ -3520,6 +3547,8 @@ Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
 ## Testing, as of 0.9.6
+
+**7258 of 7258 checks across 69 suites** (0.9.6.2: `test_xemode` 226 -> 236).
 
 **7248 of 7248 checks across 69 suites** (0.9.6.1: `test_console` 326,
 `test_xemode` 226; 0.9.6: `test_task` 99 new,

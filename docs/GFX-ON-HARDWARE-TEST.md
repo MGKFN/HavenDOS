@@ -158,6 +158,18 @@ PIPE_ISR bit 31: pipe B's FIFO underruns. After `gfx on`:
 Everything is put back afterwards. If a trial shows a picture, that trial
 is the fix.
 
+## 7c. The buffer fix (v0.9.6.2)
+
+On 16 November no `gfx try` trial gave a picture. The cause was pipe B's
+buffer, which 0.9.6.1 placed past the end of the blocks pipe B owns.
+0.9.6.2 writes it correctly.
+
+1. Update and reboot, then run `gfx on`. The last line should read
+   **underrun in 0 of 20000 reads**, and the monitor should show the
+   HavenDOS screen in its middle.
+2. If it doesn't, run `gfx b` and `gfx try` again. Trial 5 (YELLOW) is
+   the fix applied live. Photograph each trial.
+
 ## 8. The keyboard on its hub
 
 Plug the hub, with the keyboard on it, in **before booting**.

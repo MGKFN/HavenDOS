@@ -111,8 +111,17 @@ static const uint32_t k_dbuf[4] = { 0x45008u, 0x44FE8u, 0x44300u, 0x44304u };
 #define   DBUF_POWER_REQ    BIT(31)
 #define   DBUF_POWER_STATE  BIT(30)
 #define DDB_SLICE_BLOCKS    1024u      /* 4096 blocks, four slices     */
-#define DDB_B_START         2048u      /* adlp_allowed_dbufs: B on S3+S4 */
-#define DDB_B_END           4031u      /* leaves 64 for a cursor later */
+/* Pipe A lives in S1+S2 (blocks 0-2047), pipe B in S3+S4 (2048-4095,
+   adlp_allowed_dbufs). But on display 13 PLANE_BUF_CFG is counted from
+   the start of the pipe's MBUS half -- skl_crtc_allocate_ddb subtracts
+   mbus_ddb_offset(), which is 2048 for S3/S4. So pipe B's blocks are
+   written as 0-1983, not 2048-4031. 0.9.6.1 wrote the absolute numbers;
+   the plane then pointed past the end of its own buffer and underran on
+   every fetch, whatever its size or watermark (`gfx try`, 16 Nov). */
+#define DDB_A_LIMIT         2048u      /* pipe A stays in S1+S2        */
+#define DDB_HALF            2048u      /* blocks per MBUS half         */
+#define DDB_B_START         0u         /* relative to slice 3          */
+#define DDB_B_END           1983u      /* leaves 64 for a cursor later */
 
 /* pipe A plane 1 -- the template, read and NEVER written */
 #define R_A_CTL     0x70180u
@@ -460,8 +469,8 @@ int xm_plan_on(const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
     if((s->phy_misc_b & PHY_COMP_PWR_DOWN) || !(s->comp_dw0_b & COMP_INIT))
         return refuse(p, XM_EPHY);
     if(s->mbus_ctl & MBUS_JOIN) return refuse(p, XM_EMBUS);
-    if(((s->a_buf >> 16) & 0x1FFFu) >= DDB_B_START ||
-       ((s->a_cur_buf >> 16) & 0x1FFFu) >= DDB_B_START)
+    if(((s->a_buf >> 16) & 0x1FFFu) >= DDB_A_LIMIT ||
+       ((s->a_cur_buf >> 16) & 0x1FFFu) >= DDB_A_LIMIT)
         return refuse(p, XM_EDDB);
 
     /* A PLL: free, and not the one port A runs on. DPLL0 first. */
@@ -686,12 +695,13 @@ static const char *const k_trial_name[XM_TRIALS + 1] = {
     "a 64x64 plane: a sixteenth of the bandwidth",
     "both: deep watermark and a 64x64 plane",
     "MBUS DBOX B credits 12 -> 8, as i915 sets them on Alder Lake-P",
+    "THE FIX: the buffer counted from slice 3 (blocks 0-1983)",
 };
 static const char *const k_trial_colour[XM_TRIALS + 1] = {
-    "as before", "GREEN", "RED", "WHITE", "BLUE-GREEN",
+    "as before", "GREEN", "RED", "WHITE", "BLUE-GREEN", "YELLOW",
 };
 static const uint32_t k_trial_rgb[XM_TRIALS + 1] = {
-    0, XM_RGB_GREEN, XM_RGB_RED, XM_RGB_WHITE, 0x000FFFFFu,
+    0, XM_RGB_GREEN, XM_RGB_RED, XM_RGB_WHITE, 0x000FFFFFu, XM_RGB_YELLOW,
 };
 const char *xm_trial_name(int n){ return (n >= 0 && n <= XM_TRIALS) ? k_trial_name[n] : "?"; }
 const char *xm_trial_colour(int n){ return (n >= 0 && n <= XM_TRIALS) ? k_trial_colour[n] : "?"; }
@@ -719,7 +729,7 @@ void xm_snapshot(const gfx_dev_t *dev, xm_snap_t *sn)
    then SURF, last, arm them all at the next vblank. */
 int xm_plan_trial(const xm_snap_t *sn, int n, xm_plan_t *p)
 {
-    uint32_t wm[8], wmtrans, size, dbox, rgb, alloc;
+    uint32_t wm[8], wmtrans, size, dbox, rgb, alloc, buf;
     int i;
     memset(p, 0, sizeof *p);
     p->on = 3; p->dpll = -1; p->level = -1;
@@ -727,7 +737,7 @@ int xm_plan_trial(const xm_snap_t *sn, int n, xm_plan_t *p)
     if(n < 0 || n > XM_TRIALS) return refuse(p, XM_ENOSNAP);
 
     for(i = 0; i < 8; i++) wm[i] = sn->wm[i];
-    wmtrans = sn->wmtrans; size = sn->size; dbox = sn->dbox;
+    wmtrans = sn->wmtrans; size = sn->size; dbox = sn->dbox; buf = sn->buf;
     rgb = n ? k_trial_rgb[n] : (sn->bottom & 0x3FFFFFFFu);
     /* the plane's buffer, blocks, end inclusive */
     alloc = ((sn->buf >> 16) & 0x1FFFu) - (sn->buf & 0x1FFFu) + 1u;
@@ -741,12 +751,15 @@ int xm_plan_trial(const xm_snap_t *sn, int n, xm_plan_t *p)
     }
     if(n == 2 || n == 3) size = (63u << 16) | 63u;
     if(n == 4) dbox = (dbox & ~0x1F00u) | (8u << 8);
+    /* the same number of blocks, moved to the start of pipe B's half */
+    if(n == 5) buf = ((alloc - 1u) << 16) | 0u;
 
     wr(p, R_B_BOTTOM, rgb, 0x3FFFFFFFu, "background: the trial's colour");
     for(i = 0; i < 8; i++)
         rmw(p, R_B_WM(i), WM_FIELDS, wm[i] & WM_FIELDS, WM_FIELDS, "watermark level");
     rmw(p, R_B_WMTRANS, WM_FIELDS, wmtrans & WM_FIELDS, WM_FIELDS, "transition wm");
     rmw(p, R_B_DBOX, DBOX_FIELDS, dbox & DBOX_FIELDS, DBOX_FIELDS, "MBUS DBOX");
+    wr(p, R_B_BUF, buf, 0x1FFF1FFFu, "buffer blocks");
     wr(p, R_B_SIZE, size, 0xFFFFFFFFu, "plane size");
     wr(p, R_B_CTL, sn->ctl, 0xFFFFFFFFu, "PLANE_CTL");
     wr(p, R_B_SURF, sn->surf, 0xFFFFF000u, "PLANE_SURF: arm");
@@ -1030,7 +1043,7 @@ void xm_report_plan(const xm_state_t *s, const xm_plan_t *p, int full,
         Xs(&l, ", unscaled: the panel's picture, GTT "); Xh(&l, s->a_surf, 8);
         XE(&l, GFX_T_TEXT);
         Xs(&l, "  buffer blocks "); Xu(&l, p->ddb_start); Xc(&l, '-'); Xu(&l, p->ddb_end);
-        Xs(&l, " (slices 3-4), line time "); Xu(&l, p->linetime); Xs(&l, "/8 us");
+        Xs(&l, " of slices 3-4, line time "); Xu(&l, p->linetime); Xs(&l, "/8 us");
         XE(&l, GFX_T_TEXT);
         Xs(&l, "  watermarks copied from pipe A");
         if(p->wm_dropped){ Xs(&l, ", "); Xu(&l, (uint32_t)p->wm_dropped); Xs(&l, " too big: off"); }
@@ -1079,7 +1092,7 @@ void xm_report_result(const xm_plan_t *p, const xm_result_t *res, gfx_emit_t emi
             XE(&l, d >= 2u ? GFX_T_GOOD : GFX_T_BAD);
             xsay(res->isr & PIPE_UNDERRUN ? GFX_T_WARN : GFX_T_TEXT,
                  res->isr & PIPE_UNDERRUN ? "  pipe B has underrun (its FIFO ran dry at least once)."
-                                          : "  no underrun seen in one read -- `gfx b` samples it properly.");
+                                          : "  no underrun in this one read; the rate is below.");
             xsay(GFX_T_TEXT, "  `gfx off` turns it off again. Nothing here survives a reboot.");
         }
     } else {
@@ -1171,4 +1184,21 @@ void xm_report_live(const gfx_dev_t *dev, gfx_emit_t emit)
         Xs(&l, "  underrun (PIPE_ISR bit 31): "); Xu(&l, h); Xs(&l, " of 20000 reads");
         XE(&l, h ? GFX_T_BAD : GFX_T_GOOD);
     }
+    {   /* v0.9.6.2: the 0.9.6.1 bug, named when it is seen */
+        uint32_t b = GFX_RD(dev->mmio, R_B_BUF);
+        if(xm_buf_outside(b)){
+            xsay(GFX_T_BAD, "  BUF_CFG is past block 2047. Pipe B counts its buffer from");
+            xsay(GFX_T_BAD, "  slice 3, so the plane reads a buffer that is not there and");
+            xsay(GFX_T_BAD, "  underruns. Set by 0.9.6.1; `gfx try` trial 5 moves it now,");
+            xsay(GFX_T_BAD, "  and `gfx off`, `gfx on` on 0.9.6.2 sets it right.");
+        }
+    }
+}
+
+/* Is a pipe B PLANE_BUF_CFG outside the 2048 blocks of its MBUS half? */
+int xm_buf_outside(uint32_t buf)
+{
+    uint32_t start = buf & 0x1FFFu, end = (buf >> 16) & 0x1FFFu;
+    if(!buf) return 0;
+    return start >= DDB_HALF || end >= DDB_HALF || end < start;
 }

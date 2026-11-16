@@ -494,7 +494,11 @@ int main(void)
        P.linetime == 119u && op_index(&P, 0x45274, 119u) >= 0, (long)P.linetime);
     ck("plane centred: 448,156", P.pos_x == 448 && P.pos_y == 156 &&
        op_index(&P, 0x7118C, (156u << 16) | 448u) >= 0, (long)P.pos_x);
-    ck("buffer blocks 2048-4031 (slices 3 and 4)", op_index(&P, 0x7127C, 0x0FBF0800u) >= 0, 0);
+    /* v0.9.6.2: display 13 counts pipe B's blocks from slice 3
+       (i915 mbus_ddb_offset). 0x0FBF0800 was 0.9.6.1's bug. */
+    ck("buffer blocks 0-1983, counted from slice 3: 07BF0000",
+       op_index(&P, 0x7127C, 0x07BF0000u) >= 0 && op_index(&P, 0x7127C, 0x0FBF0800u) < 0, 0);
+    ck("  ... inside pipe B's 2048 blocks", !xm_buf_outside(0x07BF0000u), 0);
     ck("the plane is pipe A's: CTL 94000008, stride 40, size 02FF03FF, surf 0",
        op_index(&P, 0x71180, 0x94000008u) >= 0 && op_index(&P, 0x71188, 0x40u) >= 0 &&
        op_index(&P, 0x71190, 0x02FF03FFu) >= 0 && op_index(&P, 0x7119C, 0) >= 0, 0);
@@ -835,6 +839,15 @@ int main(void)
     ck("  ... SURFLIVE and BOTTOM are shown", has("SURFLIVE") && has("BOTTOM     000003FF"), nl);
     ck("  ... in lines that fit", longest <= GFX_LINE_MAX, longest);
     ck("  ... and reading wrote nothing", w_total == 1, w_total);
+    ck("  ... with 0.9.6.2's buffer, no buffer warning", !has("past block 2047"), nl);
+    {   /* the HP on 16 Nov, after 0.9.6.1's `gfx on` */
+        uint32_t keep = regs[0x7127C / 4];
+        R(0x7127C, 0x0FBF0800u);
+        nl = 0; longest = 0; xm_report_live(&D, cap);
+        ck("`gfx b` on 0.9.6.1's 0FBF0800 names the bug and trial 5",
+           has("past block 2047") && has("trial 5") && longest <= GFX_LINE_MAX, longest);
+        R(0x7127C, keep);
+    }
     if(fails) dump();
     hp(); dev_ok(); xm_read(&D, &S);
     ck("not lit: `gfx color` refuses, naming `gfx on`",
@@ -843,7 +856,7 @@ int main(void)
     ck("  ... and `gfx b` says the pipe is stopped", has(": STOPPED"), nl);
 
     /* ── v0.9.6.1: `gfx try` and the underrun rate ─────────────── */
-    head("`gfx try`: four changes to the plane, and everything put back");
+    head("`gfx try`: five changes to the plane, and everything put back");
     {
         xm_snap_t SN;
         uint32_t wm0_before, dbox_before, size_before, last_off;
@@ -888,11 +901,29 @@ int main(void)
            r == XM_OK && ((regs[0x7103C / 4] >> 8) & 0x1Fu) == 8u &&
            (regs[0x7103C / 4] & ~0x1F00u) == (dbox_before & ~0x1F00u), regs[0x7103C / 4]);
 
+        {   /* trial 5 (v0.9.6.2): from a 0.9.6.1-style buffer, moved */
+            xm_snap_t S5 = SN;
+            uint32_t b5;
+            S5.buf = 0x0FBF0800u;
+            r = xm_plan_trial(&S5, 5, &P); xm_apply(&D, &P, &RES);
+            b5 = regs[0x7127C / 4];
+            ck("trial 5: 2048-4031 becomes 0-1983 -- the same 1984 blocks",
+               r == XM_OK && b5 == 0x07BF0000u, b5);
+            ck("  ... YELLOW, and DBOX, size and WM0 as the snapshot",
+               regs[0x71034 / 4] == XM_RGB_YELLOW && regs[0x71190 / 4] == size_before &&
+               regs[0x71240 / 4] == wm0_before && regs[0x7103C / 4] == dbox_before, 0);
+            ck("  ... the buffer is written before PLANE_SURF arms it",
+               op_index(&P, 0x7127C, 0x07BF0000u) >= 0 &&
+               P.ops[P.nops - 1].off == 0x7119Cu, P.nops);
+            ck("trial 5 has a name that says it is the fix, and a colour",
+               strstr(xm_trial_name(5), "FIX") != 0 && !strcmp(xm_trial_colour(5), "YELLOW"), 0);
+        }
         r = xm_plan_trial(&SN, 0, &P); xm_apply(&D, &P, &RES);
         ck("trial 0 puts every register back exactly",
            r == XM_OK && regs[0x71240 / 4] == wm0_before && regs[0x7103C / 4] == dbox_before &&
-           regs[0x71190 / 4] == size_before && regs[0x71034 / 4] == SN.bottom, 0);
-        ck("  ... and in all five, nothing outside pipe B was written",
+           regs[0x71190 / 4] == size_before && regs[0x71034 / 4] == SN.bottom &&
+           regs[0x7127C / 4] == SN.buf, 0);
+        ck("  ... and in all six, nothing outside pipe B was written",
            w_forbidden == 0 && pipe_a_unchanged(), w_forbidden);
 
         hp(); dev_ok(); xm_snapshot(&D, &SN);
@@ -902,6 +933,12 @@ int main(void)
            strstr(xm_why_name(XM_ENOSNAP), "gfx on") != 0, 0);
         ck("a trial number out of range refuses too",
            xm_plan_trial(&SN, 9, &P) != XM_OK && P.nops == 0, 0);
+
+        ck("xm_buf_outside: 0.9.6.1's 0FBF0800 is outside", xm_buf_outside(0x0FBF0800u), 0);
+        ck("  ... an end at 2048 is outside, 2047 inside",
+           xm_buf_outside(0x08000000u) && !xm_buf_outside(0x07FF0000u), 0);
+        ck("  ... end before start is outside; unset (0) is not judged",
+           xm_buf_outside(0x00100020u) && !xm_buf_outside(0), 0);
 
         R(0x44410, 0x80000000u);
         ck("the underrun rate counts PIPE_ISR bit 31 on every read",

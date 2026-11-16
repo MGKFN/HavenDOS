@@ -39,6 +39,7 @@
 
 extern int keyboard_waitchar(void);
 extern void sleep_ms(uint32_t ms);
+static void put_u(uint32_t v);
 
 static int g_stop;
 
@@ -161,6 +162,17 @@ static void cmd_mode(const char *what)
     ui_page_reset(); g_stop = 0;
     xm_apply(&g_dev, &g_plan, &g_res);
     xm_report_result(&g_plan, &g_res, emit);
+    if(g_plan.on && g_res.why == XM_OK){
+        /* v0.9.6.2: a rate, not one read -- after the vblank that arms it */
+        uint32_t h;
+        sleep_ms(100);
+        h = xm_underrun_hits(&g_dev, 20000u);
+        vga_set_color(h ? VGA_LIGHT_RED : VGA_LIGHT_GREEN, VGA_BLACK);
+        vga_puts("  underrun in "); put_u(h); vga_puts(" of 20000 reads");
+        vga_puts(h ? " -- the plane is starving; photograph `gfx b`.\n"
+                   : ": the plane keeps up. Look at the monitor.\n");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+    }
 }
 
 /* gfx color <red|green|blue|white|off>, v0.9.2.2: pipe B's background,
@@ -216,7 +228,7 @@ static void cmd_try(void)
     if(!sn.lit){ vga_puts("Pipe B's plane is not on -- run `gfx on` first.\n"); return; }
 
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts("gfx try: four changes to pipe B's plane, one at a time\n");
+    vga_puts("gfx try: five changes to pipe B's plane, one at a time\n");
     vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_puts("Each one paints the monitor's background its own colour. For\n"
              "each: LOOK AT THE MONITOR. Is there a picture (the HavenDOS\n"
@@ -282,7 +294,7 @@ void cmd_gfx(const char *arg, const char *arg2)
         vga_puts("       gfx off     turn it off again\n");
         vga_puts("       gfx b       pipe B as it runs, read only\n");
         vga_puts("       gfx color [blue|red|green|white|off]  pipe B's background\n");
-        vga_puts("       gfx try     four changes to the plane, one at a time (asks)\n");
+        vga_puts("       gfx try     five changes to the plane, one at a time (asks)\n");
         vga_puts("Only `gfx on`, `off`, `color` and `try` change what a screen shows.\n");
         return;
     }

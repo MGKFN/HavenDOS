@@ -100,6 +100,25 @@ BUGS = [
      """       (s->b_ctl & PLANE_EN))
         return refuse(p, XM_EBUSY);"""),
 
+    ("pipe B's buffer written in absolute blocks again (0.9.6.1)",
+     "display 13 counts pipe B's PLANE_BUF_CFG from slice 3; 2048-4031 "
+     "points past its buffer and the plane underruns at any size -- the "
+     "HP's monitor stayed one colour through every `gfx try` trial",
+     """#define DDB_B_START         0u         /* relative to slice 3          */
+#define DDB_B_END           1983u      /* leaves 64 for a cursor later */""",
+     """#define DDB_B_START         2048u
+#define DDB_B_END           4031u"""),
+
+    ("trial 5 leaves the buffer where it was",
+     "the one live test of the fix would test nothing",
+     """    if(n == 5) buf = ((alloc - 1u) << 16) | 0u;""",
+     """    (void)alloc;"""),
+
+    ("`gfx b` stops naming an out-of-range buffer",
+     "the next person to see one colour edge to edge gets no hint why",
+     """    return start >= DDB_HALF || end >= DDB_HALF || end < start;""",
+     """    return end < start;"""),
+
     ("a joined MBUS is not refused",
      "with MBUS joined pipe A owns all four DBUF slices; B's allocation "
      "would overlap it and both pipes underrun",

@@ -176,6 +176,7 @@ int  xm_plan_off(const xm_state_t *s, xm_plan_t *p);
 #define XM_RGB_RED    0x3FF00000u
 #define XM_RGB_GREEN  0x000FFC00u
 #define XM_RGB_WHITE  0x3FFFFFFFu
+#define XM_RGB_YELLOW 0x3FFFFC00u
 int  xm_plan_color(const xm_state_t *s, uint32_t rgb, xm_plan_t *p);
 
 /* ── v0.9.6.1: `gfx try` -- why the plane underruns ──────────────────
@@ -189,16 +190,24 @@ int  xm_plan_color(const xm_state_t *s, uint32_t rgb, xm_plan_t *p);
    Each trial changes ONE thing on pipe B's plane, from a snapshot taken
    first, and sets the background to that trial's colour so a photograph
    of the monitor says which trial it was. Trial 0 puts the snapshot
-   back. Only pipe B's own registers are written (xm_allowed()). */
+   back. Only pipe B's own registers are written (xm_allowed()).
+
+   v0.9.6.2: on the HP trials 1-4 all showed only their colour and the
+   rate hardly moved (1504 before; 1346, 1342, 1485, 1497 of 20000) --
+   even a 64x64 plane starved, so it was never bandwidth. PLANE_BUF_CFG
+   was 2048-4031: absolute, where display 13 counts pipe B's blocks from
+   slice 3 (i915 mbus_ddb_offset). Trial 5 moves it to 0-1983, which is
+   what `gfx on` now writes. */
 typedef struct {
     int      lit;                       /* the plane was on: trials allowed */
     uint32_t ctl, surf, size, pos, buf, dbox, bottom, wm[8], wmtrans;
 } xm_snap_t;
-#define XM_TRIALS 4
+#define XM_TRIALS 5
 void        xm_snapshot(const gfx_dev_t *dev, xm_snap_t *sn);
 int         xm_plan_trial(const xm_snap_t *sn, int n, xm_plan_t *p);
 const char *xm_trial_name(int n);
 const char *xm_trial_colour(int n);
+int         xm_buf_outside(uint32_t buf);   /* v0.9.6.2 */
 /* Pipe B's live underrun bit (PIPE_ISR bit 31), read `reads` times as
    fast as the bus allows: how many reads saw it set. Read only. */
 uint32_t    xm_underrun_hits(const gfx_dev_t *dev, uint32_t reads);

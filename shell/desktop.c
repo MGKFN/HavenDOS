@@ -1,5 +1,6 @@
 #include "../include/klog.h"
 #include "../include/uimouse.h"
+#include "../include/chrome.h"
 #include "../include/keys.h"
 #include "../include/io.h"
 #include "../include/instdisk.h"
@@ -3258,7 +3259,24 @@ static void app_run_inline(void (*fn)(void), const char *name, int fits)
        not fit, so a panel smaller than 80x25 -- which the framebuffer
        console can produce, 640x480 at a 16x32 cell is 40x15 -- falls
        back to the app having the whole thing, exactly as before. */
-    if(!fits &&
+    /* ── v0.9.6.5: A WINDOW ───────────────────────────────────────────
+       With tasks, every app is a window: a title bar with minimize,
+       full screen and close, and the taskbar below it, always
+       (shell/chrome.c). The box above is still how an 80x25 app is
+       placed -- chrome_begin() places it below its title bar and above
+       the taskbar. Without tasks (safe mode, `notasks`), as before. */
+    int win = 0;
+    int um_was = um_mode();
+    um_set_mode(UM_ALL);          /* v0.9.6.5: whatever ran it, the mouse is the app's */
+    {
+        int want_box = !fits &&
+            (vga_phys_cols() > APP_VIEW_COLS || vga_phys_rows() > APP_VIEW_ROWS);
+        if(chrome_begin(name ? name : "App", want_box)){
+            win = 1;
+            boxed = vga_viewport_active() && want_box;
+        }
+    }
+    if(!win && !fits &&
        (vga_phys_cols() > APP_VIEW_COLS || vga_phys_rows() > APP_VIEW_ROWS)){
         int vx, vy, vw, vh;
         if(vga_viewport_centre(APP_VIEW_COLS, APP_VIEW_ROWS)){
@@ -3300,7 +3318,9 @@ static void app_run_inline(void (*fn)(void), const char *name, int fits)
             task_set_policy(TP_PAUSE);
         }
         desktop_app_crashed();
-        if(boxed){ vga_viewport_clear(); mouse_clamp_to_grid(); }
+        if(win) chrome_end();
+        else if(boxed){ vga_viewport_clear(); mouse_clamp_to_grid(); }
+        um_set_mode(um_was);
         vga_clear();
         return;
     }
@@ -3333,7 +3353,9 @@ static void app_run_inline(void (*fn)(void), const char *name, int fits)
        clear would only blank the app's box and leave the surround --
        and then the desktop would draw its taskbar inside the last
        app's window. */
-    if(boxed){ vga_viewport_clear(); mouse_clamp_to_grid(); }
+    if(win) chrome_end();
+    else if(boxed){ vga_viewport_clear(); mouse_clamp_to_grid(); }
+    um_set_mode(um_was);
     vga_clear();
 }
 
@@ -3730,6 +3752,7 @@ void desktop_layout_audit(void)
    ================================================================ */
 void desktop_run(void){
     um_set_mode(0);   /* v0.9.6.3: the desktop reads the mouse itself */
+    chrome_set_surround(desktop_app_surround);   /* v0.9.6.5 */
     task_set_name("Desktop");      /* v0.9.6: slot 0, after Shell Mode */
     task_set_policy(TP_PAUSE);     /* ... whose prompt left it set to run */
     /* v0.7.18: the chrome is derived from vga_rows()/vga_cols() now, so the

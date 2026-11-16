@@ -190,6 +190,13 @@ void vga_flush(void){ }
 static int sim_cols = 80, sim_rows = 25;
 int vga_cols(void){ return sim_cols; }
 int vga_rows(void){ return sim_rows; }
+/* v0.9.6.5: the pointer lives on the SCREEN; the suite's model has no
+   viewport unless a test sets one */
+static int sim_vp, sim_vx, sim_vy, sim_vw, sim_vh;
+int vga_phys_cols(void){ return sim_cols; }
+int vga_phys_rows(void){ return sim_rows; }
+int vga_viewport_active(void){ return sim_vp; }
+void vga_viewport_get(int *x, int *y, int *w, int *h){ *x = sim_vx; *y = sim_vy; *w = sim_vw; *h = sim_vh; }
 /* v0.8.9.6: and the size of a cell in pixels, so the speed can be a
    fraction of the screen rather than a count of cells. */
 static int sim_cw = 8, sim_ch = 16;
@@ -417,6 +424,37 @@ int main(void)
         FEED(5, 0, 1);                              /* 10: 2.5 cells */
         mouse_get(&mx, &my, &mb);
         ck("the first movement off the edge moves at once", mx == 2, mx);
+
+        /* v0.9.6.5: the pointer lives on the SCREEN; an app in a box
+           gets box coordinates, held at its edge, and the clicks made
+           outside the box are left for the window's title bar and the
+           taskbar (shell/chrome.c). */
+        head("v0.9.6.5: an app's box, and the pointer outside it");
+        sim_cols = 128; sim_rows = 48; sim_cw = 10; sim_ch = 16;
+        sim_vp = 1; sim_vx = 24; sim_vy = 12; sim_vw = 80; sim_vh = 25;
+        HOME(); FEED(5, 0, 100);                    /* 500 counts: far right */
+        {
+            int px, py, e;
+            mouse_get_phys(&px, &py);
+            ck("the pointer leaves the box: column 127 of the screen", px == 127, px);
+            mouse_get(&mx, &my, &mb);
+            ck("  ... the app sees it held at its own last column, 79", mx == 79, mx);
+            ck("  ... and mouse_outside() says so", mouse_outside(), 0);
+            mouse_feed(0x09); mouse_feed(0); mouse_feed(0);        /* left down */
+            mouse_feed(0x08); mouse_feed(0); mouse_feed(0);        /* left up   */
+            mouse_get(&mx, &my, &mb);
+            ck("  ... a click there is not the app's: mouse_get_clicks() 0", mouse_get_clicks() == 0, 0);
+            e = mouse_take_clicks();
+            ck("  ... it is kept for the window: mouse_take_clicks() 1", e == 1, e);
+            HOME();
+            ck("back in the corner: outside the box again (0,0 is not in it)", mouse_outside(), 0);
+            FEED(5, 5, 20);                          /* 100 counts: 40 cols */
+            mouse_get_phys(&px, &py);
+            mouse_get(&mx, &my, &mb);
+            ck("inside the box: the app gets the screen position less the box's",
+               !mouse_outside() && mx == px - 24 && my == py - 12, mx);
+        }
+        sim_vp = 0;
 #undef HOME
 #undef FEED
         sim_cols = 80; sim_rows = 25; sim_cw = 8; sim_ch = 16;

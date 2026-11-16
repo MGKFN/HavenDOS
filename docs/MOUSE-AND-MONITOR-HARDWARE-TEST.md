@@ -49,3 +49,14 @@ Open a few apps (Calculator, Clock, Reminders, a game) and try:
 
 Note any app where the pointer leaves marks behind, or where a click
 does something you didn't expect.
+
+## 4. Windows (v0.9.6.5)
+
+1. Open Settings from the Start menu: a title bar on top
+   (`_  [ ]  X`), the taskbar on the bottom row.
+2. Minimize: the desktop comes back, and Settings is a chip on the
+   taskbar. Click its chip in an app's taskbar to bring it back.
+3. Full screen: the bars go. **Alt+Enter** (or F11) brings them back.
+4. X closes it, like ESC.
+5. Open Settings from the desktop's **right-click menu** too, and check
+   the mouse works there (this was the 0.9.6.4 bug).

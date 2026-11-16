@@ -1483,7 +1483,9 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
     shell_init();
     {   /* v0.9.6.3: the mouse in every app (shell/uimouse.c) */
         extern void um_init(void);
+        extern void chrome_init(void);
         um_init();
+        chrome_init();           /* v0.9.6.5: windows: title bar, taskbar */
     }
 
     extern int  vfs_exists(const char*);

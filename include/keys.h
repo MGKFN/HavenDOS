@@ -31,6 +31,10 @@
 #define KEY_F2        0x13C
 #define KEY_F3        0x13D
 #define KEY_F4        0x13E
+/* v0.9.6.5: a window's full-screen switch -- F11, or Alt+Enter for a
+   laptop whose F11 is a media key. Taken by shell/chrome.c inside
+   keyboard_getchar(); an app never sees it. */
+#define KEY_FULLSCREEN 0x1F0
 
 #define KEY_HOME      0x147
 #define KEY_UP        0x148

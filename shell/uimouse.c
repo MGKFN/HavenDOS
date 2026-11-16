@@ -14,6 +14,7 @@ extern void mouse_get(int *x, int *y, int *btn);
 extern int  mouse_is_ready(void);
 extern int  mouse_get_clicks(void);
 extern int  mouse_get_wheel(void);
+extern int  mouse_outside(void);
 extern void keyboard_set_mouse_hook(int (*fn)(int));
 
 /* ── per task ──────────────────────────────────────────────────────── */
@@ -318,6 +319,10 @@ int um_hook(int key)
 
     t = cur();
     if(!t->mode || !mouse_is_ready()){ pointer_hide(); return -1; }
+    /* v0.9.6.5: outside the app's box the pointer and its clicks are the
+       window's (shell/chrome.c draws it there); here, the box's edge
+       would only show a second, wrong pointer */
+    if(mouse_outside()){ pointer_hide(); return -1; }
     mouse_get(&mx, &my, &mb);
     if(t->mode & UM_POINTER) pointer_show(mx, my);
 

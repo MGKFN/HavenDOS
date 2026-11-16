@@ -974,6 +974,33 @@ void vga_viewport_get(int *x, int *y, int *w, int *h)
 
 void vga_viewport_clear(void){ g_vp_x = g_vp_y = g_vp_w = g_vp_h = 0; }
 
+/* v0.9.6.5: a box at a place, not only in the middle -- an app window
+   below its title bar and above the taskbar. Refused, and nothing set,
+   if it does not lie wholly on the grid. */
+int vga_viewport_set(int x, int y, int w, int h)
+{
+    if(w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > g_cols || y + h > g_rows) return 0;
+    g_vp_x = x; g_vp_y = y; g_vp_w = w; g_vp_h = h;
+    return 1;
+}
+
+/* v0.9.6.5: one cell of the SCREEN, whatever the viewport -- for the
+   window's title bar, the taskbar and the pointer over them, which lie
+   outside the app's box by design. */
+uint16_t vga_phys_read(int x, int y)
+{
+    if(x < 0 || y < 0 || x >= g_cols || y >= g_rows) return 0x0720;
+    return shadow[y * g_cols + x];
+}
+void vga_phys_write(int x, int y, uint16_t v)
+{
+    int idx;
+    if(x < 0 || y < 0 || x >= g_cols || y >= g_rows) return;
+    idx = y * g_cols + x;
+    shadow[idx] = v;
+    if(!defer_depth) put_cell(idx, v);
+}
+
 int vga_viewport_centre(int w, int h)
 {
     /* A viewport bigger than the panel is refused rather than clamped.

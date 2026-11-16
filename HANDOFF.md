@@ -3,6 +3,72 @@
 Current release: **v0.9.6** (channel Beta, codename "Daedalus"). Paste
 this file into a new chat to pick up where this left off.
 
+## START HERE: 0.9.6.5 (16 Nov) — APPS ARE WINDOWS, THE TASKBAR STAYS
+
+Kyan asked for this on 16 November. By his decision it ships in 0.9.6.5:
+"settings no mouse", the taskbar always visible, and a title bar with
+minimize, full screen and X.
+
+- **`shell/chrome.c` and `include/chrome.h`:**
+  - `chrome_layout()` and `chrome_hit()` are pure, and
+    `tests/test_window.c` covers them.
+  - **Layout:**
+    - an any-size app gets title row 0, a viewport at (0,1,pw,ph-2) and
+      taskbar row ph-1, but only if ph-2 ≥ 25 and pw ≥ 80;
+    - a boxed app is 80×25 between its title row and the taskbar
+      (ph ≥ 28);
+    - full screen gives an any-size app the whole screen; a boxed app is
+      centred and keeps its title;
+    - no room means no chrome, as before.
+  - **Buttons** are right-aligned, 3 cells each with a 1-cell gap and a
+    1-cell margin. Taskbar: Start is cells 0–6; chips start at column 8
+    and are 14 wide; the clock is the last 6 cells.
+  - **Per task state** (`g_t[slot]`) is reset when `task_id` changes.
+  - **`chrome_begin()`** comes from `app_run_inline` (desktop.c) when
+    tasks are ready, and `chrome_end()` on exit or crash. Boxed
+    surroundings come from `desktop_app_surround` via
+    `chrome_set_surround`. "ESC closes" stays on the title bar, and
+    `desktop_layout` checks for it.
+  - **`chrome_hook()`** runs from `keyboard_getchar` before the mouse
+    layer:
+    - KEY_FULLSCREEN toggles full screen;
+    - outside the box it draws the pointer itself (`vga_phys_*`) and
+      acts on `mouse_take_clicks()`;
+    - minimize is `task_set_front(0)` + `task_wait_front()`;
+    - Start injects KEY_SUPER first;
+    - X returns 27;
+    - the clock and chips repaint every 25 ticks, or whenever the title
+      bar's X cell has gone.
+  - The full-screen toggle moves the box's cells (`move_box`) and blanks
+    the rows that are no longer covered.
+- **`drivers/mouse.c`:**
+  - the position lives on the PHYSICAL grid (ratio and clamps use
+    `vga_phys_*`);
+  - `mouse_get()` returns box coordinates clamped to the box, with
+    buttons 0 while outside it;
+  - new `mouse_get_phys`, `mouse_outside`, and `mouse_take_clicks`;
+    `mouse_get_clicks` returns 0 while outside, keeping the edge.
+- **`drivers/vga.c`:** `vga_viewport_set`, `vga_phys_read`,
+  `vga_phys_write`.
+- **KEY_FULLSCREEN (0x1F0):** PS/2 F11 (0x57) and Alt+Enter; USB usage
+  0x44 and Alt+0x28.
+- **The Settings mouse fix:** `settings_open` sets UM_ALL and restores
+  it; `app_run_inline` does the same around every app. The desktop's
+  right-click menu and the Accounts shortcut ran Settings in slot 0,
+  where the mouse layer is off.
+- `uimouse` and `ui_draw_cursor` hide their pointers while it's outside
+  the box.
+- **Tests:**
+  - `test_window` 25 (new), `check_window_suite` 9/9;
+  - `test_kbdinit` 49, `test_uimouse` 53;
+  - 7401/7401 across 71 suites;
+  - QEMU `window_apps.py` 11/11 ×3.
+- **Careful:** `tests/test_chrome.c` is the desktop bars' 58-check
+  suite, which is different. It was overwritten by mistake during this
+  work, and restored byte for byte from git before release.
+- **Unproven on the HP:** all of it. In particular, F11 may be a media
+  key there; Alt+Enter is the dependable way back from full screen.
+
 ## START HERE: 0.9.6.4 (16 Nov) — THE MONITOR NEVER GETS STUCK
 
 **The HP photo, 16 Nov.** The toast said "Monitor not lit". `gfx on` was
@@ -49,7 +115,9 @@ Modern servers, GitHub's among them, want ECDHE, which is 0.9.8's TLS
 work. Recommended to Kyan: pull "update over the internet" forward from
 27H2 into 0.9.8, right after that TLS work. Add an RSA-signed
 update.inf, with the key pinned in the kernel and signed by the release
-workflow, and keep the ESP, USB and CD sources. Waiting on his answer.
+workflow, and keep the ESP, USB and CD sources. **Decided, 16 Nov: yes, in 0.9.8**
+(the roadmap doc in the claude.ai project records it). Still open: who
+generates the signing key, and where its backup lives.
 
 ## START HERE: 0.9.6.3 (16 Nov) — THE MONITOR FILLS, AND THE MOUSE WORKS EVERYWHERE
 
@@ -3672,6 +3740,8 @@ Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
 ## Testing, as of 0.9.6
+
+**7401 of 7401 checks across 71 suites** (0.9.6.5: `test_window` 25 new, `test_kbdinit` 42 -> 49, `test_uimouse` 51 -> 53).
 
 **7367 of 7367 checks across 70 suites** (0.9.6.4: `test_xemode` 274 -> 285).
 

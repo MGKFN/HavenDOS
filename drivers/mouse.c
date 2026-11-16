@@ -20,6 +20,10 @@
 extern int vga_cols(void);
 extern int vga_rows(void);
 extern void vga_cell_px(int *w, int *h);
+extern int  vga_phys_cols(void);          /* v0.9.6.5 */
+extern int  vga_phys_rows(void);
+extern int  vga_viewport_active(void);
+extern void vga_viewport_get(int *x, int *y, int *w, int *h);
 
 static int mouse_x=40, mouse_y=12, mouse_btn=0;
 
@@ -136,7 +140,10 @@ static inline int accelerate(int raw){
    change under the pointer -- an app's viewport, a `layout`. */
 static void mouse_ratio(int *num_x, int *den_x, int *num_y, int *den_y)
 {
-    int cols = vga_cols(), rows = vga_rows(), cw = 8, ch = 16;
+    /* v0.9.6.5: the SCREEN's grid, not the app's box: the pointer now
+       lives on the whole screen, so it can reach a window's title bar
+       and the taskbar outside the box. */
+    int cols = vga_phys_cols(), rows = vga_phys_rows(), cw = 8, ch = 16;
     long pw, ph;
     vga_cell_px(&cw, &ch);
     if (cols < 1) cols = 1;
@@ -177,7 +184,7 @@ static void mouse_apply(int raw_dx, int raw_dy, int new_btn)
        console the pointer could not be moved past column 79 or row
        24 -- most of the screen was unreachable by mouse. */
     {
-        int maxx = vga_cols() - 1, maxy = vga_rows() - 1;
+        int maxx = vga_phys_cols() - 1, maxy = vga_phys_rows() - 1;
         if(maxx < 0) maxx = 0;
         if(maxy < 0) maxy = 0;
         /* v0.8.9.6: and a clamped axis forgets its remainder. Pushing
@@ -364,10 +371,36 @@ static int (*g_front_check)(void);
 void mouse_set_front_check(int (*fn)(void)){ g_front_check = fn; }
 static int mouse_mine(void){ return !g_front_check || g_front_check(); }
 
-void mouse_get(int *x,int *y,int *btn){
-    mouse_sync();
-    *x=mouse_x; *y=mouse_y; *btn=mouse_mine()?mouse_btn:0;
+/* v0.9.6.5: the position is kept on the SCREEN; an app gets it inside
+   its own box, held at the box's edge while the pointer is outside it
+   -- an app indexing a cell array by it must never see a column it
+   does not have. Outside the box the buttons are not the app's either:
+   they belong to the window's title bar and the taskbar. */
+static int outside_box(void)
+{
+    int vx, vy, vw, vh;
+    if(!vga_viewport_active()) return 0;
+    vga_viewport_get(&vx, &vy, &vw, &vh);
+    return mouse_x < vx || mouse_y < vy || mouse_x >= vx + vw || mouse_y >= vy + vh;
 }
+int mouse_outside(void){ mouse_sync(); return outside_box(); }
+
+void mouse_get(int *x,int *y,int *btn){
+    int vx = 0, vy = 0, vw = 0, vh = 0, lx, ly;
+    mouse_sync();
+    lx = mouse_x; ly = mouse_y;
+    if(vga_viewport_active()){
+        vga_viewport_get(&vx, &vy, &vw, &vh);
+        lx -= vx; ly -= vy;
+        if(lx < 0) lx = 0;
+        if(ly < 0) ly = 0;
+        if(lx > vw - 1) lx = vw - 1;
+        if(ly > vh - 1) ly = vh - 1;
+    }
+    *x = lx; *y = ly;
+    *btn = (mouse_mine() && !outside_box()) ? mouse_btn : 0;
+}
+void mouse_get_phys(int *x, int *y){ mouse_sync(); *x = mouse_x; *y = mouse_y; }
 
 /* ── pull the pointer back onto the current LOGICAL grid ──────────────
    The clamp in mouse_feed() runs when a packet arrives, so it is the
@@ -381,7 +414,7 @@ void mouse_get(int *x,int *y,int *btn){
    Called by whoever changes the grid. Cheap, and idempotent. */
 void mouse_clamp_to_grid(void)
 {
-    int maxx = vga_cols() - 1, maxy = vga_rows() - 1;
+    int maxx = vga_phys_cols() - 1, maxy = vga_phys_rows() - 1;   /* v0.9.6.5 */
     if(maxx < 0) maxx = 0;
     if(maxy < 0) maxy = 0;
     if(mouse_x > maxx) mouse_x = maxx;
@@ -431,5 +464,12 @@ int  mouse_get_wheel(void)
 }
 
 int  mouse_get_clicks(void)            { mouse_sync();
+                                         if(!mouse_mine()) return 0;
+                                         /* v0.9.6.5: outside the box, the
+                                            click is the chrome's: kept */
+                                         if(outside_box()) return 0;
+                                         { int e=mouse_btn_edge; mouse_btn_edge=0; return e; } }
+/* v0.9.6.5: the window chrome's read, wherever the pointer is. */
+int  mouse_take_clicks(void)           { mouse_sync();
                                          if(!mouse_mine()) return 0;
                                          { int e=mouse_btn_edge; mouse_btn_edge=0; return e; } }

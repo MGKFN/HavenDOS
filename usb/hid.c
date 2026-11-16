@@ -162,6 +162,11 @@ static void keyboard_report(hid_t *h, const uint8_t *r)
         if (u == 0 || u == 1) continue;        /* 1 is "too many keys" */
         for (j = 2; j < 8; j++) if (h->last[j] == u) { was = 1; break; }
         if (was) continue;
+        /* v0.9.6.5: F11, and Alt+Enter, switch a window to full screen */
+        if (u == 0x44 || (u == 0x28 && (r[0] & 0x44))) {
+            keyboard_inject(KEY_FULLSCREEN);
+            continue;
+        }
         if (u == 0x2B && (r[0] & 0x44)) {      /* Alt+Tab         */
             keyboard_inject((r[0] & 0x22) ? KEY_TASKSW_BACK : KEY_TASKSW);
             continue;

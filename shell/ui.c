@@ -462,6 +462,8 @@ static uint16_t saved_char=0;
 
 void ui_draw_cursor(void){
     if(!mouse_is_ready())return;
+    { extern int mouse_outside(void);
+      if(mouse_outside()){ ui_erase_cursor(); return; } }   /* v0.9.6.5: the window's */
     int mx,my,mb; mouse_get(&mx,&my,&mb);
     /* Keep cursor glyph in content area only: below the menu bar on
        row 0 and above the taskbar on the bottom row.

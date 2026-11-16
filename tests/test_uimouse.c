@@ -26,6 +26,8 @@ void mouse_get(int *x, int *y, int *b){ *x = m_x; *y = m_y; *b = m_btn; }
 int  mouse_is_ready(void){ return m_ready; }
 int  mouse_get_clicks(void){ int c = m_clicks; m_clicks = 0; return c; }
 int  mouse_get_wheel(void){ int w = m_wheel; m_wheel = 0; return w; }
+static int m_outside;
+int  mouse_outside(void){ return m_outside; }
 static int (*g_hook)(int);
 void keyboard_set_mouse_hook(int (*fn)(int)){ g_hook = fn; }
 
@@ -202,6 +204,16 @@ int main(void)
     m_ready = 0; m_clicks = 1; n = drain(out, 64);
     ck("no mouse at all: nothing", n == 0, n);
     m_ready = 1; m_clicks = 0;
+
+    head("v0.9.6.5: outside the app's box, the window's");
+    blank(); um_frame(); um_row(0, 10, 5, 30, 1); um_row(0, 10, 6, 30, 0);
+    m_x = 12; m_y = 6; um_hook(-1);
+    ck("inside the box: the pointer is drawn", scr[6 * W + 12] != 0x0720, scr[6 * W + 12]);
+    m_outside = 1; m_clicks = 1; m_wheel = -1;
+    n = drain(out, 64);
+    ck("outside it: the pointer is hidden, nothing is sent, nothing consumed",
+       n == 0 && scr[6 * W + 12] == 0x0720 && m_clicks == 1 && m_wheel == -1, n);
+    m_outside = 0; m_clicks = 0; m_wheel = 0;
 
     head("each task has its own table");
     g_slot = 1; um_frame(); um_row(0, 0, 4, 10, 1); um_row(0, 0, 5, 10, 0);

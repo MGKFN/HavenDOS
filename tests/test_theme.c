@@ -102,6 +102,8 @@ void cfg_save(void){ g_cfg_saves++; }
 /* ── the code under test, as it ships ─────────────────────────────── */
 #include "taskstub.inc"     /* v0.9.6: tasks off */
 #include "../shell/ui.c"
+/* v0.9.6.5: not linked here */
+int mouse_outside(void){ return 0; }
 /* v0.9.6.3: shell/uimouse.c is not linked here */
 void um_frame(void){}
 void um_row(int g,int x,int y,int w,int s){ (void)g;(void)x;(void)y;(void)w;(void)s; }

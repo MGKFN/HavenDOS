@@ -691,6 +691,12 @@ static int run_page(int s, int k, int *sel){
 
 void settings_open(const char *section){
     int sect=0, focus=0, sel[S_N];
+    /* v0.9.6.5: the mouse is Settings' however it was opened -- the
+       desktop's right-click menu and the Accounts shortcut call this
+       inside the desktop's own task, where the mouse layer is off
+       because the desktop reads the mouse itself. */
+    int um_was=um_mode();
+    um_set_mode(UM_ALL);
     for(int i=0;i<S_N;i++) sel[i]=0;
     sel[S_APPEAR]=ui_current_theme();
     g_msg[0]=0;
@@ -729,6 +735,7 @@ void settings_open(const char *section){
             }
         }
     }
+    um_set_mode(um_was);
     vga_clear();
 }
 

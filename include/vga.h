@@ -219,6 +219,10 @@ int  vga_viewport_centre(int w, int h);
 void vga_viewport_clear(void);
 int  vga_viewport_active(void);
 void vga_viewport_get(int *x, int *y, int *w, int *h);
+int  vga_viewport_set(int x, int y, int w, int h);     /* v0.9.6.5 */
+uint16_t vga_phys_read(int x, int y);                   /* v0.9.6.5 */
+void vga_phys_write(int x, int y, uint16_t v);
+
 int  vga_set_rows(int rows);
 /* On VGA text memory: one of 80x25, 80x50, 90x30, 90x60 and nothing else,
    because each is a complete CRTC/sequencer/attribute register set.  On a

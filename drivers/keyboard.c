@@ -123,6 +123,8 @@ static void process_sc(uint8_t sc){
             case 0x3C: push_key(0x13C); return;
             case 0x3D: push_key(0x13D); return;
             case 0x3E: push_key(0x13E); return;
+            case 0x57: push_key(KEY_FULLSCREEN); return;   /* F11, v0.9.6.5 */
+            case 0x1C: if(alt_l||alt_r){ push_key(KEY_FULLSCREEN); return; } break;
             case 0x48: push_key(0x148); return; /* Up    */
             case 0x50: push_key(0x150); return; /* Down  */
             case 0x4B: push_key(0x14B); return; /* Left  */
@@ -407,6 +409,11 @@ static int kbd_getchar_raw(void);
    links alone; called with the key about to be returned, or -1. */
 static int (*g_mhook)(int);
 void keyboard_set_mouse_hook(int (*fn)(int)){ g_mhook = fn; }
+/* v0.9.6.5: an app's window -- its title bar and the taskbar outside
+   its box (shell/chrome.c). Before the mouse layer: it takes the
+   full-screen key and the clicks outside the box. */
+static int (*g_chook)(int);
+void keyboard_set_chrome_hook(int (*fn)(int)){ g_chook = fn; }
 
 int keyboard_getchar(void){
     for(;;){
@@ -416,6 +423,7 @@ int keyboard_getchar(void){
             if(g_switch) g_switch(c == KEY_TASKSW_BACK);
             continue;
         }
+        if(g_chook) c = g_chook(c);
         if(g_mhook) c = g_mhook(c);
         return c;
     }

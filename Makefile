@@ -580,7 +580,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_txm tests/test_xemode.c && \
-	  python3 tools/run_suite.py --name test_xemode --min 265 -- /tmp/hd_txm
+	  python3 tools/run_suite.py --name test_xemode --min 285 -- /tmp/hd_txm
 	@echo "── test_rsa ───────────────────────────────"
 	@echo "  Miller-Rabin and RSA keygen, against CPython and openssl"
 	@# net/rsa.c arrived with a suite and a harness and was never added

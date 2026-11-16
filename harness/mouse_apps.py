@@ -32,6 +32,8 @@ import qemu as Q                                        # noqa: E402
 
 ISO = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(HERE), "havendos.iso")
 results = []
+VER = re.search(r'HAVENDOS_VER_NUM\s+"([^"]+)"',
+                open(os.path.join(os.path.dirname(HERE), "include", "version.h")).read()).group(1)
 
 
 def check(name, ok, detail=""):
@@ -254,7 +256,7 @@ def main():
         q.line("ver"); time.sleep(1.0)
         s = q.screen(80, 25)
         check("at the prompt a right-click does nothing; the shell still answers",
-              "0.9.6.3" in s, s)
+              VER in s, s)
 
     passed = sum(results)
     print("\n%d/%d checks passed" % (passed, len(results)))

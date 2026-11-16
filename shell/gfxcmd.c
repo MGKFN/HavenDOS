@@ -130,6 +130,121 @@ static const gfx_child_t *hdmi_child(void)
 /* gfx plan / gfx on / gfx off. The EDID is read fresh each time: a
    monitor plugged in since the last command is the monitor that
    counts. */
+/* ── v0.9.6.4: lighting, robustly ─────────────────────────────────────
+   The HP, 16 Nov: the watcher's first try at a SCALED light stopped
+   part-way, which left pipe B half set up -- the scaler on, a PLL, a
+   clock -- and every `gfx on` after it was refused as busy, `gfx off`
+   included, because the refusal looked at the scaler and `gfx off`
+   did not clear what was not enabled. Now, here, for `gfx on`, the
+   watcher and Settings alike:
+
+     1. pipe B half set up and not running: cleared first (`gfx off`)
+     2. the plan, and -- for `gfx on` -- the question
+     3. a scaled light that stops: what stopped it is kept, B is
+        cleared, and it is lit unscaled, the way 0.9.6.2 lit it on the
+        HP. The monitor shows something either way.
+
+   L_ASK asks before writing; the report goes to `out` (null: silent). */
+#define L_ASK 1
+static xm_state_t  *g_ls;  static xm_plan_t *g_lp;  static xm_result_t *g_lr;
+static int          g_fell_back;            /* scaled failed, centred lit */
+static xm_plan_t    g_first;                /* the scaled plan that failed */
+static xm_result_t  g_first_res;
+
+static void quiet_emit(int tone, const char *line){ (void)tone; (void)line; }
+
+static int clear_b(gfx_emit_t out, const char *why)
+{
+    xm_read(&g_dev, g_ls);
+    xm_plan_off(g_ls, g_lp);
+    if(g_lp->why) return g_lp->why == XM_EOFF ? XM_OK : g_lp->why;
+    if(out != quiet_emit){ vga_set_color(VGA_YELLOW, VGA_BLACK); vga_puts(why); vga_set_color(VGA_WHITE, VGA_BLACK); }
+    xm_apply(&g_dev, g_lp, g_lr);
+    if(g_lr->why) xm_report_result(g_lp, g_lr, out);
+    return g_lr->why;
+}
+
+static int plan_light(gfx_emit_t out, int report)
+{
+    uint32_t got = 0;
+    xm_read(&g_dev, g_ls);
+    memset(g_raw, 0, sizeof g_raw);
+    memset(&g_edid, 0, sizeof g_edid);
+    gmbus_read_edid(&g_dev, hdmi_pin(), g_raw, &got, &g_tr);
+    if(got) edid_parse(g_raw, got, &g_edid);
+    else g_edid.why = EDID_ESHORT;
+    xm_plan_on(g_ls, got ? &g_edid : 0, hdmi_child(), g_lp);
+    if(report) xm_report_plan(g_ls, g_lp, 0, out);
+    return g_lp->why;
+}
+
+static int light(int flags, gfx_emit_t out, xm_state_t *xs, xm_plan_t *pl, xm_result_t *rs)
+{
+    int why, keep = xm_get_fit();
+    g_ls = xs; g_lp = pl; g_lr = rs; g_fell_back = 0;
+    memset(rs, 0, sizeof *rs); rs->failed_op = -1;
+
+    xm_read(&g_dev, xs);
+    if(xm_b_residue(xs)){
+        why = clear_b(out, "Pipe B was left half set up by an attempt that stopped: clearing it first.\n");
+        if(why) return why;
+    }
+    why = plan_light(out, 1);
+    if(why) return why;
+    if(flags & L_ASK){
+        int c;
+        vga_set_color(VGA_YELLOW, VGA_BLACK);
+        vga_puts("Light the HDMI monitor now? The panel is not touched. y/N ");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        c = keyboard_waitchar();
+        vga_puts("\n");
+        if(c != 'y' && c != 'Y'){ vga_puts("Nothing was written.\n"); return XM_EREFUSED; }
+    }
+    ui_page_reset(); g_stop = 0;
+    xm_apply(&g_dev, pl, rs);
+    xm_report_result(pl, rs, out);
+    if(rs->why == XM_OK || pl->fit == XM_FIT_CENTRE){
+        if(rs->why) clear_b(out, "Clearing what was done, so the next try starts clean.\n");
+        return rs->why;
+    }
+
+    /* the scaled light stopped: keep why, clean up, light it unscaled */
+    g_first = *pl; g_first_res = *rs;
+    if(out != quiet_emit){
+        vga_set_color(VGA_YELLOW, VGA_BLACK);
+        vga_puts("Scaling stopped it. Clearing pipe B, then lighting it unscaled (as 0.9.6.2 did).\n");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+    }
+    why = clear_b(out, "");
+    if(why) return why;
+    xm_set_fit(XM_FIT_CENTRE);
+    why = plan_light(out, 0);
+    if(!why){ xm_apply(&g_dev, pl, rs); xm_report_result(pl, rs, out); why = rs->why; }
+    xm_set_fit(keep);
+    if(why) clear_b(out, "Clearing what was done, so the next try starts clean.\n");
+    else g_fell_back = 1;
+    return why;
+}
+
+/* "<what> (register XXXXXX: wanted XXXXXXXX, read XXXXXXXX)" for dmesg */
+static void say_failure(char *m, int max, const xm_plan_t *p, const xm_result_t *r)
+{
+    static const char hx[] = "0123456789ABCDEF";
+    int n = 0, i; const char *w;
+    w = (r->failed_op >= 0 && r->failed_op < p->nops) ? p->ops[r->failed_op].what : xm_why_name(r->why);
+    while(*w && n < max - 48) m[n++] = *w++;
+    if(r->failed_op >= 0){
+        const char *a = ": register ";
+        while(*a) m[n++] = *a++;
+        for(i = 20; i >= 0; i -= 4) m[n++] = hx[(r->bad_off >> i) & 15];
+        a = " wanted "; while(*a) m[n++] = *a++;
+        for(i = 28; i >= 0; i -= 4) m[n++] = hx[(r->bad_want >> i) & 15];
+        a = " read "; while(*a) m[n++] = *a++;
+        for(i = 28; i >= 0; i -= 4) m[n++] = hx[(r->bad_got >> i) & 15];
+    }
+    m[n] = 0;
+}
+
 static void cmd_mode(const char *what)
 {
     uint32_t got = 0;
@@ -141,6 +256,28 @@ static void cmd_mode(const char *what)
         return;
     }
     xm_read(&g_dev, &g_xs);
+    if(on && strcmp(what, "plan")){
+        int why = light(L_ASK, emit, &g_xs, &g_plan, &g_res);
+        if(why == XM_OK){
+            uint32_t h;
+            if(g_fell_back){
+                char m[160];
+                say_failure(m, sizeof m, &g_first, &g_first_res);
+                vga_set_color(VGA_YELLOW, VGA_BLACK);
+                vga_puts("Lit UNSCALED. Scaling stopped at: "); vga_puts(m);
+                vga_puts("\nPhotograph this line.\n");
+                vga_set_color(VGA_WHITE, VGA_BLACK);
+            }
+            sleep_ms(100);
+            h = xm_underrun_hits(&g_dev, 20000u);
+            vga_set_color(h ? VGA_LIGHT_RED : VGA_LIGHT_GREEN, VGA_BLACK);
+            vga_puts("  underrun in "); put_u(h); vga_puts(" of 20000 reads");
+            vga_puts(h ? " -- the plane is starving; photograph `gfx b`.\n"
+                       : ": the plane keeps up. Look at the monitor.\n");
+            vga_set_color(VGA_WHITE, VGA_BLACK);
+        }
+        return;
+    }
     if(on){
         memset(g_raw, 0, sizeof g_raw);
         memset(&g_edid, 0, sizeof g_edid);
@@ -382,17 +519,7 @@ static xm_result_t g_mres;
 
 int gfx_monitor_light(void)
 {
-    uint32_t got = 0;
-    xm_read(&g_dev, &g_mxs);
-    memset(g_raw, 0, sizeof g_raw);
-    memset(&g_edid, 0, sizeof g_edid);
-    gmbus_read_edid(&g_dev, hdmi_pin(), g_raw, &got, &g_tr);
-    if(got) edid_parse(g_raw, got, &g_edid);
-    else g_edid.why = EDID_ESHORT;
-    xm_plan_on(&g_mxs, got ? &g_edid : 0, hdmi_child(), &g_mplan);
-    if(g_mplan.why) return g_mplan.why;
-    xm_apply(&g_dev, &g_mplan, &g_mres);
-    return g_mres.why;
+    return light(0, quiet_emit, &g_mxs, &g_mplan, &g_mres);
 }
 
 static xm_hp_t g_hp = { -1, 0, 0 };
@@ -424,12 +551,19 @@ static void mon_work(void)
             klog(KLOG_OK, "monitor: lit by itself, %ux%u, %s",
                  (unsigned)g_mplan.mode.hactive, (unsigned)g_mplan.mode.vactive,
                  xm_fit_name(g_mplan.fit));
-            toast_info(m);
+            if(g_fell_back){
+                char f2[160];
+                say_failure(f2, sizeof f2, &g_first, &g_first_res);
+                klog(KLOG_WARN, "monitor: scaling stopped at %s; lit unscaled instead", f2);
+                toast_warning("Monitor on, unscaled -- `dmesg` says why");
+            } else toast_info(m);
         } else {
             /* A monitor still waking can miss its first EDID read */
-            klog(KLOG_WARN, "monitor: plugged in, not lit: %s (try %d of 3)",
-                 xm_why_name(why), g_hp.tries + 1);
-            if(xm_hotplug_lit(&g_hp, 0)) toast_warning("Monitor not lit -- `gfx on` says why");
+            char f2[160];
+            say_failure(f2, sizeof f2, g_lp, g_lr);
+            klog(KLOG_WARN, "monitor: plugged in, not lit: %s: %s (try %d of 3)",
+                 xm_why_name(why), f2, g_hp.tries + 1);
+            if(xm_hotplug_lit(&g_hp, 0)) toast_warning("Monitor not lit -- `dmesg` says why");
         }
     } else if(act == XM_HP_OFF){
         g_gfx_busy = 1;
@@ -459,6 +593,12 @@ int gfx_monitor_refit(int fit)
     why = g_mplan.why ? g_mplan.why : g_mres.why;
     if(!why) why = gfx_monitor_light();
     g_gfx_busy = 0;
+    if(!why && g_fell_back){                      /* lit, but not as asked */
+        char f2[160];
+        say_failure(f2, sizeof f2, &g_first, &g_first_res);
+        klog(KLOG_WARN, "monitor: scaling stopped at %s; lit unscaled instead", f2);
+        return XM_EREFUSED;
+    }
     return why;
 }
 int gfx_monitor_lit(void){ return g_dev.why == GFX_OK && xm_b_lit(&g_dev); }

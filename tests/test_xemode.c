@@ -910,6 +910,9 @@ int main(void)
        op_index(&P, 0x4421C, 0xFFFFFFFFu) >= 0 &&
        op_index(&P, 0x4421C, 0) > op_index(&P, 0x4421C, 0xFFFFFFFFu), 0);
     ck("  ... the plan fits its array", P.nops < XM_MAX_OPS, P.nops);
+    {   int iv = op_index(&P, 0x68988, 0x36C0u), ic = op_index(&P, 0x68980, 0x80000000u);
+        ck("  ... the phases are not read back; the scaler's enable is, alone",
+           iv >= 0 && P.ops[iv].hold == 0 && ic >= 0 && P.ops[ic].hold == 0x80000000u, 0); }
     dev_ok(); memcpy(before, regs, SPAN); w_total = 0; w_forbidden = 0;
     r = xm_apply(&D, &P, &RES);
     ck("KEEP applied on the model: every write read back, pipe A untouched",
@@ -948,6 +951,45 @@ int main(void)
     xm_set_fit(XM_FIT_CENTRE);
 
     /* ── v0.9.6.3: the monitor watcher ────────────────────────── */
+    head("v0.9.6.4: a light that stopped part-way, and getting out of it (the HP, 16 Nov)");
+    hp(); lg(); dev_ok(); xm_read(&D, &S);
+    ck("a clean HP: nothing half set up", !xm_b_residue(&S), 0);
+    xm_set_fit(XM_FIT_KEEP); plan_hp();
+    knob_stuck_reg = 0x68974u;                    /* the scaler's window size ignores writes */
+    r = xm_apply(&D, &P, &RES);
+    knob_stuck_reg = 0;
+    ck("a scaled light stopped at the scaler's window", r != XM_OK && RES.failed_op >= 0 &&
+       P.ops[RES.failed_op].off == 0x68974u, r);
+    dev_ok(); xm_read(&D, &S);
+    ck("  ... leaves B half set up: the scaler on, the transcoder not", xm_b_residue(&S) &&
+       (S.b_ps[0] & 0x80000000u) && !(S.b_conf & 0x80000000u), S.b_ps[0]);
+    r = xm_plan_on(&S, &E, &KID, &P);
+    ck("  ... and `gfx on` is refused as busy (what Kyan saw)", r == XM_EBUSY, r);
+    nl = 0; longest = 0; xm_report_plan(&S, &P, 0, cap);
+    ck("  ... but the refusal now names it: scaler 1, and that it is not running",
+       has("SCALER B1 80000000") && has("on: scaler 1") && has("left by an attempt that stopped") &&
+       longest <= GFX_LINE_MAX, nl);
+    /* exactly the HP's registers after it: the sync polarities in DDI_FUNC */
+    R(0x61400, 0x00030000u);
+    dev_ok(); xm_read(&D, &S); xm_plan_off(&S, &P);
+    ck("`gfx off` clears the scaler, its window, and DDI_FUNC's leftover 00030000",
+       op_index(&P, 0x68980, 0) >= 0 && op_index(&P, 0x68974, 0) >= 0 &&
+       op_index(&P, 0x61400, 0) >= 0, P.nops);
+    r = xm_apply(&D, &P, &RES);
+    dev_ok(); xm_read(&D, &S);
+    ck("  ... applied: nothing of B is left on", r == XM_OK && !xm_b_residue(&S) &&
+       regs[0x68980 / 4] == 0 && regs[0x61400 / 4] == 0 && pipe_a_unchanged(), r);
+    r = xm_plan_on(&S, &E, &KID, &P);
+    ck("  ... and `gfx on` plans again", r == XM_OK, r);
+    r = xm_apply(&D, &P, &RES);
+    dev_ok(); xm_read(&D, &S);
+    ck("  ... and lights: running, scaled, not \"half set up\"",
+       r == XM_OK && !xm_b_residue(&S) && (S.b_ps[0] & 0x80000000u), r);
+    hp(); R(0x61400, 0x00030000u); dev_ok(); xm_read(&D, &S);
+    ck("DDI_FUNC's polarities alone are not 'busy' -- 0.9.6.2's off leaves them",
+       !xm_b_residue(&S) && xm_plan_on(&S, &E, &KID, &P) == XM_OK, P.why);
+    xm_set_fit(XM_FIT_CENTRE);
+
     head("the monitor lights by itself: plugged in, unplugged, refused");
     {
         xm_hp_t h = { -1, 0, 0 };

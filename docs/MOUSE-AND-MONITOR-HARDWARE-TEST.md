@@ -1,4 +1,8 @@
-# Mouse and monitor on the HP (v0.9.6.3)
+# Mouse and monitor on the HP (v0.9.6.3, v0.9.6.4)
+
+**0.9.6.4:** if the monitor comes up *unscaled* (a box in the middle,
+with a notification saying so), run `dmesg` and photograph the line
+"monitor: scaling stopped at ...". It names the exact register.
 
 Photograph anything that looks wrong, and write down what you did just
 before it.

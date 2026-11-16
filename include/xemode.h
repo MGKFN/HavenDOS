@@ -182,6 +182,7 @@ const char *xm_fit_name(int fit);
 void        xm_fit_window(uint32_t W, uint32_t H, uint32_t w, uint32_t h, int fit,
                           uint32_t *x, uint32_t *y, uint32_t *ww, uint32_t *hh);
 uint32_t    xm_ps_phase(uint32_t src, uint32_t dst);
+int         xm_b_residue(const xm_state_t *s);  /* half set up, not running */
 int         xm_hpd_b(const gfx_dev_t *dev);   /* DDI B's hot-plug line live */
 int         xm_b_lit(const gfx_dev_t *dev);   /* transcoder B enabled      */
 typedef struct { int state, done, tries; } xm_hp_t;   /* state -1 at start */

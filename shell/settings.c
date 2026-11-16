@@ -311,6 +311,7 @@ extern int  gfx_monitor_refit(int fit);
 extern int  gfx_monitor_lit(void);
 extern const char *xm_fit_name(int fit);
 extern const char *xm_why_name(int why);
+#define XM_EREFUSED_  16     /* include/xemode.h XM_EREFUSED */
 #define DISP_MON_AUTO (NDISP)
 #define DISP_MON_FIT  (NDISP+1)
 
@@ -327,7 +328,9 @@ static int page_display(int k, int *sel){
         int f = cfg_monitor_fit()==2 ? 1 : 2, r;
         say(VGA_YELLOW, "Applying...");
         r = gfx_monitor_refit(f);
-        say(r ? VGA_YELLOW : VGA_LIGHT_GREEN, r ? xm_why_name(r)
+        say(r ? VGA_YELLOW : VGA_LIGHT_GREEN,
+            r == XM_EREFUSED_ ? "Shown unscaled: scaling stopped. `dmesg` says why."
+            : r ? xm_why_name(r)
             : gfx_monitor_lit() ? "Monitor picture changed." : "Saved for the monitor.");
     }
     else if(*sel<NDISP && (k=='\n'||k=='\r')){

@@ -3,6 +3,54 @@
 Current release: **v0.9.6** (channel Beta, codename "Daedalus"). Paste
 this file into a new chat to pick up where this left off.
 
+## START HERE: 0.9.6.4 (16 Nov) — THE MONITOR NEVER GETS STUCK
+
+**The HP photo, 16 Nov.** The toast said "Monitor not lit". `gfx on` was
+refused as "already lit" before and after `gfx off`, yet TRANSCONF B was
+0, DDI_FUNC B 00030000 and DDI_BUF B 80.
+
+**What happened:**
+- The watcher's scaled light stopped part-way. `gfx off` removed a
+  scaler, a clock and DPLL0, so the attempt had got that far.
+- That left the scaler on. The second `XM_EBUSY` test in `xm_plan_on`
+  (the scaler) refused every later try, and its report didn't print the
+  scaler.
+- `xm_plan_off` only cleared what was *enabled*.
+
+**What stopped the scaled light is still unknown.** The next photo of
+`dmesg` (or of `gfx on`) will show the step.
+
+**Changes:**
+- `xm_b_residue()`: something of B is on but its transcoder isn't.
+- `xm_plan_off` clears any scaler of B with a non-zero CTRL, plus its
+  window (`R_B_PS_WIN_POSn/SZn`), and any non-zero DDI_FUNC.
+- The EBUSY report adds PLANE_CTL B and SCALER B1/B2, an "on:" list, and
+  a "not running" line.
+- `shell/gfxcmd.c` `light()` is shared by `gfx on`, the watcher
+  (`gfx_monitor_light`) and Settings (`gfx_monitor_refit`). It clears
+  any residue first. If a scaled apply fails, it keeps
+  `g_first`/`g_first_res`, clears B, lights `XM_FIT_CENTRE` (0.9.6.2's
+  plan) and sets `g_fell_back`. `say_failure()` formats the step,
+  register, wanted and read values for `gfx on`, `dmesg` and the toast.
+- Scaler read-back holds are now PS_CTRL = enable bit only, phases = 0,
+  window = full.
+- `gfx b` gains SCALER_B1, SCL_WIN_SZ and SCALER_A1.
+
+**Tests:**
+- `test_xemode` 285, including a replay of the HP state;
+- `check_xemode_suite` 47/47;
+- 7367/7367 overall;
+- `harness/mouse_apps.py` reads the version from version.h.
+
+**The online updater (Kyan, 16 Nov: "with iPhone tethering simple
+online updater possible now???"):** `net/tls.c` only offers
+TLS_RSA_WITH_AES_128_CBC_SHA256 and does no certificate validation.
+Modern servers, GitHub's among them, want ECDHE, which is 0.9.8's TLS
+work. Recommended to Kyan: pull "update over the internet" forward from
+27H2 into 0.9.8, right after that TLS work. Add an RSA-signed
+update.inf, with the key pinned in the kernel and signed by the release
+workflow, and keep the ESP, USB and CD sources. Waiting on his answer.
+
 ## START HERE: 0.9.6.3 (16 Nov) — THE MONITOR FILLS, AND THE MOUSE WORKS EVERYWHERE
 
 0.9.6.2 lit the LG (photo, 16 Nov: the HavenDOS screen in the middle of
@@ -3624,6 +3672,8 @@ Plus `make_version.py --check`, which refuses a version literal anywhere
 outside `include/version.h`.
 
 ## Testing, as of 0.9.6
+
+**7367 of 7367 checks across 70 suites** (0.9.6.4: `test_xemode` 274 -> 285).
 
 **7356 of 7356 checks across 70 suites** (0.9.6.3: `test_uimouse` 51 new, `test_xemode` 236 -> 274, `test_i2c_hid` 84 -> 90, `test_usbhid` 36 -> 39).
 

@@ -176,6 +176,29 @@ BUGS = [
      """    if(in && !lit && autoon && h->tries < 3) return XM_HP_LIGHT;""",
      """    if(in && !lit && h->tries < 3) return XM_HP_LIGHT;"""),
 
+    ("`gfx off` clears only an ENABLED DDI_FUNC (0.9.6.3)",
+     "the sync polarities a stopped attempt wrote stay behind",
+     """    if(s->pipe_b_powered && s->b_func)
+        wr(p, R_B_FUNC, 0, 0xFFFFFFFFu, "DDI_FUNC_CTL: off");""",
+     """    if(s->pipe_b_powered && (s->b_func & FUNC_EN))
+        wr(p, R_B_FUNC, 0, 0xFFFFFFFFu, "DDI_FUNC_CTL: off");"""),
+
+    ("half set up is never noticed",
+     "`gfx on` and the watcher are refused as busy forever, as on the HP",
+     """    return (s->b_func & FUNC_EN) || (s->b_ctl & PLANE_EN) ||
+           (s->ddi_b_buf & DDI_BUF_EN) || ((s->b_ps[0] | s->b_ps[1]) & PS_SCALER_EN);""",
+     """    return 0;"""),
+
+    ("a running pipe counts as half set up",
+     "the watcher would `gfx off` a monitor that is working",
+     """    if(s->b_conf & (TRANSCONF_EN | TRANSCONF_STATE)) return 0;     /* running */""",
+     """    (void)TRANSCONF_STATE;"""),
+
+    ("the busy refusal hides the scaler again",
+     "a refusal whose registers all read off, and no reason why",
+     """        if(s->b_ps[0] & PS_SCALER_EN)    Xs(&l, " scaler 1");""",
+     """        (void)0;"""),
+
     ("a joined MBUS is not refused",
      "with MBUS joined pipe A owns all four DBUF slices; B's allocation "
      "would overlap it and both pipes underrun",

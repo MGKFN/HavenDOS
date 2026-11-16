@@ -199,6 +199,8 @@ static const uint32_t k_dbuf[4] = { 0x45008u, 0x44FE8u, 0x44300u, 0x44304u };
 #define R_B_PS_CTRL(i)   (0x68980u + 0x100u * (i))
 #define R_B_PS_WIN_POS   0x68970u
 #define R_B_PS_WIN_SZ    0x68974u
+#define R_B_PS_WIN_POSn(i) (0x68970u + 0x100u * (i))
+#define R_B_PS_WIN_SZn(i)  (0x68974u + 0x100u * (i))
 #define R_B_PS_VPHASE    0x68988u
 #define R_B_PS_HPHASE    0x68994u
 #define R_B_PS_ECC       0x689D0u
@@ -657,9 +659,12 @@ int xm_plan_on(const xm_state_t *s, const edid_t *e, const gfx_child_t *child,
     if(p->fit != XM_FIT_CENTRE){
         p->ecc_old = s->err_mask;
         wr(p, R_ERR_FATAL_MASK, 0xFFFFFFFFu, 0, "fatal errors masked (WA)");
-        wr(p, R_B_PS_CTRL(0), PS_SCALER_EN, 0xFFFFFFFFu, "scaler: on, the pipe's");
-        wr(p, R_B_PS_VPHASE, xm_ps_phase(h, p->win_h), 0xFFFFFFFFu, "scaler: v phase");
-        wr(p, R_B_PS_HPHASE, xm_ps_phase(w, p->win_w), 0xFFFFFFFFu, "scaler: h phase");
+        /* v0.9.6.4: read back only what matters -- the enable, and the
+           window. i915 reads none of these back; the phases' spare and
+           trip bits are the hardware's to report as it likes. */
+        wr(p, R_B_PS_CTRL(0), PS_SCALER_EN, PS_SCALER_EN, "scaler: on, the pipe's");
+        wr(p, R_B_PS_VPHASE, xm_ps_phase(h, p->win_h), 0, "scaler: v phase");
+        wr(p, R_B_PS_HPHASE, xm_ps_phase(w, p->win_w), 0, "scaler: h phase");
         wr(p, R_B_PS_WIN_POS, (p->win_x << 16) | p->win_y, 0xFFFFFFFFu, "scaler: where");
         wr(p, R_B_PS_WIN_SZ,  (p->win_w << 16) | p->win_h, 0xFFFFFFFFu, "scaler: how big");
     }
@@ -755,19 +760,22 @@ int xm_plan_off(const xm_state_t *s, xm_plan_t *p)
         rmw(p, R_B_CTL, PLANE_EN, 0, PLANE_EN, "plane off");
         wr(p, R_B_SURF, 0, 0xFFFFF000u, "plane: arm");
     }
-    for(n = 0; n < 2; n++)                      /* skl_detach_scaler */
-        if(s->pipe_b_powered && (s->b_ps[n] & PS_SCALER_EN)){
+    /* skl_detach_scaler. v0.9.6.4: any bit left in a scaler of B, not
+       just the enable -- an attempt that stopped part-way leaves what
+       it wrote, and the next `gfx on` must find B clean. */
+    for(n = 0; n < 2; n++)
+        if(s->pipe_b_powered && s->b_ps[n]){
             wr(p, R_B_PS_CTRL(n), 0, 0xFFFFFFFFu, "scaler off");
-            if(n == 0){
-                wr(p, R_B_PS_WIN_POS, 0, 0xFFFFFFFFu, "scaler window: none");
-                wr(p, R_B_PS_WIN_SZ, 0, 0xFFFFFFFFu, "scaler size: none");
-            }
+            wr(p, R_B_PS_WIN_POSn(n), 0, 0xFFFFFFFFu, "scaler window: none");
+            wr(p, R_B_PS_WIN_SZn(n), 0, 0xFFFFFFFFu, "scaler size: none");
         }
     if(s->pipe_b_powered && (s->b_conf & TRANSCONF_EN)){
         rmw(p, R_B_CONF, TRANSCONF_EN, 0, TRANSCONF_EN, "TRANSCONF: disable");
         wclr(p, R_B_CONF, TRANSCONF_STATE, "transcoder B stopped");
     }
-    if(s->pipe_b_powered && (s->b_func & FUNC_EN))
+    /* v0.9.6.4: the enable, or what a stopped attempt configured
+       before it (the HP, 16 Nov: 00030000, the sync polarities) */
+    if(s->pipe_b_powered && s->b_func)
         wr(p, R_B_FUNC, 0, 0xFFFFFFFFu, "DDI_FUNC_CTL: off");
     if(s->ddi_b_clk)
         wr(p, R_B_CLKSEL, 0, 0xF0000000u, "transcoder B clock off");
@@ -883,6 +891,17 @@ int xm_plan_trial(const xm_snap_t *sn, int n, xm_plan_t *p)
     wr(p, R_B_CTL, sn->ctl, 0xFFFFFFFFu, "PLANE_CTL");
     wr(p, R_B_SURF, sn->surf, 0xFFFFF000u, "PLANE_SURF: arm");
     return XM_OK;
+}
+
+/* v0.9.6.4: pipe B is not running, but something of it is still on --
+   what a `gfx on` that stopped part-way leaves. `gfx off` clears it,
+   and `gfx on` and the watcher now do that themselves first. */
+int xm_b_residue(const xm_state_t *s)
+{
+    if(!s || !s->read || !s->pipe_b_powered) return 0;
+    if(s->b_conf & (TRANSCONF_EN | TRANSCONF_STATE)) return 0;     /* running */
+    return (s->b_func & FUNC_EN) || (s->b_ctl & PLANE_EN) ||
+           (s->ddi_b_buf & DDI_BUF_EN) || ((s->b_ps[0] | s->b_ps[1]) & PS_SCALER_EN);
 }
 
 /* v0.9.6.3: the two questions the monitor watcher asks every second.
@@ -1114,6 +1133,21 @@ static void refusal_help(const xm_state_t *s, const xm_plan_t *p)
         Xs(&l, "  TRANSCONF B "); Xh(&l, s->b_conf, 8); Xs(&l, "  DDI_FUNC B ");
         Xh(&l, s->b_func, 8); Xs(&l, "  DDI_BUF B "); Xh(&l, s->ddi_b_buf, 8);
         XE(&l, GFX_T_TEXT);
+        /* v0.9.6.4: the HP, 16 Nov -- all three of those read off, and
+           it was refused anyway: the reason was not on the screen */
+        Xs(&l, "  PLANE_CTL B "); Xh(&l, s->b_ctl, 8); Xs(&l, "  SCALER B1 ");
+        Xh(&l, s->b_ps[0], 8); Xs(&l, "  SCALER B2 "); Xh(&l, s->b_ps[1], 8);
+        XE(&l, GFX_T_TEXT);
+        Xs(&l, "  on:");
+        if(s->b_conf & (TRANSCONF_EN | TRANSCONF_STATE)) Xs(&l, " the transcoder");
+        if(s->b_func & FUNC_EN)          Xs(&l, " DDI_FUNC");
+        if(s->b_ctl & PLANE_EN)          Xs(&l, " the plane");
+        if(s->ddi_b_buf & DDI_BUF_EN)    Xs(&l, " DDI B");
+        if(s->b_ps[0] & PS_SCALER_EN)    Xs(&l, " scaler 1");
+        if(s->b_ps[1] & PS_SCALER_EN)    Xs(&l, " scaler 2");
+        XE(&l, GFX_T_BAD);
+        if(xm_b_residue(s))
+            xsay(GFX_T_TEXT, "  Not running: left by an attempt that stopped. `gfx off` clears it.");
         break;
     case XM_ENOPLL:
         Xs(&l, "  DPLL0 "); Xh(&l, s->dpll_en[0], 8); Xs(&l, "  DPLL1 ");
@@ -1319,6 +1353,9 @@ void xm_report_live(const gfx_dev_t *dev, gfx_emit_t emit)
         { "DBUF_S3",    0x44300u },    { "DBUF_S4",    0x44304u },
         { "MBUS_CTL",   R_MBUS_CTL },  { "PIPE_ISR",   R_B_ISR },
         { "PIPE_IIR",   R_B_IIR },     { "DPCLKA",     R_DPCLKA },
+        /* v0.9.6.3: pipe B's scaler, and pipe A's for comparison */
+        { "SCALER_B1",  R_B_PS_CTRL(0) }, { "SCL_WIN_SZ", R_B_PS_WIN_SZ },
+        { "SCALER_A1",  R_A_PS_CTRL(0) },
     };
     xl_t l;
     uint32_t pw, dsl0, dsl1, f0, f1;

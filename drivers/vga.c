@@ -1466,6 +1466,70 @@ void vga_ctx_init(vga_ctx_t *c, uint16_t *cells)
     c->defer = 0;
     c->visible = 0;
     c->clip_n = 0; c->clip_maxx = -1; c->clip_maxy = -1;
+    c->cols = g_cols; c->rows = g_rows;
+}
+
+/* ── v0.9.6.1: A CONSOLE MADE FOR ANOTHER GRID ────────────────────────
+   0.9.6 refused `resolution` whenever another app was open, because every
+   open app's console is laid out for the grid it was drawn on and would
+   come back scrambled -- cell (x, y) lives at y*cols+x, so a new width
+   shears every row. On the desktop that meant always: the desktop and the
+   Shell it opened are two tasks, so the refusal fired every time, and the
+   shell could never get back to its own resolution either.
+
+   Now the grid can change under any app. When a console laid out for an
+   old grid is loaded, its rows are copied to the new width, each cell
+   keeping its row and column; what falls outside is dropped, the new edge
+   is blank. An 80x25 viewport (an app written for 80x25) is centred again
+   in the new grid and its contents move with it. The cursor is kept
+   inside. Nothing asks the app to cooperate: it sees its own screen, in
+   the same place, the next time it is in front -- and lays itself out for
+   the new grid the next time it draws. */
+static uint16_t g_reflow_tmp[VGA_CELLS_MAX];
+
+static void ctx_reflow(vga_ctx_t *c)
+{
+    int oc = c->cols, orw = c->rows, nc = g_cols, nr = g_rows;
+    int dx = 0, dy = 0;
+    uint16_t blank = make_entry(' ', VGA_LIGHT_GREY, VGA_BLACK);
+    uint16_t *cells = c->cells ? c->cells : shadow_boot;
+
+    if(oc <= 0 || orw <= 0 || (oc == nc && orw == nr)){
+        c->cols = nc; c->rows = nr;
+        return;
+    }
+    if(oc * orw > VGA_CELLS_MAX) oc = orw = 0;     /* never read past the end */
+
+    /* a viewport stays the size it was, centred in the new grid */
+    if(c->vp_w > 0 && c->vp_h > 0){
+        if(c->vp_w <= nc && c->vp_h <= nr){
+            int nx = (nc - c->vp_w) / 2, ny = (nr - c->vp_h) / 2;
+            dx = nx - c->vp_x; dy = ny - c->vp_y;
+            c->vp_x = nx; c->vp_y = ny;
+        } else {
+            c->vp_x = c->vp_y = c->vp_w = c->vp_h = 0;  /* no longer fits */
+        }
+    }
+
+    for(int i = 0; i < VGA_CELLS_MAX; i++) g_reflow_tmp[i] = blank;
+    for(int y = 0; y < orw; y++){
+        int ty = y + dy;
+        if(ty < 0 || ty >= nr) continue;
+        for(int x = 0; x < oc; x++){
+            int tx = x + dx;
+            if(tx < 0 || tx >= nc) continue;
+            g_reflow_tmp[ty * nc + tx] = cells[y * oc + x];
+        }
+    }
+    for(int i = 0; i < VGA_CELLS_MAX; i++) cells[i] = g_reflow_tmp[i];
+
+    c->cur_x += dx; c->cur_y += dy;
+    if(c->cur_x < 0) c->cur_x = 0;
+    if(c->cur_y < 0) c->cur_y = 0;
+    if(c->cur_x >= nc) c->cur_x = nc - 1;
+    if(c->cur_y >= nr) c->cur_y = nr - 1;
+    c->clip_maxx = -1; c->clip_maxy = -1;
+    c->cols = nc; c->rows = nr;
 }
 
 void vga_ctx_save(vga_ctx_t *c)
@@ -1477,10 +1541,13 @@ void vga_ctx_save(vga_ctx_t *c)
     c->defer = defer_depth;
     c->visible = g_vis;
     c->clip_n = g_clip_n; c->clip_maxx = g_clip_maxx; c->clip_maxy = g_clip_maxy;
+    c->cols = g_cols; c->rows = g_rows;
 }
 
-void vga_ctx_load(const vga_ctx_t *c)
+void vga_ctx_load(vga_ctx_t *c)
 {
+    /* v0.9.6.1: laid out for another grid? Re-lay it out first. */
+    if(c->cols != g_cols || c->rows != g_rows) ctx_reflow(c);
     shadow = c->cells ? c->cells : shadow_boot;
     cur_x = c->cur_x; cur_y = c->cur_y;
     cur_fg = c->fg;   cur_bg = c->bg;

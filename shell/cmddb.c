@@ -1045,8 +1045,11 @@ const cmddoc_t cmddb[] = {
 
     { "chat", NULL, CDB_NET,
       "chat <user>@<host>[:port]",
-      "BOOT Chat client",
-      "Connects to a BOOT Chat server (port 6700 unless given) and asks "
+      "BOOT Chat client (the service is closed)",
+      "The BOOT Chat service is shut down until further notice; IRC, "
+      "Haven News and LAN chat replace it in 27H2. The client still "
+      "connects to a server you run yourself: "
+      "it connects (port 6700 unless given) and asks "
       "whether to log in or register. Inside: TAB for the server and "
       "channel sidebar, /help for commands, /quit to leave. From a QEMU "
       "guest the host machine is 10.0.2.2.",

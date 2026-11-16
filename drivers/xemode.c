@@ -222,6 +222,7 @@ const char *xm_why_name(int why)
     case XM_ETIMEOUT:  return "a status bit never came";
     case XM_EOFF:      return "pipe B is not lit; there is nothing to turn off";
     case XM_ENOTLIT:   return "pipe B is not running -- `gfx on` first";
+    case XM_ENOSNAP:   return "pipe B's plane is not on -- `gfx on` first";
     default:           return "unknown";
     }
 }
@@ -678,6 +679,89 @@ int xm_plan_color(const xm_state_t *s, uint32_t rgb, xm_plan_t *p)
     return XM_OK;
 }
 
+/* ── v0.9.6.1: the trials (see include/xemode.h) ──────────────────── */
+static const char *const k_trial_name[XM_TRIALS + 1] = {
+    "put back as it was",
+    "deep watermark: WM0 the whole buffer, every other level off",
+    "a 64x64 plane: a sixteenth of the bandwidth",
+    "both: deep watermark and a 64x64 plane",
+    "MBUS DBOX B credits 12 -> 8, as i915 sets them on Alder Lake-P",
+};
+static const char *const k_trial_colour[XM_TRIALS + 1] = {
+    "as before", "GREEN", "RED", "WHITE", "BLUE-GREEN",
+};
+static const uint32_t k_trial_rgb[XM_TRIALS + 1] = {
+    0, XM_RGB_GREEN, XM_RGB_RED, XM_RGB_WHITE, 0x000FFFFFu,
+};
+const char *xm_trial_name(int n){ return (n >= 0 && n <= XM_TRIALS) ? k_trial_name[n] : "?"; }
+const char *xm_trial_colour(int n){ return (n >= 0 && n <= XM_TRIALS) ? k_trial_colour[n] : "?"; }
+
+void xm_snapshot(const gfx_dev_t *dev, xm_snap_t *sn)
+{
+    uint32_t m;
+    int i;
+    memset(sn, 0, sizeof *sn);
+    if(!dev || dev->why != GFX_OK || !dev->mmio) return;
+    m = dev->mmio;
+    if(!(GFX_RD(m, R_PWR_DRV) & PW_STATE(PW_B))) return;
+    sn->ctl = GFX_RD(m, R_B_CTL);   sn->surf = GFX_RD(m, R_B_SURF);
+    sn->size = GFX_RD(m, R_B_SIZE); sn->pos = GFX_RD(m, R_B_POS);
+    sn->buf = GFX_RD(m, R_B_BUF);   sn->dbox = GFX_RD(m, R_B_DBOX);
+    sn->bottom = GFX_RD(m, R_B_BOTTOM);
+    for(i = 0; i < 8; i++) sn->wm[i] = GFX_RD(m, R_B_WM(i));
+    sn->wmtrans = GFX_RD(m, R_B_WMTRANS);
+    sn->lit = (sn->ctl & PLANE_EN) && (GFX_RD(m, R_B_CONF) & TRANSCONF_EN);
+}
+
+/* Every trial starts from the snapshot and changes one thing, so the
+   trials are independent and the last one leaves nothing behind it.
+   Watermarks, size and position are double-buffered: the CTL write and
+   then SURF, last, arm them all at the next vblank. */
+int xm_plan_trial(const xm_snap_t *sn, int n, xm_plan_t *p)
+{
+    uint32_t wm[8], wmtrans, size, dbox, rgb, alloc;
+    int i;
+    memset(p, 0, sizeof *p);
+    p->on = 3; p->dpll = -1; p->level = -1;
+    if(!sn || !sn->lit) return refuse(p, XM_ENOSNAP);
+    if(n < 0 || n > XM_TRIALS) return refuse(p, XM_ENOSNAP);
+
+    for(i = 0; i < 8; i++) wm[i] = sn->wm[i];
+    wmtrans = sn->wmtrans; size = sn->size; dbox = sn->dbox;
+    rgb = n ? k_trial_rgb[n] : (sn->bottom & 0x3FFFFFFFu);
+    /* the plane's buffer, blocks, end inclusive */
+    alloc = ((sn->buf >> 16) & 0x1FFFu) - (sn->buf & 0x1FFFu) + 1u;
+    if(alloc > 0x1FFFu || alloc < 16u) alloc = 16u;
+
+    if(n == 1 || n == 3){
+        /* lines 31, blocks: all but eight of the allocation */
+        wm[0] = BIT(31) | (31u << 14) | ((alloc - 8u) & 0x1FFFu);
+        for(i = 1; i < 8; i++) wm[i] &= ~BIT(31);
+        wmtrans &= ~BIT(31);
+    }
+    if(n == 2 || n == 3) size = (63u << 16) | 63u;
+    if(n == 4) dbox = (dbox & ~0x1F00u) | (8u << 8);
+
+    wr(p, R_B_BOTTOM, rgb, 0x3FFFFFFFu, "background: the trial's colour");
+    for(i = 0; i < 8; i++)
+        rmw(p, R_B_WM(i), WM_FIELDS, wm[i] & WM_FIELDS, WM_FIELDS, "watermark level");
+    rmw(p, R_B_WMTRANS, WM_FIELDS, wmtrans & WM_FIELDS, WM_FIELDS, "transition wm");
+    rmw(p, R_B_DBOX, DBOX_FIELDS, dbox & DBOX_FIELDS, DBOX_FIELDS, "MBUS DBOX");
+    wr(p, R_B_SIZE, size, 0xFFFFFFFFu, "plane size");
+    wr(p, R_B_CTL, sn->ctl, 0xFFFFFFFFu, "PLANE_CTL");
+    wr(p, R_B_SURF, sn->surf, 0xFFFFF000u, "PLANE_SURF: arm");
+    return XM_OK;
+}
+
+uint32_t xm_underrun_hits(const gfx_dev_t *dev, uint32_t reads)
+{
+    uint32_t i, hits = 0;
+    if(!dev || dev->why != GFX_OK || !dev->mmio) return 0;
+    for(i = 0; i < reads; i++)
+        if(GFX_RD(dev->mmio, R_B_ISR) & PIPE_UNDERRUN) hits++;
+    return hits;
+}
+
 /* ════ 3. WRITING ══════════════════════════════════════════════════ */
 
 /* May `off` go from `old` to `val`? The whole of the answer is here.
@@ -995,7 +1079,7 @@ void xm_report_result(const xm_plan_t *p, const xm_result_t *res, gfx_emit_t emi
             XE(&l, d >= 2u ? GFX_T_GOOD : GFX_T_BAD);
             xsay(res->isr & PIPE_UNDERRUN ? GFX_T_WARN : GFX_T_TEXT,
                  res->isr & PIPE_UNDERRUN ? "  pipe B has underrun (its FIFO ran dry at least once)."
-                                          : "  no underrun on pipe B.");
+                                          : "  no underrun seen in one read -- `gfx b` samples it properly.");
             xsay(GFX_T_TEXT, "  `gfx off` turns it off again. Nothing here survives a reboot.");
         }
     } else {
@@ -1082,4 +1166,9 @@ void xm_report_live(const gfx_dev_t *dev, gfx_emit_t emit)
         else Xs(&l, " ");
     }
     xsay(GFX_T_TEXT, "  SURFLIVE is what the plane scans now; PLANE_SURF only what was armed.");
+    {   /* v0.9.6.1: one read of PIPE_ISR is a coin toss; this is a rate */
+        uint32_t h = xm_underrun_hits(dev, 20000u);
+        Xs(&l, "  underrun (PIPE_ISR bit 31): "); Xu(&l, h); Xs(&l, " of 20000 reads");
+        XE(&l, h ? GFX_T_BAD : GFX_T_GOOD);
+    }
 }

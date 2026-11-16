@@ -79,7 +79,8 @@
 #define XM_ETIMEOUT    18  /* a status bit never came                   */
 #define XM_EOFF        19  /* `gfx off`: pipe B is not lit              */
 #define XM_ENOTLIT     20  /* `gfx color`: pipe B is not running        */
-#define XM_EREASONS    21
+#define XM_ENOSNAP     21  /* `gfx try`: the plane was not on           */
+#define XM_EREASONS    22
 const char *xm_why_name(int why);
 
 /* ── what is read before anything is planned ─────────────────────── */
@@ -176,6 +177,31 @@ int  xm_plan_off(const xm_state_t *s, xm_plan_t *p);
 #define XM_RGB_GREEN  0x000FFC00u
 #define XM_RGB_WHITE  0x3FFFFFFFu
 int  xm_plan_color(const xm_state_t *s, uint32_t rgb, xm_plan_t *p);
+
+/* ── v0.9.6.1: `gfx try` -- why the plane underruns ──────────────────
+   On the HP on 16 November, with the monitor lit and `gfx color blue`,
+   the monitor showed blue edge to edge and `gfx b` read PIPE_ISR bit 31
+   -- pipe B's FIFO UNDERRUN -- with PLANE_CTL enabled and SURFLIVE armed.
+   The plane fetches and cannot keep up; nothing it fetches reaches the
+   screen. `gfx on`'s own check read PIPE_IIR, where an underrun that the
+   interrupt mask hides never latches, and said "no underrun".
+
+   Each trial changes ONE thing on pipe B's plane, from a snapshot taken
+   first, and sets the background to that trial's colour so a photograph
+   of the monitor says which trial it was. Trial 0 puts the snapshot
+   back. Only pipe B's own registers are written (xm_allowed()). */
+typedef struct {
+    int      lit;                       /* the plane was on: trials allowed */
+    uint32_t ctl, surf, size, pos, buf, dbox, bottom, wm[8], wmtrans;
+} xm_snap_t;
+#define XM_TRIALS 4
+void        xm_snapshot(const gfx_dev_t *dev, xm_snap_t *sn);
+int         xm_plan_trial(const xm_snap_t *sn, int n, xm_plan_t *p);
+const char *xm_trial_name(int n);
+const char *xm_trial_colour(int n);
+/* Pipe B's live underrun bit (PIPE_ISR bit 31), read `reads` times as
+   fast as the bus allows: how many reads saw it set. Read only. */
+uint32_t    xm_underrun_hits(const gfx_dev_t *dev, uint32_t reads);
 
 /* v0.9.2.2: pipe B as it is right now -- scanline, frame counter, the
    plane's armed and LIVE surface, its buffer, the background colour,

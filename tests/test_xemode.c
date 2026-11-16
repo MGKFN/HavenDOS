@@ -842,6 +842,81 @@ int main(void)
     nl = 0; xm_report_live(&D, cap);
     ck("  ... and `gfx b` says the pipe is stopped", has(": STOPPED"), nl);
 
+    /* ── v0.9.6.1: `gfx try` and the underrun rate ─────────────── */
+    head("`gfx try`: four changes to the plane, and everything put back");
+    {
+        xm_snap_t SN;
+        uint32_t wm0_before, dbox_before, size_before, last_off;
+        hp(); lg(); plan_hp(); xm_apply(&D, &P, &RES);
+        dev_ok();
+        xm_snapshot(&D, &SN);
+        ck("lit: the snapshot sees the plane on", SN.lit == 1, SN.ctl);
+        wm0_before = regs[0x71240 / 4]; dbox_before = regs[0x7103C / 4];
+        size_before = regs[0x71190 / 4];
+        memcpy(before, regs, SPAN); w_total = 0; w_forbidden = 0;
+
+        r = xm_plan_trial(&SN, 1, &P);
+        last_off = P.nops ? P.ops[P.nops - 1].off : 0;
+        ck("trial 1 is planned, and PLANE_SURF is written LAST (it arms)",
+           r == XM_OK && last_off == 0x7119Cu, last_off);
+        r = xm_apply(&D, &P, &RES);
+        {
+            uint32_t alloc = ((SN.buf >> 16) & 0x1FFFu) - (SN.buf & 0x1FFFu) + 1u;
+            uint32_t w0 = regs[0x71240 / 4];
+            ck("  ... applied: WM0 enabled, 31 lines, all but 8 blocks of the buffer",
+               r == XM_OK && (w0 & 0x80000000u) && ((w0 >> 14) & 0x1FFFu) == 31u &&
+               (w0 & 0x1FFFu) == alloc - 8u, w0);
+        }
+        {
+            int i2, on = 0;
+            for(i2 = 1; i2 < 8; i2++) if(regs[(0x71240 + 4 * i2) / 4] & 0x80000000u) on++;
+            ck("  ... every other level off, the transition watermark too",
+               on == 0 && !(regs[0x71268 / 4] & 0x80000000u), on);
+        }
+        ck("  ... the background is GREEN, and pipe A untouched",
+           regs[0x71034 / 4] == XM_RGB_GREEN && w_forbidden == 0 && pipe_a_unchanged(), 0);
+
+        r = xm_plan_trial(&SN, 2, &P); xm_apply(&D, &P, &RES);
+        ck("trial 2: a 64x64 plane, the watermark back as it was",
+           r == XM_OK && regs[0x71190 / 4] == 0x003F003Fu && regs[0x71240 / 4] == wm0_before,
+           regs[0x71190 / 4]);
+        r = xm_plan_trial(&SN, 3, &P); xm_apply(&D, &P, &RES);
+        ck("trial 3: both at once",
+           r == XM_OK && regs[0x71190 / 4] == 0x003F003Fu && regs[0x71240 / 4] != wm0_before, 0);
+        r = xm_plan_trial(&SN, 4, &P); xm_apply(&D, &P, &RES);
+        ck("trial 4: DBOX B credits 8, every other DBOX bit as it was",
+           r == XM_OK && ((regs[0x7103C / 4] >> 8) & 0x1Fu) == 8u &&
+           (regs[0x7103C / 4] & ~0x1F00u) == (dbox_before & ~0x1F00u), regs[0x7103C / 4]);
+
+        r = xm_plan_trial(&SN, 0, &P); xm_apply(&D, &P, &RES);
+        ck("trial 0 puts every register back exactly",
+           r == XM_OK && regs[0x71240 / 4] == wm0_before && regs[0x7103C / 4] == dbox_before &&
+           regs[0x71190 / 4] == size_before && regs[0x71034 / 4] == SN.bottom, 0);
+        ck("  ... and in all five, nothing outside pipe B was written",
+           w_forbidden == 0 && pipe_a_unchanged(), w_forbidden);
+
+        hp(); dev_ok(); xm_snapshot(&D, &SN);
+        ck("not lit: every trial refuses, writing nothing",
+           SN.lit == 0 && xm_plan_trial(&SN, 1, &P) == XM_ENOSNAP && P.nops == 0, P.why);
+        ck("  ... with a reason that names `gfx on`",
+           strstr(xm_why_name(XM_ENOSNAP), "gfx on") != 0, 0);
+        ck("a trial number out of range refuses too",
+           xm_plan_trial(&SN, 9, &P) != XM_OK && P.nops == 0, 0);
+
+        R(0x44410, 0x80000000u);
+        ck("the underrun rate counts PIPE_ISR bit 31 on every read",
+           xm_underrun_hits(&D, 500u) == 500u, 0);
+        R(0x44410, 0x00000001u);
+        ck("  ... and no other bit", xm_underrun_hits(&D, 500u) == 0u, 0);
+        nl = 0; longest = 0;
+        hp(); lg(); plan_hp(); xm_apply(&D, &P, &RES); R(0x44410, 0x80000000u);
+        xm_report_live(&D, cap);
+        ck("`gfx b` prints the rate, in red when the pipe underruns",
+           has("underrun (PIPE_ISR bit 31): 20000 of 20000 reads"), nl);
+        ck("  ... in lines that fit", longest <= GFX_LINE_MAX, longest);
+        R(0x44410, 0);
+    }
+
     /* ── off, when B's PLL is the panel's ──────────────────────── */
     head("`gfx off` never stops the panel's PLL");
     hp(); R(0x164280, 0x01E07005u);              /* B selects DPLL1 (A's), ungated */

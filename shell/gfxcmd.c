@@ -38,6 +38,7 @@
 #include "../include/ui.h"
 
 extern int keyboard_waitchar(void);
+extern void sleep_ms(uint32_t ms);
 
 static int g_stop;
 
@@ -189,6 +190,80 @@ static void cmd_color(const char *name)
     xm_report_live(&g_dev, emit);
 }
 
+/* gfx try, v0.9.6.1: the HP's monitor shows pipe B's background edge to
+   edge, and pipe B underruns. Four trials, each changing one thing on the
+   plane and painting the background its own colour, so the photograph
+   says which trial it was. The underrun rate is measured for each, which
+   needs nobody to look. The snapshot goes back at the end, or at Q. */
+static void put_u(uint32_t v)
+{
+    char b[12]; int n = 0;
+    if(!v){ vga_puts("0"); return; }
+    while(v){ b[n++] = (char)('0' + v % 10u); v /= 10u; }
+    while(n) { char c[2]; c[0] = b[--n]; c[1] = 0; vga_puts(c); }
+}
+static void cmd_try(void)
+{
+    static xm_snap_t sn;
+    uint32_t hits[XM_TRIALS + 1];
+    int n, stop = 0, done = 0;
+    const uint32_t READS = 20000u;
+    if(g_dev.why != GFX_OK){
+        vga_puts("No display engine: "); vga_puts(gfx_why_name(g_dev.why)); vga_puts(".\n");
+        return;
+    }
+    xm_snapshot(&g_dev, &sn);
+    if(!sn.lit){ vga_puts("Pipe B's plane is not on -- run `gfx on` first.\n"); return; }
+
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("gfx try: four changes to pipe B's plane, one at a time\n");
+    vga_set_color(VGA_WHITE, VGA_BLACK);
+    vga_puts("Each one paints the monitor's background its own colour. For\n"
+             "each: LOOK AT THE MONITOR. Is there a picture (the HavenDOS\n"
+             "screen, or a small square), or only the colour? Photograph it.\n"
+             "Any key goes on, Q stops; what was there is put back at the end.\n\n");
+    hits[0] = xm_underrun_hits(&g_dev, READS);
+    vga_puts("  before: underrun in "); put_u(hits[0]); vga_puts(" of 20000 reads\n\n");
+
+    for(n = 1; n <= XM_TRIALS && !stop; n++){
+        xm_plan_trial(&sn, n, &g_plan);
+        if(g_plan.why){ vga_puts("  refused: "); vga_puts(xm_why_name(g_plan.why)); vga_puts("\n"); break; }
+        xm_apply(&g_dev, &g_plan, &g_res);
+        if(g_res.why){ xm_report_result(&g_plan, &g_res, emit); break; }
+        sleep_ms(100);                          /* past the vblank that arms it */
+        hits[n] = xm_underrun_hits(&g_dev, READS);
+        done = n;
+        vga_set_color(VGA_YELLOW, VGA_BLACK);
+        vga_puts("  trial "); put_u((uint32_t)n); vga_puts(" -- background ");
+        vga_puts(xm_trial_colour(n)); vga_puts("\n");
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        vga_puts("    "); vga_puts(xm_trial_name(n)); vga_puts("\n");
+        vga_puts("    underrun in "); put_u(hits[n]); vga_puts(" of 20000 reads\n");
+        vga_puts("    Look at the monitor, photograph it, then a key (Q stops). ");
+        {
+            int c = keyboard_waitchar();
+            vga_puts("\n");
+            if(c == 'q' || c == 'Q') stop = 1;
+        }
+    }
+
+    xm_plan_trial(&sn, 0, &g_plan);
+    xm_apply(&g_dev, &g_plan, &g_res);
+    vga_puts("\n");
+    vga_puts(g_res.why ? "  Putting it back FAILED -- `gfx off` then `gfx on`.\n"
+                       : "  Put back as it was.\n");
+    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("  trial  colour       underrun / 20000\n");
+    vga_set_color(VGA_WHITE, VGA_BLACK);
+    for(n = 0; n <= done; n++){
+        vga_puts("  "); put_u((uint32_t)n); vga_puts("      ");
+        vga_puts(n ? xm_trial_colour(n) : "before");
+        { int pad = 13 - (int)strlen(n ? xm_trial_colour(n) : "before"); while(pad-- > 0) vga_puts(" "); }
+        put_u(hits[n]); vga_puts("\n");
+    }
+    vga_puts("  Photograph this table too, with which colours had a picture.\n");
+}
+
 void cmd_gfx(const char *arg, const char *arg2)
 {
     g_stop = 0;
@@ -196,7 +271,8 @@ void cmd_gfx(const char *arg, const char *arg2)
 
     if(arg && *arg && strcmp(arg, "regs") && strcmp(arg, "vbt") &&
        strcmp(arg, "edid") && strcmp(arg, "plan") && strcmp(arg, "on") &&
-       strcmp(arg, "off") && strcmp(arg, "color") && strcmp(arg, "b")){
+       strcmp(arg, "off") && strcmp(arg, "color") && strcmp(arg, "b") &&
+       strcmp(arg, "try")){
         vga_puts("usage: gfx         the display engine, as the firmware left it\n");
         vga_puts("       gfx regs    every register read, offset and value\n");
         vga_puts("       gfx vbt     what the Video BIOS Table says is wired\n");
@@ -206,7 +282,8 @@ void cmd_gfx(const char *arg, const char *arg2)
         vga_puts("       gfx off     turn it off again\n");
         vga_puts("       gfx b       pipe B as it runs, read only\n");
         vga_puts("       gfx color [blue|red|green|white|off]  pipe B's background\n");
-        vga_puts("Only `gfx on` and `gfx off` change what a screen shows.\n");
+        vga_puts("       gfx try     four changes to the plane, one at a time (asks)\n");
+        vga_puts("Only `gfx on`, `off`, `color` and `try` change what a screen shows.\n");
         return;
     }
 
@@ -222,6 +299,7 @@ void cmd_gfx(const char *arg, const char *arg2)
     if(arg && (!strcmp(arg, "plan") || !strcmp(arg, "on") || !strcmp(arg, "off")))
         cmd_mode(arg);
     else if(arg && !strcmp(arg, "color")) cmd_color(arg2);
+    else if(arg && !strcmp(arg, "try"))   cmd_try();
     else if(arg && !strcmp(arg, "b")){
         if(g_dev.why != GFX_OK){
             vga_puts("No display engine: ");

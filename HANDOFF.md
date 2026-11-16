@@ -3,6 +3,38 @@
 Current release: **v0.9.6** (channel Beta, codename "Daedalus"). Paste
 this file into a new chat to pick up where this left off.
 
+## START HERE: 0.9.6.1 (16 Nov) — THE FIRST FIXES FROM THE HP
+
+Fixes only (THS-RM-1004 section 12); the changelog has every detail.
+
+- **`resolution` with apps open.** 0.9.6 refused whenever `task_count() > 1`,
+  which on the desktop is always. Now `vga_ctx_t` records `cols`/`rows`,
+  and `vga_ctx_load()` calls `ctx_reflow()` when a console made for one
+  grid is loaded at another: rows are copied at the new width, a viewport
+  is centred again, and the cursor is clamped. The shell's prompt-loop
+  restore no longer waits for `task_count() <= 1` either.
+  `vga_ctx_load()` now takes a non-const context.
+- **Welcome chooser.** `login_screen` showed `first_boot_creator()`
+  whenever the RAM flag `login_done` was 0, which is every boot. It's now
+  gated on `has_own_account()`: any user other than admin, bootos or guest.
+- **BOOT Chat** is out of the desktop registry; `chat` with no target prints
+  `chat_closed()`.
+- **The monitor.** On the HP the LG goes blue edge to edge with
+  `gfx color blue`, and `gfx b` shows PIPE_ISR bit 31, which is underrun.
+  `gfx on`'s check read IIR, where a masked underrun never latches.
+  - New `xm_underrun_hits()`; `gfx b` prints the rate over 20,000 reads.
+  - New `gfx try` runs 4 trials, built by `xm_snapshot()` and
+    `xm_plan_trial()`: deep WM0, a 64×64 plane, both, and DBOX B credits
+    8. Each has its own background colour, and trial 0 restores.
+  - **Next:** whichever trial shows a picture becomes the real fix in
+    `xm_plan_on`. If none does, the suspects left are SAGV watermarks,
+    DBUF slice routing and CDCLK.
+- **Tests:**
+  - `test_console` 326 and `test_xemode` 226; 7248/7248 overall;
+  - `check_console_suite` 38/38;
+  - `harness/resolution_tasks.py` 8/8, and 5/7 on the 0.9.6 ISO;
+  - `appguard_boot` 19/19.
+
 ## START HERE: 0.9.6 "DAEDALUS" — SEVERAL APPS AT ONCE
 
 Kyan chose both halves of the old multitasking promise: cooperative
@@ -3489,7 +3521,8 @@ outside `include/version.h`.
 
 ## Testing, as of 0.9.6
 
-**7214 of 7214 checks across 69 suites** (0.9.6: `test_task` 99 new,
+**7248 of 7248 checks across 69 suites** (0.9.6.1: `test_console` 326,
+`test_xemode` 226; 0.9.6: `test_task` 99 new,
 `test_migrate` 63 new, `test_fat32sys` 112 -> 125,
 `test_console` 292 -> 309, `test_kpoll` 156 -> 158, `test_usbhid` 30 -> 36;
 `check_task_suite.py` 19/19, `check_migrate_suite.py` 15/15,

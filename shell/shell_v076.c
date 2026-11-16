@@ -662,20 +662,10 @@ void cmd_resolution_v6(const char *arg1){
 
     int old_cols=vga_cols(), old_rows=vga_rows();
 
-    /* v0.9.6: every open app has a console laid out for the grid it has.
-       Changing the grid under them would leave each one scrambled until
-       it happened to redraw -- and one paused at a keyboard read never
-       does. So: only with nothing else open. */
-    {
-        extern int task_count(void);
-        if(task_count() > 1){
-            vga_set_color(VGA_YELLOW,VGA_BLACK);
-            vga_puts("Close the other open apps first -- each one is laid out\n"
-                     "for the current grid. `ps` lists them, `kill <id>` closes.\n");
-            vga_set_color(VGA_WHITE,VGA_BLACK);
-            return;
-        }
-    }
+    /* v0.9.6 refused this with any other app open -- on the desktop,
+       always, since the desktop and its Shell are two tasks. 0.9.6.1
+       re-lays out each other app's console when it next comes forward
+       (drivers/vga.c, ctx_reflow), so the grid can change under them. */
 
     if(!vga_set_mode(cols,rows)){
         /* ── v0.8.8: SAY WHICH REFUSAL IT WAS ───────────────────────────

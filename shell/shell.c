@@ -3514,11 +3514,10 @@ void shell_run(void){
 
         /* v0.7.11: the desktop pins 80x25 while it is up; restore the shell's
            chosen resolution when control comes back here. */
-        /* v0.9.6: not with other apps open -- their consoles are laid
-           out for the grid they have, and vga_set_mode() refuses from a
-           console that is not on the screen anyway. */
-        if((vga_rows()!=shell_pref_rows()||vga_cols()!=shell_pref_cols()) &&
-           task_count()<=1)
+        /* v0.9.6.1: whatever else is open -- each other app's console is
+           re-laid out when it next comes forward. vga_set_mode() refuses
+           (and changes nothing) from a console that is not on screen. */
+        if(vga_rows()!=shell_pref_rows()||vga_cols()!=shell_pref_cols())
             vga_set_mode(shell_pref_cols(),shell_pref_rows());
         /* v0.9.6: at the prompt the shell is PAUSED behind the front --
            it waits where it is. Running a command it is RUNNING, so a

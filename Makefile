@@ -580,7 +580,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_txm tests/test_xemode.c && \
-	  python3 tools/run_suite.py --name test_xemode --min 209 -- /tmp/hd_txm
+	  python3 tools/run_suite.py --name test_xemode --min 226 -- /tmp/hd_txm
 	@echo "── test_rsa ───────────────────────────────"
 	@echo "  Miller-Rabin and RSA keygen, against CPython and openssl"
 	@# net/rsa.c arrived with a suite and a harness and was never added
@@ -602,7 +602,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -Wno-int-to-pointer-cast \
 	           -o /tmp/hd_tcon tests/test_console.c && \
-	  python3 tools/run_suite.py --name test_console --min 309 -- /tmp/hd_tcon
+	  python3 tools/run_suite.py --name test_console --min 326 -- /tmp/hd_tcon
 	@echo "── test_der ───────────────────────────────"
 	@echo "  writing DER, checked against the bytes -- stage 3"
 	@# -fno-builtin and the kernel's own string.c: net/der.c net/x509.c's

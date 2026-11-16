@@ -627,6 +627,15 @@ static void read_field_plain(char *buf, int max, int x, int y, int hidden){
     }
 }
 
+/* v0.9.6.1: has anyone made an account here? See the call in login_screen. */
+static int has_own_account(void){
+    for(int i=0;i<user_count;i++)
+        if(strcmp(users[i].name,"admin") && strcmp(users[i].name,"bootos") &&
+           strcmp(users[i].name,"guest"))
+            return 1;
+    return 0;
+}
+
 static void first_boot_creator(void){
     int sel=0;
     while(1){
@@ -913,7 +922,13 @@ static void login_screen_inner(void){
         }
     }
 
-    if(!login_done){
+    /* v0.9.6.1: "Welcome / Create new account" is for a machine nobody
+       has made an account on. It showed on EVERY boot: login_done is
+       RAM, zero at power-on, so the test was always true -- even after
+       setup had made one. Now it asks whether any account besides the
+       three built in (admin, bootos, guest) exists, which is what "first
+       boot" meant. */
+    if(!login_done && !has_own_account()){
         first_boot_creator();
         if(login_done) return;
     }

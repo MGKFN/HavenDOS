@@ -275,11 +275,14 @@ typedef struct {
     int         visible;
     uint32_t    clip_n;
     int         clip_maxx, clip_maxy;
+    /* v0.9.6.1: the grid `cells` is laid out for. A console saved at one
+       grid and loaded at another is re-laid out on load (vga_ctx_load). */
+    int         cols, rows;
 } vga_ctx_t;
 
 void      vga_ctx_init(vga_ctx_t *c, uint16_t *cells);
 void      vga_ctx_save(vga_ctx_t *c);
-void      vga_ctx_load(const vga_ctx_t *c);
+void      vga_ctx_load(vga_ctx_t *c);   /* v0.9.6.1: may re-lay it out */
 void      vga_set_visible(int on);
 int       vga_visible(void);
 uint16_t *vga_boot_cells(void);

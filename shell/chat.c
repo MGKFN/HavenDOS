@@ -1606,10 +1606,28 @@ static int read_field(char *out, int outsz, int echo)
 
 /* ── the client ──────────────────────────────────────────────────── */
 
+/* v0.9.6.1: the BOOT Chat service is shut down until further notice.
+   The client stays -- `chat user@host` still reaches a server someone
+   runs themselves -- but with no target it says why there is nothing
+   to connect to, and what replaces it. */
+static void chat_closed(void)
+{
+    vga_set_color(VGA_YELLOW, VGA_BLACK);
+    vga_puts("  BOOT Chat is closed: its server is shut down until further notice.\n");
+    vga_set_color(VGA_WHITE, VGA_BLACK);
+    vga_puts("  Three apps replace it in HavenDOS 1 version 27H2 (Lange Jaap):\n");
+    vga_puts("    IRC on Libera.Chat, Haven News, and LAN chat with no server.\n");
+    vga_set_color(VGA_DARK_GREY, VGA_BLACK);
+    vga_puts("  Running your own BOOT Chat server? chat <user>@<host>[:port]\n");
+    vga_set_color(VGA_WHITE, VGA_BLACK);
+}
+
 void cmd_bootchat(const char *arg1)
 {
     char user[NAME_MAX], host[64];
     uint16_t port = CHAT_PORT_DEFAULT;
+
+    if(!(arg1 && arg1[0]) && !g_last_target[0]){ chat_closed(); return; }
 
     if(!net_ready()){
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);

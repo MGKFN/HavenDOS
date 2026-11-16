@@ -1656,6 +1656,114 @@ int main(void)
            g_screen_owner == 0, 0);
     }
 
+    /* ════════════════════════════════════════════════════════════════
+       v0.9.6.1: THE GRID CHANGES UNDER AN OPEN APP
+       ════════════════════════════════════════════════════════════════
+       0.9.6 refused `resolution` with any other app open, which on the
+       desktop is always. Now a console laid out for one grid is re-laid
+       out when it is next loaded at another: every cell keeps its row and
+       column, what no longer fits goes, an 80x25-style viewport is centred
+       again and its contents move with it, the cursor stays inside. Read
+       back from the TEXT screen, cell by cell, at 80x25 -> 90x30 -> 80x25. */
+    head("v0.9.6.1: a console made for another grid, re-laid out");
+    {
+        static uint16_t cells_c[VGA_CELLS_MAX], cells_d[VGA_CELLS_MAX];
+        vga_ctx_t front, c, d;
+        vga_init();
+        vga_set_mode(80, 25);
+        vga_clear(); vga_flush();
+        vga_ctx_save(&front);
+
+        /* c: a plain console, text in its far corner and on row 2 */
+        vga_ctx_init(&c, cells_c);
+        ck("a new console records the grid it is made for",
+           c.cols == 80 && c.rows == 25, c.cols);
+        vga_ctx_load(&c);
+        vga_putchar_at('X', 79, 0, VGA_WHITE, VGA_BLACK);
+        vga_puts_at("row2", 0, 2, VGA_WHITE, VGA_BLACK);
+        vga_puts_at("bottom", 0, 24, VGA_WHITE, VGA_BLACK);
+        vga_set_cursor(79, 24);
+        vga_ctx_save(&c);
+
+        /* d: an app written for 40x10, in a centred viewport */
+        vga_ctx_init(&d, cells_d);
+        vga_ctx_load(&d);
+        vga_viewport_centre(40, 10);
+        {
+            int vx, vy, vw, vh;
+            vga_viewport_get(&vx, &vy, &vw, &vh);
+            ck("the viewport starts centred at 80x25 (20,7)", vx == 20 && vy == 7, vx);
+        }
+        vga_putchar_at('V', 0, 0, VGA_WHITE, VGA_BLACK);    /* its own (0,0) */
+        vga_ctx_save(&d);
+
+        vga_ctx_load(&front);
+        ck("the front console changes the grid to 90x30, others open",
+           vga_set_mode(90, 30) == 1, vga_mode_why());
+
+        /* c comes forward at 90x30 */
+        vga_set_visible(0); vga_ctx_save(&front);
+        c.visible = 1;
+        vga_ctx_load(&c);
+        ck("loaded at the new grid, it records the new grid",
+           c.cols == 90 && c.rows == 30, c.cols);
+        ck("a cell keeps its column at the new width (X at 79,0)",
+           (sim_text[79] & 0xFF) == 'X', sim_text[79] & 0xFF);
+        ck("  ... and its row (row2 at 0,2 -- 2*90 into the screen)",
+           (sim_text[2 * 90] & 0xFF) == 'r' && (sim_text[2 * 90 + 3] & 0xFF) == '2',
+           sim_text[2 * 90] & 0xFF);
+        ck("  ... which is what 0.9.6 would have sheared: not at 2*80",
+           (sim_text[2 * 80] & 0xFF) != 'r', sim_text[2 * 80] & 0xFF);
+        ck("the new columns 80-89 are blank", (sim_text[85] & 0xFF) == ' ',
+           sim_text[85] & 0xFF);
+        ck("the bottom row is still row 24", (sim_text[24 * 90] & 0xFF) == 'b',
+           sim_text[24 * 90] & 0xFF);
+        ck("the cursor kept its place", c.cur_x == 79 && c.cur_y == 24, c.cur_x);
+
+        /* d comes forward at 90x30: its viewport is centred again */
+        vga_set_visible(0); vga_ctx_save(&c);
+        d.visible = 1;
+        vga_ctx_load(&d);
+        {
+            int vx, vy, vw, vh;
+            vga_viewport_get(&vx, &vy, &vw, &vh);
+            ck("a 40x10 viewport is centred again at 90x30 (25,10)",
+               vx == 25 && vy == 10 && vw == 40 && vh == 10, vx * 100 + vy);
+        }
+        ck("  ... and what the app drew moved with it (V at 25,10)",
+           (sim_text[10 * 90 + 25] & 0xFF) == 'V', sim_text[10 * 90 + 25] & 0xFF);
+
+        /* back down to 80x25 from the front: c's far corner survives,
+           the rows that no longer exist go */
+        vga_set_visible(0); vga_ctx_save(&d);
+        front.visible = 1;
+        vga_ctx_load(&front);
+        ck("and back to 80x25", vga_set_mode(80, 25) == 1, vga_mode_why());
+        vga_set_visible(0); vga_ctx_save(&front);
+        c.visible = 1;
+        vga_ctx_load(&c);
+        ck("shrunk again, the cell at 79,0 is still there",
+           (sim_text[79] & 0xFF) == 'X', sim_text[79] & 0xFF);
+        ck("  ... row 2 at 2*80", (sim_text[2 * 80] & 0xFF) == 'r',
+           sim_text[2 * 80] & 0xFF);
+
+        /* a console made for a bigger grid than the new one */
+        vga_set_visible(0); vga_ctx_save(&c);
+        vga_ctx_init(&c, cells_c);
+        c.cols = 90; c.rows = 30;
+        cells_c[29 * 90 + 89] = 0x0F00 | 'Z';
+        c.cur_x = 89; c.cur_y = 29;
+        c.visible = 1;
+        vga_ctx_load(&c);
+        ck("a cell beyond the new edge is dropped, nothing written past it",
+           (sim_text[24 * 80 + 79] & 0xFF) == ' ', sim_text[24 * 80 + 79] & 0xFF);
+        ck("  ... and the cursor is brought inside (79,24)",
+           c.cur_x == 79 && c.cur_y == 24, c.cur_x * 100 + c.cur_y);
+        vga_set_visible(0); vga_ctx_save(&c);
+        front.visible = 1;
+        vga_ctx_load(&front);
+    }
+
     printf("\n%d/%d passed\n", total - fails, total);
     munmap(fb, (size_t)FB_MAX_PX * 4);
     return fails ? 1 : 0;

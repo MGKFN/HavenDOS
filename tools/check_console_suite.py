@@ -514,6 +514,26 @@ void vga_set_visible(int on)"""),
      """    /* viewport not restored */"""),
 ]
 
+# v0.9.6.1: a console laid out for another grid
+BUGS += [
+    ("a console is not re-laid out for a new grid",
+     "0.9.6's reason for refusing `resolution` with apps open: every other "
+     "app comes back sheared, cell (x, y) read at the new width",
+     """    if(c->cols != g_cols || c->rows != g_rows) ctx_reflow(c);""",
+     """    (void)0;"""),
+
+    ("the viewport is not centred again",
+     "an 80x25 app on a larger grid is left at the old grid's offset",
+     """            dx = nx - c->vp_x; dy = ny - c->vp_y;
+            c->vp_x = nx; c->vp_y = ny;""",
+     """            (void)nx; (void)ny;"""),
+
+    ("the cursor is not brought inside the new grid",
+     "a caret past the edge writes past the end of the row",
+     """    if(c->cur_x >= nc) c->cur_x = nc - 1;""",
+     """    (void)0;"""),
+]
+
 HARMLESS = (
     "a comment is reworded (must not be caught)",
     "nothing about the code changed",

@@ -141,6 +141,23 @@ After `gfx on` has said `Lit.`:
 4. `gfx color off` puts the background back to black. `gfx b` prints the
    same registers again at any time.
 
+## 7b. Why the plane underruns: `gfx try` (v0.9.6.1)
+
+On 16 November step 7 showed **blue edge to edge**, and `gfx b` showed
+PIPE_ISR bit 31: pipe B's FIFO underruns. After `gfx on`:
+
+1. Type `gfx b` and photograph the last line: **underrun ... of 20000
+   reads**.
+2. Type `gfx try`. Four trials run one at a time. Each paints the monitor
+   its own colour: green, then red, then white, then blue-green.
+3. For each, **photograph the monitor**, and note whether there is a
+   picture (the HavenDOS screen, or a small square in trial 2 and 3), or
+   only the colour. Then press a key.
+4. Photograph the **table** at the end: the underrun count for each trial.
+
+Everything is put back afterwards. If a trial shows a picture, that trial
+is the fix.
+
 ## 8. The keyboard on its hub
 
 Plug the hub, with the keyboard on it, in **before booting**.

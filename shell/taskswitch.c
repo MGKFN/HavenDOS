@@ -134,7 +134,7 @@ static int overlay_begin(vga_ctx_t *saved)
     return 1;
 }
 
-static void overlay_end(const vga_ctx_t *saved)
+static void overlay_end(vga_ctx_t *saved)
 {
     vga_forget_cells(g_ov);
     vga_ctx_load(saved);

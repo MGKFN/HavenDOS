@@ -218,7 +218,8 @@ static const appreg_t appreg[]={
     {"hex",       "Hex Viewer",       "Hx", app_hexviewer,      CAT_APPS},
     {"paint",     "Paint",            "Pt", appx_paint,         CAT_APPS},
     {"calendar",  "Calendar",         "Ca", appx_calendar,      CAT_APPS},
-    {"chat",      "BOOT Chat",        "Ch", appx_chat,          CAT_APPS},
+    /* v0.9.6.1: BOOT Chat is out of the menus -- its server is shut down
+       until further notice. `chat` in the shell says so. */
     {"asciiart",  "ASCII Art",        "Aa", appx_ascii_art,     CAT_APPS},
     {"notes",     "Notes",            "No", app_notes,          CAT_APPS},
     {"stopwatch", "Stopwatch",        "Sw", app_stopwatch,      CAT_APPS, 0, TK_RUN},

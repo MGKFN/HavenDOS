@@ -111,7 +111,7 @@ void vga_ctx_init(vga_ctx_t *c, uint16_t *cells){
     cells[0] = 0x0720;
 }
 void vga_ctx_save(vga_ctx_t *c){ *c = g_live; }
-void vga_ctx_load(const vga_ctx_t *c){ g_live = *c; if(c->visible) g_repaints++; }
+void vga_ctx_load(vga_ctx_t *c){ g_live = *c; if(c->visible) g_repaints++; }
 void vga_set_visible(int on){ g_live.visible = on; if(on) g_repaints++; }
 void vga_forget_cells(const uint16_t *cells){ g_forgot = cells; }
 

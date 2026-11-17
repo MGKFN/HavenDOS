@@ -560,7 +560,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_ti2c tests/test_i2c.c && \
-	  python3 tools/run_suite.py --name test_i2c --min 55 -- /tmp/hd_ti2c
+	  python3 tools/run_suite.py --name test_i2c --min 62 -- /tmp/hd_ti2c
 	@echo "── test_gfx ───────────────────────────────"
 	@echo "  the Iris Xe inspector, against a model display engine"
 	@# drivers/xedisp.c is INCLUDED: the suite replaces its read seam

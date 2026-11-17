@@ -225,6 +225,38 @@ BUGS = [
      """            int was = 0;"""),
 ]
 
+# ── v0.9.6.7: the HP's held boot ─────────────────────────────────────
+BUGS += [
+    ("a wait ignores the clock (v0.9.6.6's behaviour)",
+     "two million register reads per wait is one to two seconds on the "
+     "HP; 112 addresses on a controller that never moves the bus held "
+     "the boot for minutes",
+     """        if((n & 0xFFu) == 0 && I2C_TICKS() - t0 > I2C_WAIT_TICKS) return 0;""",
+     """        (void)t0;"""),
+
+    ("a timeout does not mark the bus stuck",
+     "every later transfer times out the same way, one after another",
+     """    if((r == I2C_ETIMEOUT || r == I2C_EBUSY) && !b->stuck){""",
+     """    if(0){"""),
+
+    ("a NAK marks the bus stuck too",
+     "the first empty address in a scan would give up on a working bus, "
+     "and the trackpad behind it would never be found",
+     """    if((r == I2C_ETIMEOUT || r == I2C_EBUSY) && !b->stuck){""",
+     """    if((r == I2C_ETIMEOUT || r == I2C_EBUSY || r == I2C_ENAK) && !b->stuck){"""),
+
+    ("a stuck bus stays ready",
+     "the mark is made and then ignored: the next transfer waits again",
+     """        b->stuck = 1; b->ready = 0;""",
+     """        b->stuck = 1;"""),
+
+    # Recorded, not kept: "the scan does not stop at a stuck bus" was
+    # MISSED on the first run of these, and rightly -- a stuck bus is not
+    # ready, so each later probe returns ENOTREADY without a single
+    # register read. The guard in i2c_scan() added nothing a suite could
+    # see, so it was removed rather than kept untested.
+]
+
 HARMLESS = (
     "a comment is reworded (must not be caught)",
     "nothing about the driver changed",

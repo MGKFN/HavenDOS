@@ -141,6 +141,7 @@ typedef struct {
     uint32_t         khz;
     uint32_t         txfifo;
     int              ready;
+    int              stuck;       /* v0.9.6.7: timed out once; left alone */
 } i2c_bus_t;
 
 static i2c_bus_t g_bus[I2C_MAX_BUS];
@@ -177,16 +178,53 @@ static void wr(const i2c_bus_t *b, uint32_t off, uint32_t v)
    enough that a dead controller does not hang the machine. */
 #define SPIN_LIMIT 2000000u
 
+/* v0.9.6.7: AND A CLOCK. Two million register reads is one to two
+   seconds on the HP, not microseconds; a scan of 112 addresses on a
+   controller that never moves the bus was many minutes, and on the HP
+   it held the boot. The wait now also ends after I2C_WAIT_TICKS of the
+   10 ms timer -- 50 ms, a hundred times the longest transfer this file
+   makes at 100 kHz. The spin count stays as the bound for a machine
+   whose timer is not running yet. */
+#ifndef I2C_TICKS
+extern uint32_t get_ticks(void);
+#define I2C_TICKS() get_ticks()
+#endif
+#define I2C_WAIT_TICKS 5u
+
 static int wait_bit(const i2c_bus_t *b, uint32_t reg, uint32_t mask, int set)
 {
-    uint32_t n = SPIN_LIMIT;
+    uint32_t n = SPIN_LIMIT, t0 = I2C_TICKS();
     while(n--){
         uint32_t v = rd(b, reg);
         if(set  && (v & mask)) return 1;
         if(!set && !(v & mask)) return 1;
+        if((n & 0xFFu) == 0 && I2C_TICKS() - t0 > I2C_WAIT_TICKS) return 0;
     }
     return 0;
 }
+
+/* v0.9.6.7: A CONTROLLER THAT TIMES OUT IS LEFT ALONE. A NAK is an
+   answer -- nobody at that address -- and the scan goes on. A timeout
+   is the controller not moving the bus at all, and every later
+   transfer would time out the same way. So the first one marks the bus
+   stuck, says so once, and every later call returns ENOTREADY at once.
+   `i2c` shows it. */
+static int verdict(int bus, int r)
+{
+    i2c_bus_t *b;
+    if(bus < 0 || bus >= g_nbus) return r;
+    b = &g_bus[bus];
+    if((r == I2C_ETIMEOUT || r == I2C_EBUSY) && !b->stuck){
+        b->stuck = 1; b->ready = 0;
+        klog(KLOG_WARN, "I2C %2x:%2x.%u: a transfer %s -- the controller "
+             "is not moving the bus, so it is left alone this boot",
+             (uint32_t)b->pci->bus, (uint32_t)b->pci->dev,
+             (uint32_t)b->pci->fn,
+             r == I2C_EBUSY ? "found it busy" : "timed out");
+    }
+    return r;
+}
+int i2c_bus_stuck(int bus){ return (bus >= 0 && bus < g_nbus) ? g_bus[bus].stuck : 0; }
 
 /* Why the last transfer aborted, as one of this file's codes. Reading
    IC_CLR_TX_ABRT clears the condition, so this is also the thing that
@@ -255,7 +293,7 @@ static int finish(const i2c_bus_t *b)
     return I2C_OK;
 }
 
-int i2c_write(int bus, uint8_t addr, const uint8_t *buf, uint32_t len)
+static int x_i2c_write(int bus, uint8_t addr, const uint8_t *buf, uint32_t len)
 {
     i2c_bus_t *b;
     uint32_t i;
@@ -285,7 +323,7 @@ int i2c_write(int bus, uint8_t addr, const uint8_t *buf, uint32_t len)
     return finish(b);
 }
 
-int i2c_read(int bus, uint8_t addr, uint8_t *buf, uint32_t len)
+static int x_i2c_read(int bus, uint8_t addr, uint8_t *buf, uint32_t len)
 {
     i2c_bus_t *b;
     uint32_t i, got = 0;
@@ -332,7 +370,7 @@ int i2c_read(int bus, uint8_t addr, uint8_t *buf, uint32_t len)
     return finish(b);
 }
 
-int i2c_write_read(int bus, uint8_t addr,
+static int x_i2c_write_read(int bus, uint8_t addr,
                    const uint8_t *wbuf, uint32_t wlen,
                    uint8_t *rbuf, uint32_t rlen)
 {
@@ -382,6 +420,14 @@ int i2c_write_read(int bus, uint8_t addr,
     }
     return finish(b);
 }
+
+int i2c_write(int bus, uint8_t addr, const uint8_t *buf, uint32_t len)
+{ return verdict(bus, x_i2c_write(bus, addr, buf, len)); }
+int i2c_read(int bus, uint8_t addr, uint8_t *buf, uint32_t len)
+{ return verdict(bus, x_i2c_read(bus, addr, buf, len)); }
+int i2c_write_read(int bus, uint8_t addr, const uint8_t *wbuf, uint32_t wlen,
+                   uint8_t *rbuf, uint32_t rlen)
+{ return verdict(bus, x_i2c_write_read(bus, addr, wbuf, wlen, rbuf, rlen)); }
 
 int i2c_probe(int bus, uint8_t addr)
 {

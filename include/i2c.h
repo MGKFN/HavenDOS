@@ -89,6 +89,7 @@ const pci_dev_t *i2c_bus_pci(int bus);
 uint32_t         i2c_bus_mmio(int bus);     /* the mapped address       */
 uint32_t         i2c_bus_khz(int bus);      /* the clock it came up at  */
 int              i2c_bus_ready(int bus);
+int  i2c_bus_stuck(int bus);    /* v0.9.6.7: timed out once, left alone */
 
 /* ── transfers ──────────────────────────────────────────────────────
    Seven-bit addresses. Both return I2C_OK or a named refusal. */

@@ -147,7 +147,7 @@ a fresh conversation.
 | `HavenDOS-{ver}.iso` | bootable disc, BIOS and UEFI |
 | `HavenDOS-{ver}-source.zip` | the tree, minus build products |
 | `update/` | updating an installed machine in place |
-| `docs/` | the hardware test plans -- the parts only the laptop can answer |
+| `docs/` | the hardware test plans -- the parts only the laptop can answer -- and the newest roadmap (THS-RM PDF) |
 
 ## Updating a machine that already runs HavenDOS
 
@@ -312,6 +312,16 @@ def main():
         if f.endswith("-HARDWARE-TEST.md"):
             shutil.copy2(os.path.join(ROOT, "docs", f),
                          os.path.join(stage, "docs"))
+
+    # The newest official roadmap (THS-RM-xxxx), so a new chat has the
+    # plan as well as the state. The highest document number wins.
+    rdir = os.path.join(ROOT, "docs", "roadmap")
+    if os.path.isdir(rdir):
+        rms = sorted(f for f in os.listdir(rdir)
+                     if re.match(r".*-RM(\d{4})\.pdf$", f))
+        rms.sort(key=lambda f: re.match(r".*-RM(\d{4})\.pdf$", f).group(1))
+        if rms:
+            shutil.copy2(os.path.join(rdir, rms[-1]), os.path.join(stage, "docs"))
 
     upd_readme = os.path.join(ROOT, "rescue", "README-UPDATE.md")
     if os.path.exists(upd_readme):

@@ -1,7 +1,45 @@
-# HavenDOS — handoff, 15 November 2026
+# HavenDOS — handoff, 17 November 2026
 
-Current release: **v0.9.6** (channel Beta, codename "Daedalus"). Paste
-this file into a new chat to pick up where this left off.
+Current release: **v0.9.6.5** (channel Beta, codename "Daedalus"), commit
+5e1cca7 on MGKFN/HavenDOS, published by the Release workflow. Paste this
+file into a new chat, with the bundle zip, to pick up where this left off.
+
+## FOR A NEW CHAT: READ THIS FIRST
+
+- **The plan is THS-RM-1005 REV A** (`docs/roadmap/HavenDOS-Roadmap-RM1005.pdf`,
+  built from `docs/rm1005/`). It lays out every release from here to
+  29H2. THS-RM-1004 (`docs/rm1004/`) still holds the numbering standard
+  (its sections 1–11).
+- **Kyan is testing 0.9.6.5 on the HP now.** The checklist is
+  RM-1005 section 6 and `docs/MOUSE-AND-MONITOR-HARDWARE-TEST.md`.
+  Expect photos:
+  - windows: minimize, full screen and Alt+Enter, X, the taskbar chips,
+    Start;
+  - the mouse in Settings (from the Start menu and from the right-click
+    menu), two-finger scrolling, the USB wheel;
+  - the monitor scaled, not the fallback (`dmesg | grep monitor`);
+    unplugging and replugging it;
+  - from 0.9.6, still waiting: Alt+Tab on the USB keyboard, `migrate`,
+    `resolution` on the panel.
+- **What the photos lead to:** 0.9.6.6 and later for what they show,
+  fixes only. Then **0.9.7** (~22 Nov): the new versioning in the
+  updater (RM-1005 section 7).
+- **Decided 16 Nov:** update over the internet moves into **0.9.8**,
+  after the new TLS. It installs only a signed `update.inf`, and the
+  ESP, USB and CD updates stay. Seven questions are open (RM-1005
+  section 21), among them who generates the signing key.
+- **The fixes-only rule was bent twice** (0.9.6.3 and 0.9.6.5), each
+  time by Kyan's decision. From 0.9.7 it holds again unless he decides
+  otherwise.
+- **Standing rules:**
+  - push every version to GitHub;
+  - hand over a bundle zip (`python3 tools/make_release_bundle.py`);
+  - diagnose from photos and never ask for a downgrade;
+  - make failures explain themselves on screen;
+  - documents like RM-1005 use the retro THS house style.
+- **Careful:** `tests/test_chrome.c` is the desktop bars' 58-check suite.
+  The window layout suite is `tests/test_window.c`. Don't create a file
+  without checking it isn't already there.
 
 ## START HERE: 0.9.6.5 (16 Nov) — APPS ARE WINDOWS, THE TASKBAR STAYS
 

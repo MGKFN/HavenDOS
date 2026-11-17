@@ -2,169 +2,98 @@
 
 HavenDOS is an operating system written from scratch in C and x86 assembly by Tech Haven Studios: its own 32-bit kernel, drivers, filesystems, TCP/IP and TLS stack, a shell and a text-mode desktop with the look of an old DOS machine, on modern UEFI hardware.
 
-It boots on a 2022 HP laptop from its own partition beside Windows 11, reads USB sticks, and reaches the internet through an iPhone over USB — that laptop has no Ethernet port.
+It boots on a 2022 HP laptop from its own partition beside Windows 11, drives that laptop's external HDMI monitor, reads USB sticks, and reaches the internet through an iPhone over USB — that laptop has no Ethernet port.
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.5.1 Beta "Hephaestus"
+## Current version: 0.9.6.5 Beta "Daedalus"
 
-**0.9.5.1.** **The modern look, everywhere.** Every app and screen
-(desktop, start menu, games, tools, login, setup and the installer) now
-uses the style of 0.9.5's Settings and System apps:
+0.9.6 made HavenDOS run several apps at once. Its five maintenance updates came from photos of the HP laptop, taken on 16 November 2026.
 
-- solid title bands, with no dashed boxes;
-- one selection colour;
-- keys listed in a footer.
+**0.9.6.5. Apps are windows.** Every app has a title bar with minimize, full screen and close, and the taskbar stays on the bottom row with Start, a chip for each open app, and the clock.
+- **Full screen:** F11 or Alt+Enter brings the bars back. Alt+Enter is there for laptops whose F11 is a media key.
+- **The window's X** does what ESC does.
+- **Settings works with the mouse**, however it was opened.
 
-There are new games and apps:
+[Changelog](changelogs/CHANGELOG-v0.9.6.5.md).
 
-- games: **2048**, **Breakout**, **Tic-Tac-Toe** and **Memory**;
-- apps: **Notes**, **Stopwatch** and a unit **Converter**.
+**0.9.6.4. The monitor never gets stuck half set up.** A half-lit display pipe is cleared before the next try. When the monitor can't be scaled, it gets an unscaled picture and the log says why. Confirmed on the HP: "works now". [Changelog](changelogs/CHANGELOG-v0.9.6.4.md).
 
-The new `open` command starts any app from the shell.
-[Changelog](changelogs/CHANGELOG-v0.9.5.1.md).
+**0.9.6.3. The monitor fills, and the mouse works everywhere.**
+- **The HDMI picture is scaled:** fitted at 4:3 by default, or stretched, set in Settings.
+- **The monitor lights by itself** when plugged in, at boot or later.
+- **Every app can be used with the mouse:** click to pick and open, clickable key hints, the scroll wheel or two-finger scrolling, and right-click for back.
 
-**0.9.5.** **The apps, rebuilt.**
-- `help`, `man` and the Manual app read one command reference that the
-  build checks against the shell. `help` is an index by topic; `man`
-  scrolls and fits any screen; `man` on its own is a browser.
-- `users` shows roles, passwords (and which are still the published
-  defaults), home folders and last logins.
-- Twenty new themes, each with its own desktop colour and wallpaper.
-- A real Settings app: appearance, display, desktop icons, shell,
-  accounts, network and startup.
-- One System app instead of four.
-- A ten-page guide written for 0.9.x.
-- `find` searches subfolders; `passwd` is saved; `ps` and `df` tell the
-  truth.
+[Changelog](changelogs/CHANGELOG-v0.9.6.3.md).
 
-The "multitasking planned" promise is gone; multitasking itself is
-0.9.6.
-[Changelog](changelogs/CHANGELOG-v0.9.5.md).
+**0.9.6.2. The monitor's first picture.** Pipe B's display buffer was counted from the wrong slice, so every fetch came back empty and the monitor showed one colour edge to edge. Confirmed on the HP. [Changelog](changelogs/CHANGELOG-v0.9.6.2.md).
 
-**0.9.4.1.** Fixes found while taking the 1.0 screenshots. On a FAT32
-install (anything over 2047 MB), files can now be saved in your home
-directory, and failed saves no longer report success. Also fixed:
-`edit` opens files in the current directory; `sysinfo`'s uptime and
-other padded numbers print correctly; `calc` understands `^`; the setup
-wizard no longer says "Step 8 of 7"; and Snake no longer warns about a
-working timer.
-[Changelog](changelogs/CHANGELOG-v0.9.4.1.md).
+**0.9.6.1. The first fixes from the HP.**
+- `resolution` works with apps open, and they are re-laid out when you switch back.
+- The Welcome screen appears only when there is no account.
+- BOOT Chat is out of the menus while its server is down.
+- `gfx try` tests the external monitor.
 
-**0.9.4.** **An installed HavenDOS can install HavenDOS.** `install`, or
-the desktop's Install icon, opens the full installer. It copies the
-running system's own `/boot/havendos.elf` onto another disk, such as a
-USB stick, and refuses the disk it is running from. A UEFI boot entry is
-not needed: the HP's firmware adds one itself.
-[Changelog](changelogs/CHANGELOG-v0.9.4.md).
+[Changelog](changelogs/CHANGELOG-v0.9.6.1.md).
 
-**0.9.3.** **An install larger than 2047 MB is FAT32 now**, up to 32 GB.
-Before, every install was a 2047 MB FAT16 volume, whatever the size of the
-disk or the free space. Both installers make it. The installed system finds
-it on GPT and MBR disks, and keeps it mounted while an update reads from
-the ESP. `update` and `rename` work on it. Also fixed: FAT16 dotfiles like
-`.accounts` had names `chkdsk` would "repair" away. They are renamed safely
-the first time they are used.
-[Changelog](changelogs/CHANGELOG-v0.9.3.md).
+**0.9.6. Several apps at once.**
+- **Tasks** switch when an app waits for a key or yields, and there are background jobs.
+- **Alt+Tab** switches between open apps, and each keeps its state.
+- **The bottom bar** has a chip per open app.
+- **`migrate`** moves a FAT16 install to a new FAT32 partition on the same disk, from inside HavenDOS.
 
-**0.9.2.2.** On 0.9.2.1 the LG monitor **locked on to HavenDOS's signal**:
-1920x1080 at 60 Hz on its HDMI input, from a display path HavenDOS set
-up itself. It showed black instead of the picture. Two tools find out
-why: `gfx color` sets pipe B's background colour, and `gfx b` shows
-pipe B as it runs. Also in this release, USB hubs are now marked as hubs
-on the controller, so a keyboard or mouse behind one can answer.
-[Changelog](changelogs/CHANGELOG-v0.9.2.2.md).
+[Changelog](changelogs/CHANGELOG-v0.9.6.md).
 
-**0.9.2.1** fixes the two things 0.9.2 ran into on the HP.
-- **`gfx on` stopped at step 28.** One register (the pipe's memory-bus
-  credits) carries read-only bits that differ per pipe. `gfx on` now
-  copies and checks only its real fields. Before the stop, 25 writes had
-  landed exactly, the PLL had locked at 148.5 MHz, and the panel was
-  untouched.
-- **External USB keyboards and mice now work on every interface.** They
-  used to work only on a device's first interface, so a wireless
-  receiver's mouse, which usually sits on its second, did nothing.
+## Coming in 0.9.7 (~24 November)
 
-[Changelog](changelogs/CHANGELOG-v0.9.2.1.md).
+- **The new version numbers in the updater**, so every installed 0.9.x understands "HavenDOS 1, version 27H1 (OS Build 27100.1000)" before it arrives.
+- **Retro PC.** An emulated PC inside HavenDOS that boots the studio's old builds, starting with **K-DOS Beta 1.1b**, the oldest one that survived:
+  - an 80186 with the 386's 16-bit additions, a BIOS, a floppy and a pretend hard disk kept as a file, so it never touches a real disk;
+  - your own `.IMG` floppy images, from a `RETRO` folder.
 
-**0.9.2** lights the external monitor. `gfx on` programs the HP's
-second display path, from a PLL and the HDMI port up to a pipe and a
-plane, and points it at the picture the laptop already shows, so the
-monitor mirrors the panel at 1920x1080, 60 Hz. `gfx plan` lists every
-register write first, and `gfx on` asks before making any. One function
-writes, behind an allow-list that cannot name the panel's registers,
-and every write is read back. It also corrects a misreading in 0.9.1:
-the panel's link clock is 270 MHz, not 269.7, and the panel runs at
-60.00 Hz.
-[Changelog](changelogs/CHANGELOG-v0.9.2.md).
+  It is finished on the [`emu86`](https://github.com/MGKFN/HavenDOS/tree/emu86) branch:
+  - 86 tests;
+  - it matches a real 8088 on 2.5 million recorded instructions;
+  - K-DOS gives the same screens and disk writes as on QEMU's own PC.
 
-**0.9.1** reads the external monitor. `gfx edid` asks it over the HDMI
-cable's DDC wires, through the display engine's own I2C controller,
-for its maker, name and the modes it supports. It is the first command
-in the display series that writes, and it writes only that controller's
-six registers. It also fixes four lines 0.9.0's summary got wrong on the
-HP, and now names the pipe scaler that stretches the firmware's
-1024x768 to the panel's 1920x1080.
-[Changelog](changelogs/CHANGELOG-v0.9.1.md).
+  It joins `main` with 0.9.7, as exception E-1 in the roadmap.
 
-**0.9.0** starts a display driver for the Iris Xe, so HavenDOS can use
-an external monitor. This first step only looks: `gfx` reads the display
-engine as the firmware left it and writes nothing. It shows the power
-wells, pipes, transcoders, ports, hot-plug state and PLLs, which pipe
-drives the panel, and which connector HDMI is wired to. It also
-confirms what the HP showed on 0.8.9.9: **iPhone tethering works**.
-DHCP, DNS, ping and a download all run through the phone, the first
-time HavenDOS has reached the internet from real hardware.
-[Changelog](changelogs/CHANGELOG-v0.9.0.md).
+## Earlier releases
 
-**0.8.9.9** fixes the three faults in the 0.8.9.8 photos from the HP.
-Pairing took the iPhone's Ethernet interface away: the USB core could
-hold only one interface per device, so DHCP's request never left the
-laptop. The mux refused to hand the TLS layer a big packet in pieces, so
-the handshake died at its first read. And every connection reused one
-source port, so the phone refused the next one. The phone now carries
-pairing and tethering at the same time.
-[Changelog](changelogs/CHANGELOG-v0.8.9.9.md).
+| Version | What it did |
+| --- | --- |
+| [0.9.5.1](changelogs/CHANGELOG-v0.9.5.1.md) | The modern look in every app; 2048, Breakout, Tic-Tac-Toe, Memory, Notes, Stopwatch, Converter; `open` |
+| [0.9.5](changelogs/CHANGELOG-v0.9.5.md) | The apps rebuilt: one command reference behind `help`, `man` and the Manual; a real Settings; one System app; twenty themes |
+| [0.9.4.1](changelogs/CHANGELOG-v0.9.4.1.md) | Saving in your home directory on FAT32 installs, and fixes from the 1.0 screenshots |
+| [0.9.4](changelogs/CHANGELOG-v0.9.4.md) | An installed HavenDOS can install HavenDOS, onto another disk |
+| [0.9.3](changelogs/CHANGELOG-v0.9.3.md) | Installs over 2047 MB are FAT32, up to 32 GB |
+| [0.9.2.2](changelogs/CHANGELOG-v0.9.2.2.md) | The monitor locks on to HavenDOS's signal; `gfx color` and `gfx b` to find out why it is black |
+| [0.9.2.1](changelogs/CHANGELOG-v0.9.2.1.md) | `gfx on` past step 28; USB keyboards and mice on every interface |
+| [0.9.2](changelogs/CHANGELOG-v0.9.2.md) | `gfx on` drives the HDMI port, every register write read back |
+| [0.9.1](changelogs/CHANGELOG-v0.9.1.md) | `gfx edid` reads the external monitor over DDC |
+| [0.9.0](changelogs/CHANGELOG-v0.9.0.md) | `gfx` reads the Iris Xe display engine; iPhone tethering confirmed on the HP |
+| [0.8.9.9](changelogs/CHANGELOG-v0.8.9.9.md) | Pairing and tethering at once; the phone reaches the internet |
+| [0.8.9.8](changelogs/CHANGELOG-v0.8.9.8.md) | DHCP works, for the first time on any network |
+| [0.8.9.7](changelogs/CHANGELOG-v0.8.9.7.md) | The iPhone pairing transport fixed |
+| [0.8.9.6](changelogs/CHANGELOG-v0.8.9.6.md) | Performance: a write-combining framebuffer; the pointer at every resolution |
 
-**0.8.9.8** makes DHCP work, for the first time on any network. It had
-never worked; in QEMU nobody could tell, because the fallback address is
-QEMU's own.
-[Changelog](changelogs/CHANGELOG-v0.8.9.8.md).
-
-**0.8.9.7** fixes the iPhone pairing transport. Messages that were
-exactly a multiple of 512 bytes were never terminated, so the phone
-glued the pair request's two packets together. And the phone's own
-explanation, a usbmux CONTROL message, was thrown away unread.
-[Changelog](changelogs/CHANGELOG-v0.8.9.7.md).
-
-**0.8.9.6 was a performance release.** The framebuffer is now
-write-combining. It was uncached on real hardware, which made every
-redraw crawl. The mouse moves at the same speed on every resolution,
-the cursor reaches the whole screen on high-resolution grids, and the
-trackpad driver powers its controller up and waits for the device after
-resetting it. USB no longer tears the whole bus down every second when
-a port flaps, and the kernel log keeps recording after the boot.
-[Changelog](changelogs/CHANGELOG-v0.8.9.6.md).
-
-### Helios
-
-Helios is the iPhone release. The HP laptop HavenDOS is tested on has no Ethernet port and its Wi-Fi chip has no driver, so its route to a network is an iPhone over USB — and iOS only turns tethering on for a computer it has *paired* with. Pairing means a usbmux channel, Apple property lists, two 2048-bit RSA keys generated on the machine, three X.509 certificates, and TLS 1.2 with a client certificate, all written for this kernel.
-
-Stages 1 and 2 of pairing are confirmed on the HP: lockdownd answers, and the phone hands over its public key. Stage 3 — the pair request itself — reached the phone for the first time in 0.8.9.4. 0.8.9.5 stopped the connection sitting idle through the 71-second keygen, and 0.8.9.7 ends full-size USB transfers the way the phone expects.
+**Helios** (0.8.8 to 0.8.9) was the iPhone release. The HP's only route to a network is an iPhone over USB, and iOS turns tethering on only for a computer it has *paired* with. Pairing took a usbmux channel, Apple property lists, RSA-2048 key generation, three X.509 certificates and TLS 1.2 with a client certificate, all written for this kernel.
 
 Every release has its full changelog in [`changelogs/`](changelogs/).
 
 ## What's in it
 
 - **Boot:** one hybrid ISO for BIOS and UEFI through GRUB. Framebuffer console at any resolution the firmware offers, with the character grid chosen by the user.
-- **Install:** beside an existing Windows installation in free space, or on an empty disk with its own EFI System Partition. `uninstall` removes it again and never touches a boot loader it did not put there.
+- **Install:** beside an existing Windows installation in free space, or on an empty disk with its own EFI System Partition. `uninstall` removes it again and never touches a boot loader it did not put there. `migrate` moves a FAT16 install to FAT32.
 - **Update:** `update` installs a newer kernel from a USB stick, the EFI partition or CD, and checks a CRC before writing anything.
+- **Tasks:** several apps open at once, Alt+Tab, background jobs. Apps are windows with minimize, full screen and close, under a taskbar.
+- **Display:** the Iris Xe's HDMI port driven by HavenDOS itself: the monitor read over DDC, lit, scaled, and lit again when plugged back in.
 - **Storage:** NVMe, AHCI, ATA/IDE and VirtIO disks; USB mass storage. FAT12, FAT16 and FAT32 read-write, exFAT read-only, GPT and MBR.
 - **USB:** xHCI and UHCI, hubs, keyboards and mice, mass storage, and Apple's USB Ethernet interface.
-- **Input:** PS/2 and USB keyboards and mice; an I2C-HID trackpad driver.
-- **Network:** RTL8139, e1000 and iPhone USB tethering; DHCP (working since 0.8.9.8), DNS, TCP with retransmission, HTTP, TLS 1.2.
+- **Input:** PS/2 and USB keyboards and mice with the scroll wheel; an I2C-HID trackpad driver. The mouse works in every app.
+- **Network:** RTL8139, e1000 and iPhone USB tethering; DHCP, DNS, TCP with retransmission, HTTP, TLS 1.2.
 - **Cryptography, in-kernel:** big-number arithmetic with Montgomery reduction, RSA-2048 key generation, SHA-256, AES-128-CBC, X.509 v3 and DER, PKCS#1 v1.5.
-- **Desktop:** a text-mode desktop with a start menu, file manager, editor, calculator, calendar, clock, chat client, games (Minefield among them) and settings. User accounts and themes.
+- **Desktop:** a text-mode desktop with a start menu, file manager, editor, calculator, calendar, clock, Settings, a System app, games (Minefield, 2048, Breakout and more), a manual and a guide. User accounts and twenty themes.
 
 ## Hardware status
 
@@ -174,19 +103,17 @@ Tested on an HP laptop with an Intel Alder Lake CPU, NVMe SSD and xHCI USB, and 
 | --- | --- |
 | UEFI boot, install beside Windows 11 on NVMe | Working |
 | Built-in keyboard | Working |
-| USB mouse | Working; slow and choppy before 0.8.9.6 |
+| USB mouse | Working |
 | USB sticks (FAT16/FAT32; exFAT read-only) | Working |
 | `update` from a USB stick | Working |
-| iPhone pairing, stages 1 and 2 | Working |
-| iPhone pairing, stage 3 | Pairs, and StartSession answers; the TLS session after it is refused by the phone (not needed for tethering) |
 | iPhone USB tethering | **Working** since 0.8.9.9: DHCP, DNS, ping, HTTP |
-| External monitor | `gfx` reads the display engine and `gfx edid` the monitor (both confirmed on the HP); `gfx on` mirrors the panel on it over HDMI (0.9.2, untested) |
-| Built-in trackpad (I2C-HID) | Not working in 0.8.9.5; 0.8.9.6 fixes two likely causes, untested |
-| MediaTek Wi-Fi | No driver |
+| iPhone pairing | Stages 1 and 2 working; stage 3 pairs, and the TLS session after it is refused by the phone (not needed for tethering) |
+| External HDMI monitor | **Working** since 0.9.6.2, scaled since 0.9.6.4. Lighting by itself after a replug is being tested in 0.9.6.5 |
+| Several apps at once, windows, Alt+Tab | Being tested in 0.9.6.5 |
+| Built-in trackpad (I2C-HID) | Driver written; not yet confirmed on the HP |
+| MediaTek Wi-Fi | No driver (planned for 28H2) |
 
-AHCI has only ever run against simulated controllers — there is no SATA machine to test it on.
-
-**Known issues:** the 0.8.9.6 performance and pointer fixes have not been confirmed on the HP yet. A USB transaction error can still make one rescan come back empty; 0.8.9.6 retries it once and holds off a port that keeps flapping.
+AHCI has found a real SATA disk on a friend's older HP.
 
 ## Try it
 
@@ -194,11 +121,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.5.1.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.6.5.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.5.1.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.6.5.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -206,7 +133,7 @@ The GRUB loader is unsigned, so **Secure Boot must be off** on real hardware.
 
 Default accounts after installation: `admin` / `Admin@123`, `bootos` / `BootOS2026`, `guest` with no password. Change them.
 
-**Before installing on a real machine, back up your files** and read the installer's disk preview carefully. Installing beside Windows uses existing unallocated space and does not shrink Windows for you; the whole-disk option replaces the disk layout. The HavenDOS system partition is FAT16 up to 2047 MB and FAT32 above that (since 0.9.3), and the installer takes at most 32 GB of free space, leaving the rest free.
+**Before installing on a real machine, back up your files** and read the installer's disk preview carefully. Installing beside Windows uses existing unallocated space and does not shrink Windows for you; the whole-disk option replaces the disk layout. The HavenDOS system partition is FAT16 up to 2047 MB and FAT32 above that, and the installer takes at most 32 GB of free space, leaving the rest free.
 
 ### Updating an installed system
 
@@ -222,7 +149,7 @@ sudo apt install gcc-multilib make python3 python3-pip grub-common grub-pc-bin \
 pip install hid-parser
 
 make havendos_pass1.elf && make havendos.elf && make   # the ISO
-sudo make test                                          # 60 suites
+sudo make test                                          # 71 suites, 7401 checks
 ```
 
 `grub-pc-bin` and `grub-efi-amd64-bin` are both needed: without the first the ISO has no BIOS boot image. The build is two-pass — the kernel embeds a copy of itself for the installer — so build the two kernels before `make`. `make test` runs as root because the exFAT fixture is made with a loop device.
@@ -233,17 +160,17 @@ sudo make test                                          # 60 suites
 
 | Path | What |
 | --- | --- |
-| `kernel/`, `boot/` | Kernel entry, interrupts, memory, timer |
-| `drivers/` | Display, keyboard, mouse, PCI, storage controllers, I2C |
+| `kernel/`, `boot/` | Kernel entry, interrupts, memory, timer, tasks |
+| `drivers/` | Display (including the Iris Xe), keyboard, mouse, PCI, storage controllers, I2C |
 | `usb/` | Host controllers, USB core, HID, mass storage, hubs, usbmux, lockdown |
-| `fs/` | FAT, exFAT, GPT, the block layer, installer and updater |
+| `fs/` | FAT, exFAT, GPT, the block layer, installer, updater and `migrate` |
 | `net/` | TCP/IP, DNS, HTTP, TLS, RSA, X.509, plists |
-| `shell/` | The shell, the desktop and its apps |
+| `shell/` | The shell, the desktop, the window chrome and the apps |
 | `tests/` | Native test suites — `make test` |
-| `tools/` | Build scripts and the checks `make` runs |
+| `tools/` | Build scripts, the checks `make` runs, and the injection harnesses |
 | `harness/` | Scripted QEMU testing |
 | `rescue/` | The update staging scripts for Windows and Linux |
-| `docs/` | Hardware test procedures; `docs/roadmap/` holds the road-to-1.0 plans |
+| `docs/` | Hardware test procedures; `docs/roadmap/` holds the roadmap PDFs, built from `docs/rm100x/` |
 | `changelogs/` | One changelog per release |
 | `manual/` | The operator's manual |
 | `archive/` | Old source archives, kept for history |
@@ -258,11 +185,25 @@ Every release is built by [GitHub Actions](.github/workflows/release.yml) from t
 | `HavenDOS-<version>-bundle.zip` | Updating an installed system, plus the hardware test docs |
 | `HavenDOS-<version>-source.zip` | Building it yourself |
 
-A release whose tests fail is not published.
+A release whose tests fail is not published. Work on other branches, like `emu86`, is never published until it is merged into `main` with a new version.
 
 ## Where it's going
 
-The plan to 1.0 is in [`docs/roadmap/`](docs/roadmap/). 1.0 is the hardware release: install, boot, update and run on real machines without a second operating system's help. After it, 1.1 brings modern TLS and 1.2 a web browser.
+The plan is [THS-RM-1005](docs/roadmap/HavenDOS-Roadmap-RM1005.pdf), every release from 0.9.6.5 to December 2029.
+
+| Release | Target | What |
+| --- | --- | --- |
+| 0.9.7 | ~24 Nov 2026 | The new version numbers in the updater; Retro PC |
+| 0.9.8 | ~3 Dec 2026 | Real HTTPS (TLS 1.2 with X25519 and AES-GCM, certificates checked), then signed updates over the internet |
+| 0.9.9 | ~10 Dec 2026 | Hardening, and the freeze |
+| **HavenDOS 1, version 27H1 "Brandaris"** | 1 Jan 2027 | OS Build 27100.1000, the first Stable release |
+| 27H2 "Lange Jaap" | Dec 2027 | The web: a browser, a package store, email |
+| 28H1 "Westhoofd" | Jun 2028 | Daily use on the HP: ACPI, audio, battery, sleep |
+| 28H2 "Eierland" | Dec 2028 | Wi-Fi |
+| 29H1 "Bornrif" | Jun 2029 | Overlapping windows and a file manager |
+| 29H2 "Westkapelle" | Dec 2029 | Polish, and building apps on HavenDOS |
+
+Dates are targets. The roadmap says what moves when one slips.
 
 ## Bugs and contributions
 

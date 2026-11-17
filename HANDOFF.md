@@ -6,7 +6,7 @@ file into a new chat, with the bundle zip, to pick up where this left off.
 
 ## FOR A NEW CHAT: READ THIS FIRST
 
-- **The plan is THS-RM-1005 REV A** (`docs/roadmap/HavenDOS-Roadmap-RM1005.pdf`,
+- **The plan is THS-RM-1005 REV B** (`docs/roadmap/HavenDOS-Roadmap-RM1005.pdf`,
   built from `docs/rm1005/`). It lays out every release from here to
   29H2. THS-RM-1004 (`docs/rm1004/`) still holds the numbering standard
   (its sections 1–11).
@@ -22,8 +22,18 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   - from 0.9.6, still waiting: Alt+Tab on the USB keyboard, `migrate`,
     `resolution` on the panel.
 - **What the photos lead to:** 0.9.6.6 and later for what they show,
-  fixes only. Then **0.9.7** (~22 Nov): the new versioning in the
-  updater (RM-1005 section 7).
+  fixes only, made on **main**. Then **0.9.7** (~24 Nov): the new
+  versioning in the updater (RM-1005 section 7), plus Retro PC.
+- **Retro PC is finished on the branch `emu86`, not on main.** It is
+  exception E-1 (RM-1005 section 3), decided by Kyan on 17 Nov: it lands
+  with 0.9.7 and never in a 0.9.6.N. To make 0.9.7, merge `emu86` into
+  main first (rebase it if 0.9.6.N commits came in between), then fold
+  `changelogs/next/0.9.7-retro-pc.md` into `CHANGELOG-v0.9.7.md` and
+  delete it. See the section "ON THE BRANCH emu86" below.
+- **Kyan has more old builds** (K-DOS, KOS, early HavenDOS). When he
+  sends them they go in `archive/retro/` with a line in `IMAGES.txt`.
+  That is content, allowed in any release by E-1; emulator features
+  (graphics modes, sound, a DOS) are not.
 - **Decided 16 Nov:** update over the internet moves into **0.9.8**,
   after the new TLS. It installs only a signed `update.inf`, and the
   ESP, USB and CD updates stay. Seven questions are open (RM-1005
@@ -40,6 +50,53 @@ file into a new chat, with the bundle zip, to pick up where this left off.
 - **Careful:** `tests/test_chrome.c` is the desktop bars' 58-check suite.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
+
+## ON THE BRANCH emu86: RETRO PC (17 Nov), FOR 0.9.7
+
+Kyan sent `kernel.img`, K-DOS Beta 1.1b, the oldest build that
+survived, and asked for it to run as an emulator inside HavenDOS.
+
+- **The CPU** is `emu/cpu86.c` with `include/emu86.h`:
+  - an 8086/80186 interpreter plus the 386's 16-bit additions (the 0F
+    group, FS/GS);
+  - it refuses the 66h/67h prefixes, CPUID, RDTSC and the system
+    instructions with EMU_FAULT, naming the bytes.
+- **The PC** is `emu/pcbios.c` with `include/pcbios.h`:
+  - the BIOS ROM lives at F000, where stubs trap with `0F FF nn`
+    (honoured only when CS==F000);
+  - it emulates the 8259, 8253 and 8042, plus INT 10h/13h/16h/1Ah/
+    11h/12h/15h/18h/19h;
+  - anything it does not provide becomes a notice line, never a silent
+    no-op.
+- **Disks:**
+  - drive 00h is a copy of the image;
+  - drive 80h is a 504 KB disk (1×16×63) saved as `RETRO/<ID>.HDD`;
+  - there is no path to a real disk. Keep it that way.
+- **The app** is `shell/retro.c` (`app_retro`, `retro_set_next`):
+  - boxed 80×25;
+  - F4 or the window's X leaves, the X through `chrome_take_close()`;
+  - Enter from HavenDOS ('\n') reaches the old PC as CR with scancode
+    1Ch, since `pc_key` maps it.
+- **Images:**
+  - `archive/retro/IMAGES.txt` lists them;
+  - `tools/make_retro_images.py` checks each one's SHA-256, 8.3 id and
+    55AA, and writes the gitignored `include/retro_images.h`.
+- **Tests:**
+  - `tests/test_emu86.c`, 86 checks, against QEMU's screens and disk
+    writes for K-DOS;
+  - `tools/check_emu86_suite.py`, 28 planted defects plus one harmless
+    one (foreground only);
+  - `harness/retro_boot.py`, QEMU end to end, 9/9;
+  - `tools/check_emu86_sst.py` + `tests/emu86_sst.c` run the
+    SingleStepTests 8088 suite (2,522,158/2,522,158). They are dev-only
+    and download the suite; they are not part of `make`.
+- **K-DOS's own quirks** are reproduced on purpose, and QEMU agrees:
+  - `save` after `time` writes nowhere but prints [OK];
+  - `taskman` garbles the screen.
+- **HP check for 0.9.7:**
+  - boot K-DOS and log in as admin/1234;
+  - F4 and the X both come back;
+  - F1–F4 on the USB keyboard (now mapped like PS/2).
 
 ## START HERE: 0.9.6.5 (16 Nov) — APPS ARE WINDOWS, THE TASKBAR STAYS
 

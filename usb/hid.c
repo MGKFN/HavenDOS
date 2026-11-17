@@ -108,6 +108,13 @@ static int usage_to_key(uint8_t u, uint8_t mods)
         return (int)(unsigned char)c;
     }
     switch (u) {
+    /* v0.9.7: F1-F4, the codes drivers/keyboard.c has always pushed for
+       them. A USB keyboard produced none, so F4 -- Retro PC's way out --
+       and every other F-key use worked on the laptop's keyboard only. */
+    case 0x3A: return 0x13B;   /* F1        */
+    case 0x3B: return 0x13C;   /* F2        */
+    case 0x3C: return 0x13D;   /* F3        */
+    case 0x3D: return 0x13E;   /* F4        */
     case 0x49: return 0x152;   /* Insert    */
     case 0x4A: return 0x147;   /* Home      */
     case 0x4B: return 0x149;   /* Page Up   */

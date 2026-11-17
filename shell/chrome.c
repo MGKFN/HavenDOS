@@ -86,6 +86,7 @@ void chrome_layout(int pw, int ph, int boxed, int full, ch_layout_t *L)
 
 /* The three buttons, right-aligned on the title row: " _ " "[ ]" " X " */
 #define BTN_W 3
+static int g_close_req;      /* v0.9.7: see chrome_take_close() */
 static int btn_x(const ch_layout_t *L, int which)   /* 0 min, 1 max, 2 close */
 {
     return L->title_x1 - (3 - which) * (BTN_W + 1) + 1;
@@ -340,7 +341,7 @@ int chrome_hook(int key)
 
     what = chrome_hit(&L, vga_phys_cols(), x, y, &chip);
     switch(what){
-    case CH_CLOSE: ptr_hide(); return 27;
+    case CH_CLOSE: ptr_hide(); g_close_req = 1; return 27;
     case CH_FULL:
         ptr_hide(); t->full = !t->full; apply_layout(t, 1);
         if(t->full && !t->boxed) toast_info("Full screen -- F11 or Alt+Enter brings the taskbar back");
@@ -357,3 +358,9 @@ int chrome_hook(int key)
 }
 
 void chrome_init(void){ keyboard_set_chrome_hook(chrome_hook); }
+
+/* v0.9.7: X arrives as ESC, which is what every app here wants -- except
+   one whose ESC belongs to somebody else. Retro PC hands every key to
+   the old PC it is running, so it asks this after an ESC: was it the
+   window's X? One answer per click. */
+int chrome_take_close(void){ int r = g_close_req; g_close_req = 0; return r; }

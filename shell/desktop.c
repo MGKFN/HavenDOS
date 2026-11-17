@@ -154,6 +154,7 @@ extern void appx_legal(void);
 extern void appx_stars(void);
 extern void appx_themes(void);
 extern void app_mines(void);
+extern void app_retro(void);         /* shell/retro.c, v0.9.7 */
 
 /* Real categories.  The start menu adds Favorites above these and
    All Apps below them; neither is a category an app can belong to. */
@@ -226,6 +227,8 @@ static const appreg_t appreg[]={
     {"notes",     "Notes",            "No", app_notes,          CAT_APPS},
     {"stopwatch", "Stopwatch",        "Sw", app_stopwatch,      CAT_APPS, 0, TK_RUN},
     {"convert",   "Converter",        "Cv", app_convert,        CAT_APPS},
+    /* v0.9.7: the old builds on an emulated PC. 80x25, so boxed. */
+    {"retro",     "Retro PC",         "Rp", app_retro,          CAT_APPS},
 
     /* ---- System ----------------------------------------------- */
     /* v0.9.5: one app where there were four (System Info, Info+,

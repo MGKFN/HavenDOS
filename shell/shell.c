@@ -407,7 +407,7 @@ static const char *shell_cmds[]={
     "layout","lspci","man","matrix","mem","migrate","mkdir","motd","music","mv",
     "neofetch","netstat","notepad","notify","nslookup","open","paint","pair","passwd","ping",
     "pipes","play","poweroff","ps","ps1","pwd","quit","quiz",
-    "reboot","rename","repeat","res","resolution","rm","rollback","rsa","run",
+    "reboot","rename","repeat","res","resolution","retro","rm","rollback","rsa","run",
     "screensaver","script","selftest","seq","set","settings","shutdown","snake","sort",
     "source","stars","stat","sysinfo","sysinfo-plus","sysmon","system","tail","tcpsend","tcptest",
     "tee","theme","time","timer","tls","tlsinfo","todo","touch",
@@ -3408,6 +3408,15 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
             !strcmp(cmd,"convert")||!strcmp(cmd,"notes")){
         extern int desktop_open_app(const char *id);
         desktop_open_app(!strcmp(cmd,"ttt")?"tictactoe":cmd);
+        vga_clear(); toast_clear();
+    }
+    /* v0.9.7: Retro PC. With a file, that image boots straight away;
+       the path goes over first because the desktop opens apps by id. */
+    else if(!strcmp(cmd,"retro")){
+        extern int  desktop_open_app(const char *id);
+        extern void retro_set_next(const char *path);
+        if(arg1[0]){ char p[64]; make_path(p, arg1); retro_set_next(p); }
+        desktop_open_app("retro");
         vga_clear(); toast_clear();
     }
     else if(!strcmp(cmd,"open")){

@@ -1289,6 +1289,20 @@ const cmddoc_t cmddb[] = {
       NULL,
       "calc" },
 
+    { "retro", NULL, CDB_APPS,
+      "retro [file]",
+      "Run the old builds on an emulated PC",
+      "Retro PC: an 80186 with the 386's 16-bit additions, a BIOS, a floppy "
+      "and a hard disk of its own, in a window. K-DOS Beta 1.1b, the first "
+      "build that survived, is built in (log in as admin, password 1234). "
+      "With no file it lists the built-in images and any .IMG in RETRO; "
+      "with a file it boots that one. F4 or the window's X leaves. The old "
+      "PC's hard disk is a .HDD file, saved when you leave -- never a real "
+      "disk.",
+      "retro\tthe list\n"
+      "retro RETRO/OLD.IMG\tboot an image from the disk",
+      "open dmesg" },
+
     { "notes", NULL, CDB_APPS,
       "notes",
       "Short notes, kept in your home folder",

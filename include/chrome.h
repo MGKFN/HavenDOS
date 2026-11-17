@@ -33,3 +33,4 @@ int  chrome_on(void);
 void chrome_set_surround(void (*fn)(int vx, int vy, int vw, int vh, const char *name));
 int  chrome_hook(int key);
 void chrome_init(void);
+int  chrome_take_close(void);   /* v0.9.7: was that ESC the X? */

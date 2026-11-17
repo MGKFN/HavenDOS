@@ -1,0 +1,10 @@
+# archive/retro/IMAGES.txt -- the old builds Retro PC carries.  v0.9.7.
+#
+# One line per image:  id | title | file | sha256 | about
+#   id     at most 8 letters and digits: it names the image's hard
+#          disk file on HavenDOS, RETRO/<ID>.HDD, and FAT wants 8.3
+#   sha256 tools/make_retro_images.py refuses to build if the file no
+#          longer hashes to this -- an archive is only worth having if
+#          what is in it is what was put there
+#
+KDOS11B | K-DOS Beta 1.1b | kdos-beta-1.1b.img | 03e1be43fb0cc995dfc8b1f2e2f751a564cb27ad5217ad645e09a62fbf1afcb0 | The first build that survived. Log in as admin, password 1234.

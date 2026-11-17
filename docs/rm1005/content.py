@@ -29,12 +29,12 @@ META = dict(
     subtitle=("Every release from today to December 2029,<br/>"
               "laid out: what is in it, the work,<br/>"
               "how it is accepted, what it waits on"),
-    part="THS-RM-1005 REV A",
+    part="THS-RM-1005 REV B",
     date="17 NOV 2026",
     author="Kyan Hoekstra / TechHaven Studios",
     baseline="v0.9.6.5 Beta &ldquo;Daedalus&rdquo;, 7401 checks across 71 suites",
     supersedes="THS-RM-1004 sections 12&ndash;22 (its numbering standard stands)",
-    status="DECIDED TO 16 NOV 2026 &mdash; seven questions open (section 21)",
+    status="DECIDED TO 17 NOV 2026 &mdash; seven questions open (section 21)",
     cover_bars=[
         ("MONITOR",      18, 20, "lit, scaled, automatic"),
         ("MOUSE",        15, 20, "every app; HP to confirm"),
@@ -90,8 +90,8 @@ def _timeline():
 _ROAD = [
     # label, from (month, day), to (month, day)  -- all 2026/27
     ("0.9.6.x  HP",       (11, 16), (11, 21)),
-    ("0.9.7    VERSIONS", (11, 18), (11, 22)),
-    ("0.9.8    HTTPS",    (11, 23), (12, 3)),
+    ("0.9.7    VERSIONS", (11, 18), (11, 24)),
+    ("0.9.8    HTTPS",    (11, 25), (12, 3)),
     ("0.9.9    HARDEN",   (12, 4),  (12, 10)),
     ("27100    CH30",     (12, 11), (12, 14)),
     ("27100    CH40",     (12, 15), (12, 31)),
@@ -213,10 +213,33 @@ dict(title="What changed since RM-1004", body=[
    ["16 Nov", "Update over the internet moves from 27H2 into 0.9.8, signed, "
     "keeping the ESP, USB and CD updates", "[[0.9.8: updating "
     "over the internet]]"],
+   ["17 Nov", "Retro PC: the old builds on an emulated PC inside "
+    "HavenDOS, starting with K-DOS Beta 1.1b. Built now, as exception E-1",
+    "0.9.7, branch " + cmd("emu86")],
  ], [11, 63, 26]),
  ("caution", "The fixes-only rule was bent twice in one day. From 0.9.7 it "
              "holds again: a feature asked for during a 0.9.x line goes into "
              "the next line, or is decided here, in writing, as an exception."),
+ ("box", "EXCEPTION E-1 &mdash; RETRO PC IN 0.9.7, DECIDED 17 NOV 2026",
+  "<p><b>What.</b> An app, " + cmd("retro") + ", that boots Kyan&rsquo;s "
+  "old builds on an emulated PC: an 80186 with the 386&rsquo;s 16-bit "
+  "additions, a BIOS, a floppy and a 504&nbsp;KB pretend hard disk kept as "
+  "a file in " + cmd("RETRO") + ". The first image is K-DOS Beta 1.1b, the "
+  "oldest build that survived.</p>"
+  "<p><b>Why it is an exception.</b> The road to HavenDOS 1 lists every "
+  "release&rsquo;s content, and Retro PC was on none of them. Kyan chose "
+  "to build it in 0.9.x rather than leave it for 27H2.</p>"
+  "<p><b>Its bounds.</b> It is built on the branch " + cmd("emu86") + " and "
+  "lands with 0.9.7, never in a 0.9.6.N, so fixes from the HP still go out "
+  "first. Outside its own files it touches only the app list, the shell "
+  "command, the window&rsquo;s X and one USB keyboard mapping (F1&ndash;F4, "
+  "now the same as PS/2). The emulated PC has no path to a real disk. More "
+  "old builds may be added to " + cmd("archive/retro") + " in any later "
+  "release, as content; new emulator features (graphics modes, sound, a "
+  "DOS) are not covered and go to a half-year release.</p>"
+  "<p><b>What it costs.</b> 0.9.7 moves from about 22 to about 24 "
+  "November. 0.9.8 keeps its 3 December target and starts on 25 November, "
+  "two days shorter; [[^Risks]] carries the consequence.</p>"),
 ]),
 
 # ══════════════════════════════════════════════════════════════════ 4
@@ -253,7 +276,8 @@ dict(title="How a release is made", body=[
 dict(title="The plan at a glance", body=[
  ("table", ["Release", "Target", "In one line"], [
    ["0.9.6.x", "to 21 Nov", "What the HP shows; nothing new"],
-   ["0.9.7", "~22 Nov", "The new versioning in the updater"],
+   ["0.9.7", "~24 Nov", "The new versioning in the updater; Retro PC "
+    "(exception E-1)"],
    ["0.9.8", "~3 Dec", "Real HTTPS, then updating over the internet"],
    ["0.9.9", "~10 Dec, freeze", "Hardening; the ship gate"],
    ["27100.1000", "11 Dec CH30<br/>15 Dec CH40<br/>1 Jan CH50",
@@ -299,7 +323,7 @@ dict(title="0.9.6.x: finishing on the HP", body=[
 
 # ══════════════════════════════════════════════════════════════════ 7
 dict(title="0.9.7: the new versioning in the updater", body=[
- ("spec", [("TARGET", "~22 November 2026"), ("CHANNEL", "CH20 Beta, the "
+ ("spec", [("TARGET", "~24 November 2026, two days later for exception E-1"), ("CHANNEL", "CH20 Beta, the "
            "first pre-release"), ("STANDARD", "THS-RM-1004 sections 1&ndash;11")]),
  ("p", "The updater learns the numbers HavenDOS 1 will carry, so that by "
        "the switch every installed 0.9.x already understands them. Nothing a "
@@ -323,6 +347,10 @@ dict(title="0.9.7: the new versioning in the updater", body=[
    + ", " + cmd("make_release_bundle.py") + " and the workflow learn the "
    "keys, the ISO name " + cmd("HavenDOS-1-27H1.iso") + ", the tag "
    + cmd("27100.1000") + " and the pre-release flag.",
+   "<b>Retro PC, exception E-1:</b> " + cmd("emu/cpu86.c") + ", "
+   + cmd("emu/pcbios.c") + ", " + cmd("shell/retro.c") + " and the images "
+   "in " + cmd("archive/retro") + ", merged from the branch " + cmd("emu86")
+   + ". Built on 17 November; what remains is the merge and the HP.",
  ]),
  ("h3", "Accepted when"),
  ("ul", [
@@ -332,6 +360,14 @@ dict(title="0.9.7: the new versioning in the updater", body=[
    "subscription; an injection suite catches each refusal removed.",
    "An installed 0.9.6.5 offered a 0.9.7 manifest takes it; 0.9.7 offered a "
    "manifest for a channel it is not subscribed to says so and stops.",
+   cmd("test_emu86") + " (86 checks) passes; the CPU matches all 2,522,158 "
+   "cases of the SingleStepTests 8088 suite it can be held to; "
+   + cmd("check_emu86_suite") + " catches its 28 planted defects and misses "
+   "the harmless one; " + cmd("retro_boot") + " boots K-DOS in QEMU, logs in "
+   "and runs commands. K-DOS&rsquo;s screens and disk writes match K-DOS on "
+   "QEMU&rsquo;s own PC.",
+   "On the HP, Retro PC boots K-DOS Beta 1.1b, logs in as admin, and F4 "
+   "and the window&rsquo;s X both come back to HavenDOS.",
  ]),
 ]),
 
@@ -624,7 +660,8 @@ dict(title="The audit, by release", body=[
 # ══════════════════════════════════════════════════════════════════ 20
 dict(title="Risks", body=[
  ("table", ["Risk", "Where", "If it bites"], [
-   ["0.9.8 now carries HTTPS and online updates in eleven days", "0.9.8",
+   ["0.9.8 now carries HTTPS and online updates in nine days, two fewer "
+    "for exception E-1", "0.9.8",
     "online updates move to 0.9.9 or 27101 (open question 2); HTTPS does "
     "not move"],
    ["The clock is wrong", "0.9.8", "every certificate fails; the refusal "
@@ -672,7 +709,9 @@ dict(title="Document control", body=[
     "1.1 Aegis and 1.2 Janus"],
    ["THS-RM-1004 REV A", "15 Nov 2026", "Versioning standard and roadmap "
     "to 29H2; its numbering sections stand"],
-   ["<b>THS-RM-1005 REV A</b>", "17 Nov 2026", "This roadmap"],
+   ["THS-RM-1005 REV A", "17 Nov 2026", "This roadmap"],
+   ["<b>THS-RM-1005 REV B</b>", "17 Nov 2026", "Exception E-1: Retro PC "
+    "in 0.9.7; 0.9.7 to ~24 Nov"],
  ], [26, 18, 56]),
  ("p", "Built by " + cmd("docs/rm1005/build.py") + " from "
        + cmd("docs/rm1005/content.py") + " in the house style: A5, cream "

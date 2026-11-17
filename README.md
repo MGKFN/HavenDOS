@@ -6,9 +6,19 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.6.5 Beta "Daedalus"
+## Current version: 0.9.6.6 Beta "Daedalus"
 
-0.9.6 made HavenDOS run several apps at once. Its five maintenance updates came from photos of the HP laptop, taken on 16 November 2026.
+0.9.6 made HavenDOS run several apps at once. Its maintenance updates came from testing on the HP laptop, on 16 and 17 November 2026.
+
+**0.9.6.6. What the HP showed in 0.9.6.5.**
+- **The Shell's X closes it.**
+- **Full screen fills the screen** for 80×25 apps, at bigger characters.
+- **A mouse or stick unplugged and plugged back in works again:** keyboards and mice were never bound again after a USB rescan.
+- **The trackpad's controller gets the memory window** the firmware never gave it.
+- **The wheel scrolls** the Start menu and Files.
+- **Your saved resolution is applied at boot.**
+
+[Changelog](changelogs/CHANGELOG-v0.9.6.6.md).
 
 **0.9.6.5. Apps are windows.** Every app has a title bar with minimize, full screen and close, and the taskbar stays on the bottom row with Start, a chip for each open app, and the clock.
 - **Full screen:** F11 or Alt+Enter brings the bars back. Alt+Enter is there for laptops whose F11 is a media key.
@@ -44,9 +54,12 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 [Changelog](changelogs/CHANGELOG-v0.9.6.md).
 
-## Coming in 0.9.7 (~24 November)
+## Coming in 0.9.7 (~26 November)
 
 - **The new version numbers in the updater**, so every installed 0.9.x understands "HavenDOS 1, version 27H1 (OS Build 27100.1000)" before it arrives.
+- **The editor:** select text with the mouse, and copy, cut and paste with one clipboard for every app.
+- **Files:** a right-click menu (open, rename, copy, move, delete).
+- **The taskbar:** pinned apps, and smaller desktop icons.
 - **Retro PC.** An emulated PC inside HavenDOS that boots the studio's old builds, starting with **K-DOS Beta 1.1b**, the oldest one that survived:
   - an 80186 with the 386's 16-bit additions, a BIOS, a floppy and a pretend hard disk kept as a file, so it never touches a real disk;
   - your own `.IMG` floppy images, from a `RETRO` folder.
@@ -103,14 +116,14 @@ Tested on an HP laptop with an Intel Alder Lake CPU, NVMe SSD and xHCI USB, and 
 | --- | --- |
 | UEFI boot, install beside Windows 11 on NVMe | Working |
 | Built-in keyboard | Working |
-| USB mouse | Working |
+| USB mouse | Working; plugged back in, works again since 0.9.6.6 |
 | USB sticks (FAT16/FAT32; exFAT read-only) | Working |
 | `update` from a USB stick | Working |
 | iPhone USB tethering | **Working** since 0.8.9.9: DHCP, DNS, ping, HTTP |
 | iPhone pairing | Stages 1 and 2 working; stage 3 pairs, and the TLS session after it is refused by the phone (not needed for tethering) |
-| External HDMI monitor | **Working** since 0.9.6.2, scaled since 0.9.6.4. Lighting by itself after a replug is being tested in 0.9.6.5 |
-| Several apps at once, windows, Alt+Tab | Being tested in 0.9.6.5 |
-| Built-in trackpad (I2C-HID) | Driver written; not yet confirmed on the HP |
+| External HDMI monitor | **Working** since 0.9.6.2; on 0.9.6.5 it fell back to the unscaled picture, and why is being looked into |
+| Several apps at once, windows, Alt+Tab | **Working** (0.9.6.5) |
+| Built-in trackpad (I2C-HID) | Its controller had no memory window; 0.9.6.6 assigns one. To be tested |
 | MediaTek Wi-Fi | No driver (planned for 28H2) |
 
 AHCI has found a real SATA disk on a friend's older HP.
@@ -121,11 +134,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.6.5.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.6.6.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.6.5.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.6.6.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -149,7 +162,7 @@ sudo apt install gcc-multilib make python3 python3-pip grub-common grub-pc-bin \
 pip install hid-parser
 
 make havendos_pass1.elf && make havendos.elf && make   # the ISO
-sudo make test                                          # 71 suites, 7401 checks
+sudo make test                                          # 72 suites, 7472 checks
 ```
 
 `grub-pc-bin` and `grub-efi-amd64-bin` are both needed: without the first the ISO has no BIOS boot image. The build is two-pass — the kernel embeds a copy of itself for the installer — so build the two kernels before `make`. `make test` runs as root because the exFAT fixture is made with a loop device.
@@ -193,9 +206,9 @@ The plan is [THS-RM-1005](docs/roadmap/HavenDOS-Roadmap-RM1005.pdf), every relea
 
 | Release | Target | What |
 | --- | --- | --- |
-| 0.9.7 | ~24 Nov 2026 | The new version numbers in the updater; Retro PC |
-| 0.9.8 | ~3 Dec 2026 | Real HTTPS (TLS 1.2 with X25519 and AES-GCM, certificates checked), then signed updates over the internet |
-| 0.9.9 | ~10 Dec 2026 | Hardening, and the freeze |
+| 0.9.7 | ~26 Nov 2026 | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins |
+| 0.9.8 | ~5 Dec 2026 | Real HTTPS (TLS 1.2 with X25519 and AES-GCM, certificates checked), then signed updates over the internet |
+| 0.9.9 | ~12 Dec 2026 | Hardening; real audio through the speakers (Intel HD Audio); the freeze |
 | **HavenDOS 1, version 27H1 "Brandaris"** | 1 Jan 2027 | OS Build 27100.1000, the first Stable release |
 | 27H2 "Lange Jaap" | Dec 2027 | The web: a browser, a package store, email |
 | 28H1 "Westhoofd" | Jun 2028 | Daily use on the HP: ACPI, audio, battery, sleep |

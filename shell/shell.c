@@ -21,6 +21,7 @@ extern int add_user(const char*, const char*, int);
 extern int delete_user(const char*);
 extern int passwd_user(const char*, const char*, const char*);
 extern int keyboard_getchar(void);
+extern int chrome_take_close(void);   /* shell/chrome.c, v0.9.6.6 */
 extern int keyboard_waitchar(void);
 extern void screensaver_run_matrix(void);
 extern void screensaver_run_stars(void);
@@ -572,6 +573,11 @@ void shell_read_line(char *buf, int max, const char *prompt){
         while(c==-1){ c=keyboard_getchar(); if(c==-1){toast_tick();sleep_ms(10);} }
 
         if(c=='\n'||c=='\r'){ vga_putchar('\n'); buf[len]=0; return; }
+        /* v0.9.6.6: the window's X arrives as ESC, and ESC here does
+           nothing, so on the HP the Shell's X did nothing. It is `exit`. */
+        if(c==27 && chrome_take_close()){
+            vga_putchar('\n'); strncpy(buf,"exit",max-1); buf[max-1]=0; return;
+        }
 
         /* ---- cursor movement ---- */
         if(c==0x14B){ if(pos>0){pos--; vga_set_cursor(plen+pos,cur_row());} continue; } /* Left  */

@@ -110,9 +110,11 @@ BUGS = [
      "so doing them the other way round registers disks from stale "
      "usb_dev_t copies. The order is the order the layers stack",
      """    g_last.devices = usb_enumerate();
+    if(usb_hid_wanted()) usb_hid_init();
     g_last.disks   = msc_rescan();
     g_last.blkdevs = blk_scan();""",
      """    g_last.devices = usb_enumerate();
+    if(usb_hid_wanted()) usb_hid_init();
     g_last.blkdevs = blk_scan();
     g_last.disks   = msc_rescan();"""),
 
@@ -120,13 +122,38 @@ BUGS = [
      "there is no bus to probe yet. The adapter comes back absent and "
      "`ifconfig` reports no NIC on a machine with a phone plugged in",
      """    g_last.devices = usb_enumerate();
+    if(usb_hid_wanted()) usb_hid_init();
     g_last.disks   = msc_rescan();
     g_last.blkdevs = blk_scan();
     g_last.nics    = usbnet_probe();""",
      """    g_last.nics    = usbnet_probe();
     g_last.devices = usb_enumerate();
+    if(usb_hid_wanted()) usb_hid_init();
     g_last.disks   = msc_rescan();
     g_last.blkdevs = blk_scan();"""),
+
+    ("keyboards and mice are not re-bound after the walk (v0.9.6.6)",
+     "the HP's bug: hid.c's table holds pointers into the device table "
+     "usb_enumerate() rebuilds, so a mouse unplugged and plugged back "
+     "in never moves again, and a stick plugged in can leave a HID "
+     "entry polling the stick",
+     """    g_last.devices = usb_enumerate();
+    if(usb_hid_wanted()) usb_hid_init();
+""",
+     """    g_last.devices = usb_enumerate();
+"""),
+
+    ("keyboards and mice are re-bound BEFORE the walk",
+     "binding against the old table is the bug itself, one line "
+     "earlier: the walk then rebuilds it under the HID entries",
+     """    usbmux_close();
+    g_last.devices = usb_enumerate();
+    if(usb_hid_wanted()) usb_hid_init();
+""",
+     """    usbmux_close();
+    if(usb_hid_wanted()) usb_hid_init();
+    g_last.devices = usb_enumerate();
+"""),
 
     ("a back-end with no port_connected op reports every port empty",
      "a controller whose optional ops are absent -- which is what the "

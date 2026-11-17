@@ -43,6 +43,7 @@
 #include "../include/string.h"
 #include "../include/i2c.h"
 #include "../include/pci.h"
+#include "../include/pci_assign.h"
 #include "../include/highfb.h"
 #include "../include/klog.h"
 
@@ -538,10 +539,27 @@ int i2c_init(void)
            whole point. */
         lo = pci_bar_mem64(d, 0, &hi);
         if(!lo && !hi){
+            /* v0.9.6.6: and now it is assigned one -- the step HANDOFF
+               has named since 0.8.8.4. drivers/pci_assign.c says where
+               the window goes; the line below says where it went, or
+               why it could not. */
+            uint64_t at = 0;
+            int r;
             klog(KLOG_WARN, "I2C %2x:%2x.%u: BAR0 is unassigned -- the "
                  "firmware gave it no memory window",
                  (uint32_t)d->bus, (uint32_t)d->dev, (uint32_t)d->fn);
-            continue;
+            r = pci_assign_mem_bar(d, 0, &at);
+            if(r != PA_OK){
+                klog(KLOG_WARN, "I2C %2x:%2x.%u: could not assign one: %s",
+                     (uint32_t)d->bus, (uint32_t)d->dev, (uint32_t)d->fn,
+                     pci_assign_why(r));
+                continue;
+            }
+            klog(KLOG_OK, "I2C %2x:%2x.%u: BAR0 assigned at %8x%8x",
+                 (uint32_t)d->bus, (uint32_t)d->dev, (uint32_t)d->fn,
+                 (uint32_t)(at >> 32), (uint32_t)at);
+            pci_enable(d, 0);
+            lo = pci_bar_mem64(d, 0, &hi);
         }
 
         if(hi){

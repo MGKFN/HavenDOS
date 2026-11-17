@@ -224,6 +224,22 @@ int highfb_map_io(uint32_t hi, uint32_t lo, uint32_t bytes, uint32_t *out){
     if(out) *out = lo;              /* identity, for the simulation   */
     return 1;
 }
+/* v0.9.6.6: a BAR the firmware left at zero is assigned one by
+   drivers/pci_assign.c (its own suite, test_pci_assign, proves where).
+   Here only what i2c_init() does with the answer: a window given is a
+   bus at that window; a refusal is no bus, and the refusal is named. */
+#include "../include/pci_assign.h"
+static int      assign_result = PA_OK, assign_calls;
+static uint64_t assign_at;
+int pci_assign_mem_bar(const pci_dev_t *d, int n, uint64_t *out){
+    (void)d; (void)n; assign_calls++;
+    if(assign_result == PA_OK){
+        bar_hi = (uint32_t)(assign_at >> 32); bar_lo = (uint32_t)assign_at;
+        if(out) *out = assign_at;
+    }
+    return assign_result;
+}
+const char *pci_assign_why(int r){ (void)r; return "simulated"; }
 /* klog, swallowed. */
 void klog(int lvl, const char *fmt, ...){ (void)lvl; (void)fmt; }
 
@@ -331,6 +347,24 @@ int main(void)
         ck("a BAR that will not map is not a bus", i2c_init() == 0,
            i2c_bus_count());
     }
+
+    head("a BAR the firmware left at zero is assigned one (v0.9.6.6)");
+    reset_sim(16);
+    bar_hi = 0; bar_lo = 0; assign_calls = 0;
+    assign_result = PA_OK; assign_at = ((uint64_t)0x60u << 32) | sim_base;
+    ck("the bus comes up at the assigned window", i2c_init() == 1, i2c_bus_count());
+    ck("  ... asked for once", assign_calls == 1, assign_calls);
+    ck("  ... and it is the window that was given", i2c_bus_mmio(0) == sim_base,
+       (long)i2c_bus_mmio(0));
+    reset_sim(16);
+    bar_hi = 0; bar_lo = 0; assign_calls = 0; assign_result = PA_NO_ROOM;
+    ck("a refusal is no bus", i2c_init() == 0, i2c_bus_count());
+    ck("  ... after asking", assign_calls == 1, assign_calls);
+    assign_result = PA_OK;
+    reset_sim(16);
+    assign_calls = 0;
+    ck("a BAR that HAS a window is never re-assigned",
+       i2c_init() == 1 && assign_calls == 0, assign_calls);
 
     head("a 64-bit BAR goes through highfb_map_io, not pci_bar_mem");
     reset_sim(16);

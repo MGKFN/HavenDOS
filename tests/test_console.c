@@ -940,6 +940,52 @@ int main(void)
     fb_check_guard();
     ck("  ... without writing past the panel", fb_escapes == 0, fb_escapes);
 
+    head("v0.9.6.6: full screen fills -- 80x25 on the HP's 1024x768");
+    /* At a whole scale 80x25 is 640x400 on that panel, scale 2 does not
+       fit, and an app in "full screen" stayed the size it was. */
+    fb_setup(1024, 768, 1024);
+    vga_fb_init((uint32_t)(uintptr_t)fb, 1024, 768, 1024*4, 32);
+    vga_set_mode(80, 25);
+    vga_putchar_at('H', 0, 0, VGA_WHITE, VGA_BLACK);
+    vga_flush();
+    ck("80x25 at a whole scale is 8x16 cells here", fbc_cwp == 8 && fbc_chp == 16,
+       (long)(fbc_cwp * 100 + fbc_chp));
+    ck("vga_set_mode_fill(80,25) is accepted", vga_set_mode_fill(80, 25) == 1, 0);
+    ck("  ... the cell is 12x24, the glyph's shape kept",
+       fbc_cwp == 12 && fbc_chp == 24 && vga_fill_active(), (long)(fbc_cwp * 100 + fbc_chp));
+    ck("  ... 960x600 of the panel, centred", fbc_ox == 32 && fbc_oy == 84,
+       (long)(fbc_ox * 1000 + fbc_oy));
+    {
+        int cw, chh; vga_cell_px(&cw, &chh);
+        ck("  ... and the mouse is told the new cell", cw == 12 && chh == 24, cw * 100L + chh);
+    }
+    {
+        /* the 'H' already on screen is repainted at the new size, every
+           pixel from the nearest source pixel of the 8x16 glyph */
+        const uint8_t *g = &font8x16['H' * 16];
+        int bad = 0;
+        for(uint32_t py = 0; py < 24; py++)
+            for(uint32_t px = 0; px < 12; px++){
+                int on = (g[py * 16 / 24] >> (7 - px * 8 / 12)) & 1;
+                uint32_t want = on ? fbc_rgb[VGA_WHITE] : fbc_rgb[VGA_BLACK];
+                if(fb_at(fbc_ox + px, fbc_oy + py) != want) bad++;
+            }
+        ck("  ... what was on screen is redrawn at 12x24, pixel for pixel", bad == 0, bad);
+    }
+    ck("  ... the margin is black", fb_at(0, 0) == 0 && fb_at(1023, 767) == 0, (long)fb_at(0, 0));
+    fb_check_guard();
+    ck("  ... nothing written past the panel", fb_escapes == 0, fb_escapes);
+    ck("a later vga_set_mode goes back to whole scales",
+       vga_set_mode(128, 48) == 1 && !vga_fill_active() && fbc_cwp == 8 && fbc_chp == 16,
+       (long)(fbc_cwp * 100 + fbc_chp));
+    ck("  ... and so does the same grid asked for again",
+       vga_set_mode_fill(80, 25) == 1 && vga_set_mode(80, 25) == 1 && !vga_fill_active(),
+       vga_fill_active());
+    fb_setup(1280, 800, 1280);
+    vga_fb_init((uint32_t)(uintptr_t)fb, 1280, 800, 1280*4, 32);
+    ck("where a whole scale already fills (QEMU's 1280x800), nothing changes",
+       vga_set_mode_fill(80, 25) == 1 && !vga_fill_active() && fbc_cwp == 16, (long)fbc_cwp);
+
     head("fbc_fit's own clamps, reached directly");
     /* vga_set_mode() validates range, budget and panel BEFORE calling
        fbc_fit(), so no clamp inside the fit can fire on that path --

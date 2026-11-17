@@ -80,6 +80,13 @@ const pci_dev_t *pci_get(int i) {
     return (i >= 0 && i < g_ndevs) ? &g_devs[i] : 0;
 }
 
+/* v0.9.6.6: drivers/pci_assign.c wrote a BAR; the table follows. */
+void pci_set_bar(const pci_dev_t *d, int n, uint32_t v) {
+    if (!d || n < 0 || n > 5) return;
+    for (int i = 0; i < g_ndevs; i++)
+        if (&g_devs[i] == d) { g_devs[i].bar[n] = v; return; }
+}
+
 const pci_dev_t *pci_find_class(uint8_t cls, uint8_t sub, uint8_t progif,
                                 int nth) {
     for (int i = 0; i < g_ndevs; i++) {

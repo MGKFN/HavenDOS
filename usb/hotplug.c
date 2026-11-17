@@ -32,6 +32,13 @@
      usb_enumerate()    the bus itself.  Issues Disable Slot for every
                         device first -- v0.8.6.1, found on the HP after
                         the third rescan lost a device.
+     usb_hid_init()     v0.9.6.6. Keyboards and mice hold POINTERS into
+                        the table usb_enumerate() just rebuilt, and this
+                        sequence never re-bound them -- though hid.c's
+                        own note said it did. On the HP: a mouse unplugged
+                        and plugged back in never moved again, and any
+                        rescan (a stick, the iPhone) could leave a HID
+                        entry polling whatever device took its place.
      msc_rescan()       each mass-storage device holds a COPY of its
                         usb_dev_t, so a stale one addresses whatever
                         moved into that slot.
@@ -91,6 +98,8 @@ extern int  usbnet_probe(void);
 extern void lockdown_forget(void);
 extern void usbmux_close(void);
 extern void net_dhcp_retry_reset(void);
+extern int  usb_hid_init(void);       /* usb/hid.c, v0.9.6.6 */
+extern int  usb_hid_wanted(void);     /* kernel/main.c: `nousbhid` */
 
 /* What `usb rescan` and the poll client both report. */
 static usb_rescan_t g_last;
@@ -103,6 +112,7 @@ void usb_rescan_all(void)
     lockdown_forget();
     usbmux_close();
     g_last.devices = usb_enumerate();
+    if(usb_hid_wanted()) usb_hid_init();
     g_last.disks   = msc_rescan();
     g_last.blkdevs = blk_scan();
     g_last.nics    = usbnet_probe();

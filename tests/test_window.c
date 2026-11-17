@@ -17,10 +17,18 @@ int task_state(int s){ (void)s; return 0; }
 const char *task_name(int s){ (void)s; return ""; }
 int task_set_front(int s){ (void)s; return 0; }
 int task_wait_front(void){ return 0; }
-int vga_phys_cols(void){ return 128; }
-int vga_phys_rows(void){ return 48; }
-uint16_t vga_phys_read(int x, int y){ (void)x; (void)y; return 0; }
-void vga_phys_write(int x, int y, uint16_t v){ (void)x; (void)y; (void)v; }
+/* v0.9.6.6: a screen with a grid that can change, so full screen's
+   grow (80x25 at a bigger cell) and its way back can be followed cell
+   by cell. 128x48 is the HP. */
+static int      g_pc = 128, g_pr = 48, g_fillon, fills, modes;
+static uint16_t g_scr[240 * 135];
+int vga_phys_cols(void){ return g_pc; }
+int vga_phys_rows(void){ return g_pr; }
+uint16_t vga_phys_read(int x, int y){ return (x >= 0 && y >= 0 && x < g_pc && y < g_pr) ? g_scr[y * g_pc + x] : 0; }
+void vga_phys_write(int x, int y, uint16_t v){ if(x >= 0 && y >= 0 && x < g_pc && y < g_pr) g_scr[y * g_pc + x] = v; }
+int vga_fb_active(void){ return 1; }
+int vga_set_mode(int c, int r){ modes++; g_pc = c; g_pr = r; g_fillon = 0; for(int i = 0; i < 240 * 135; i++) g_scr[i] = 0x0720; return 1; }
+int vga_set_mode_fill(int c, int r){ fills++; vga_set_mode(c, r); g_fillon = 1; return 1; }
 int vga_viewport_active(void){ return 0; }
 void vga_viewport_get(int *x, int *y, int *w, int *h){ *x = *y = *w = *h = 0; }
 int vga_viewport_set(int x, int y, int w, int h){ (void)x; (void)y; (void)w; (void)h; return 1; }
@@ -110,6 +118,40 @@ int main(void)
     chrome_layout(128, 48, 0, 1, &L);
     ck("full screen: no title bar, no taskbar to hit", chrome_hit(&L, 128, 126, 0, 0) == CH_NONE &&
        chrome_hit(&L, 128, 2, 47, 0) == CH_NONE, 0);
+
+    head("v0.9.6.6: full screen FILLS for an 80x25 app, and always comes back");
+    {
+        g_pc = 128; g_pr = 48;
+        chrome_layout(128, 48, 1, 0, &L);
+        chrome_begin("2048", 1);
+        vga_phys_write(L.vx, L.vy, 0x0F41);                 /* 'A', top-left of the box */
+        vga_phys_write(L.vx + 79, L.vy + 24, 0x0F5A);       /* 'Z', bottom-right */
+        chrome_hook(KEY_FULLSCREEN);
+        ck("full screen: the console becomes 80x25 at a bigger cell", g_pc == 80 && g_pr == 25 && g_fillon && fills == 1,
+           g_pc * 100L + g_pr);
+        ck("  ... with what the app drew, moved to fill it",
+           vga_phys_read(0, 0) == 0x0F41 && vga_phys_read(79, 24) == 0x0F5A, vga_phys_read(0, 0));
+        chrome_hook(KEY_FULLSCREEN);
+        ck("F11 again: back to the grid the person chose", g_pc == 128 && g_pr == 48 && !g_fillon, g_pc);
+        ck("  ... the app's cells back in their box",
+           vga_phys_read(L.vx, L.vy) == 0x0F41 && vga_phys_read(L.vx + 79, L.vy + 24) == 0x0F5A, vga_phys_read(L.vx, L.vy));
+        ck("  ... and the title bar back above it", (vga_phys_read(L.vx + 1, L.title_y) & 0xFF) == '2', vga_phys_read(L.vx + 1, L.title_y));
+        chrome_hook(KEY_FULLSCREEN);
+        chrome_leave_front();
+        ck("grown, then another app takes the screen: the grid goes back first",
+           g_pc == 128 && g_pr == 48 && !g_fillon, g_pc);
+        chrome_leave_front();
+        ck("  ... and leaving again does nothing more", g_pc == 128 && modes == 4, modes);
+        chrome_hook(KEY_FULLSCREEN);
+        chrome_end();
+        ck("grown, then the app closes: the grid goes back", g_pc == 128 && g_pr == 48 && !g_fillon, g_pc);
+        chrome_begin("Settings", 0);
+        fills = 0;
+        chrome_hook(KEY_FULLSCREEN);
+        ck("an any-size app's full screen does not touch the grid", fills == 0 && g_pc == 128, fills);
+        chrome_hook(KEY_FULLSCREEN);
+        chrome_end();
+    }
 
     printf("%d/%d passed\n", total - fails, total);
     return fails ? 1 : 0;

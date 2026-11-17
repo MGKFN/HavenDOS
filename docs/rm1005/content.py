@@ -29,12 +29,12 @@ META = dict(
     subtitle=("Every release from today to December 2029,<br/>"
               "laid out: what is in it, the work,<br/>"
               "how it is accepted, what it waits on"),
-    part="THS-RM-1005 REV B",
+    part="THS-RM-1005 REV C",
     date="17 NOV 2026",
     author="Kyan Hoekstra / TechHaven Studios",
-    baseline="v0.9.6.5 Beta &ldquo;Daedalus&rdquo;, 7401 checks across 71 suites",
+    baseline="v0.9.6.6 Beta &ldquo;Daedalus&rdquo;, 7472 checks across 72 suites",
     supersedes="THS-RM-1004 sections 12&ndash;22 (its numbering standard stands)",
-    status="DECIDED TO 17 NOV 2026 &mdash; seven questions open (section 21)",
+    status="DECIDED TO 17 NOV 2026 &mdash; eight questions open (section 21)",
     cover_bars=[
         ("MONITOR",      18, 20, "lit, scaled, automatic"),
         ("MOUSE",        15, 20, "every app; HP to confirm"),
@@ -90,11 +90,11 @@ def _timeline():
 _ROAD = [
     # label, from (month, day), to (month, day)  -- all 2026/27
     ("0.9.6.x  HP",       (11, 16), (11, 21)),
-    ("0.9.7    VERSIONS", (11, 18), (11, 24)),
-    ("0.9.8    HTTPS",    (11, 25), (12, 3)),
-    ("0.9.9    HARDEN",   (12, 4),  (12, 10)),
-    ("27100    CH30",     (12, 11), (12, 14)),
-    ("27100    CH40",     (12, 15), (12, 31)),
+    ("0.9.7    VERS+UI",  (11, 18), (11, 26)),
+    ("0.9.8    HTTPS",    (11, 27), (12, 5)),
+    ("0.9.9    HARD+HDA", (12, 6),  (12, 12)),
+    ("27100    CH30",     (12, 13), (12, 15)),
+    ("27100    CH40",     (12, 16), (12, 31)),
 ]
 
 
@@ -111,7 +111,7 @@ def _road():
     lab, span = 19, _day((1, 1)) + 1
     head = [" "] * span
     for md, s in (((11, 16), "16N"), ((11, 23), "23N"), ((12, 1), "1D"),
-                  ((12, 10), "10D"), ((12, 15), "15D"), ((1, 1), "1J")):
+                  ((12, 12), "12D"), ((12, 16), "16D"), ((1, 1), "1J")):
         i = _day(md)
         head[i:i + len(s)] = list(s)
     out = [" " * lab + "".join(head).rstrip(), " " * lab + "+" + "-" * (span - 1)]
@@ -176,7 +176,10 @@ dict(title="Where HavenDOS stands", body=[
     "fallback that says why", "<b>&ldquo;works now&rdquo;</b>"],
    ["0.9.6.5", "16 Nov", "Apps are windows: title bar, minimize, full "
     "screen, X; the taskbar always; the mouse in Settings however opened",
-    "to test"],
+    "<b>&ldquo;cool&rdquo;</b>; fixes in 0.9.6.6"],
+   ["0.9.6.6", "17 Nov", "The Shell&rsquo;s X; full screen fills; mice and "
+    "sticks plugged back in; the trackpad&rsquo;s memory window; the wheel "
+    "in lists; the resolution at boot", "to test"],
  ], [12, 10, 58, 20]),
  ("h3", "What is proved, and how"),
  ("ul", [
@@ -216,6 +219,13 @@ dict(title="What changed since RM-1004", body=[
    ["17 Nov", "Retro PC: the old builds on an emulated PC inside "
     "HavenDOS, starting with K-DOS Beta 1.1b. Built now, as exception E-1",
     "0.9.7, branch " + cmd("emu86")],
+   ["17 Nov", "Full screen fills: an 80&times;25 app is drawn at the "
+    "biggest cell the screen takes", "0.9.6.6, as a fix"],
+   ["17 Nov", "Mouse selection and copy/paste in the editor (E-2), a "
+    "right-click menu in Files (E-3), taskbar pins and smaller icons (E-4)",
+    "0.9.7"],
+   ["17 Nov", "Real audio through the speakers: Intel HD Audio (E-5), "
+    "moved from 28H1", "0.9.9"],
  ], [11, 63, 26]),
  ("caution", "The fixes-only rule was bent twice in one day. From 0.9.7 it "
              "holds again: a feature asked for during a 0.9.x line goes into "
@@ -239,7 +249,31 @@ dict(title="What changed since RM-1004", body=[
   "DOS) are not covered and go to a half-year release.</p>"
   "<p><b>What it costs.</b> 0.9.7 moves from about 22 to about 24 "
   "November. 0.9.8 keeps its 3 December target and starts on 25 November, "
-  "two days shorter; [[^Risks]] carries the consequence.</p>"),
+  "two days shorter; [[^Risks]] carries the consequence. (REV C moves "
+  "these again, for E-2 to E-5.)</p>"),
+ ("box", "EXCEPTIONS E-2 TO E-5 &mdash; DECIDED 17 NOV 2026",
+  "<p><b>What.</b> Asked for with Kyan&rsquo;s 0.9.6.5 test and chosen, all "
+  "four, to come before HavenDOS 1, with 1 January kept: &ldquo;we just "
+  "need to test quicker&rdquo;.</p>"
+  "<p><b>E-2, the editor:</b> select text with the mouse, Ctrl+C, Ctrl+X, "
+  "Ctrl+V, one clipboard shared by every app. Not on any half-year "
+  "before; 0.9.7.<br/>"
+  "<b>E-3, Files:</b> right-click a file for open, rename, copy, move, "
+  "delete. From 29H1; 0.9.7.<br/>"
+  "<b>E-4, the taskbar:</b> pin apps to it; smaller desktop icons. From "
+  "29H1; 0.9.7.<br/>"
+  "<b>E-5, real audio:</b> an Intel HD Audio driver for the HP&rsquo;s "
+  + cmd("8086:51C8") + ", so music plays through the speakers instead of "
+  "the PC speaker&rsquo;s beeps. From 28H1; 0.9.9, beside the hardening, "
+  "because it is the largest of the four.</p>"
+  "<p><b>Its bounds.</b> Each is the feature named and nothing grown out "
+  "of it: no overlapping windows (29H1), no file manager rewrite, no "
+  "audio recording or volume keys (28H1).</p>"
+  "<p><b>What it costs.</b> 0.9.7 to about 26 November, 0.9.8 to about 5 "
+  "December, 0.9.9 and the freeze to about 12 December. CH30 on 13 "
+  "December, CH40 from 16 December; <b>Stable stays 1 January.</b> The "
+  "Release Preview fortnight is what absorbs it. [[^Risks]] lists HD Audio "
+  "and the shorter Preview.</p>"),
 ]),
 
 # ══════════════════════════════════════════════════════════════════ 4
@@ -276,11 +310,12 @@ dict(title="How a release is made", body=[
 dict(title="The plan at a glance", body=[
  ("table", ["Release", "Target", "In one line"], [
    ["0.9.6.x", "to 21 Nov", "What the HP shows; nothing new"],
-   ["0.9.7", "~24 Nov", "The new versioning in the updater; Retro PC "
-    "(exception E-1)"],
-   ["0.9.8", "~3 Dec", "Real HTTPS, then updating over the internet"],
-   ["0.9.9", "~10 Dec, freeze", "Hardening; the ship gate"],
-   ["27100.1000", "11 Dec CH30<br/>15 Dec CH40<br/>1 Jan CH50",
+   ["0.9.7", "~26 Nov", "The new versioning in the updater; Retro PC "
+    "(E-1); the editor&rsquo;s clipboard (E-2); Files&rsquo; right-click "
+    "menu (E-3); taskbar pins and smaller icons (E-4)"],
+   ["0.9.8", "~5 Dec", "Real HTTPS, then updating over the internet"],
+   ["0.9.9", "~12 Dec, freeze", "Hardening; real audio (E-5); the ship gate"],
+   ["27100.1000", "13 Dec CH30<br/>16 Dec CH40<br/>1 Jan CH50",
     "HavenDOS 1, version 27H1 Brandaris"],
    ["27H2 Lange Jaap", "31 Dec 2027", "The web"],
    ["28H1 Westhoofd", "30 Jun 2028", "Daily use on the HP"],
@@ -323,7 +358,7 @@ dict(title="0.9.6.x: finishing on the HP", body=[
 
 # ══════════════════════════════════════════════════════════════════ 7
 dict(title="0.9.7: the new versioning in the updater", body=[
- ("spec", [("TARGET", "~24 November 2026, two days later for exception E-1"), ("CHANNEL", "CH20 Beta, the "
+ ("spec", [("TARGET", "~26 November 2026, with exceptions E-1 to E-4"), ("CHANNEL", "CH20 Beta, the "
            "first pre-release"), ("STANDARD", "THS-RM-1004 sections 1&ndash;11")]),
  ("p", "The updater learns the numbers HavenDOS 1 will carry, so that by "
        "the switch every installed 0.9.x already understands them. Nothing a "
@@ -351,6 +386,13 @@ dict(title="0.9.7: the new versioning in the updater", body=[
    + cmd("emu/pcbios.c") + ", " + cmd("shell/retro.c") + " and the images "
    "in " + cmd("archive/retro") + ", merged from the branch " + cmd("emu86")
    + ". Built on 17 November; what remains is the merge and the HP.",
+   "<b>The editor, exception E-2:</b> drag to select, Shift+arrows, "
+   "Ctrl+C/X/V and Ctrl+A, one clipboard every app can read; the editor "
+   "reads the mouse every pass, not only after a key.",
+   "<b>Files, exception E-3:</b> a right-click menu on a file or folder: "
+   "open, rename, copy, move, delete (with a confirmation), new folder.",
+   "<b>The taskbar, exception E-4:</b> pinned apps beside Start, kept in "
+   "the user&rsquo;s settings; a smaller desktop icon size in Settings.",
  ]),
  ("h3", "Accepted when"),
  ("ul", [
@@ -373,7 +415,7 @@ dict(title="0.9.7: the new versioning in the updater", body=[
 
 # ══════════════════════════════════════════════════════════════════ 8
 dict(title="0.9.8: real HTTPS", body=[
- ("spec", [("TARGET", "~3 December 2026, with [[0.9.8: updating "
+ ("spec", [("TARGET", "~5 December 2026, with [[0.9.8: updating "
            "over the internet]]"), ("CLOSES", "audit F-007")]),
  ("p", "Today " + cmd("net/tls.c") + " offers one cipher suite, "
        "TLS_RSA_WITH_AES_128_CBC_SHA256, and checks no certificate. Modern "
@@ -461,7 +503,7 @@ dict(title="0.9.8: updating over the internet", body=[
 
 # ══════════════════════════════════════════════════════════════════ 10
 dict(title="0.9.9: hardening and the freeze", body=[
- ("spec", [("TARGET", "~10 December 2026; the freeze"),
+ ("spec", [("TARGET", "~12 December 2026; the freeze"),
            ("AFTER IT", "only release-blocking fixes")]),
  ("h3", "One item per audit finding"),
  ("ul", [
@@ -478,6 +520,17 @@ dict(title="0.9.9: hardening and the freeze", body=[
    "HTTPS and the updater check, where randomness comes from, that apps "
    "are not isolated (F-002).",
  ]),
+ ("h3", "Real audio, exception E-5"),
+ ("ul", [
+   "<b>An Intel HD Audio driver</b> for the HP&rsquo;s " + cmd("8086:51C8")
+   + ": the controller&rsquo;s CORB and RIRB, the codec found and its "
+   "speaker path set up, one output stream from a buffer.",
+   "<b>The music player plays through it,</b> the PC speaker staying as the "
+   "fallback when no codec answers.",
+   "<b>Accepted when</b> a suite drives the controller and codec against a "
+   "model, an injection harness catches its defects, and the HP plays a "
+   "file through its speakers.",
+ ]),
  ("box", "THE SHIP GATE &mdash; ALL FOUR, ON ONE BUILD",
   "1. The six gates of RM-1003 &mdash; installs, boots, fills the screen, "
   "networks, takes input, harms nothing &mdash; recorded on the HP with "
@@ -490,14 +543,14 @@ dict(title="0.9.9: hardening and the freeze", body=[
 # ══════════════════════════════════════════════════════════════════ 11
 dict(title="HavenDOS 1: from 0.9.9 to Stable", body=[
  ("ol", [
-   "<b>0.9.9.N is frozen,</b> about 10 December.",
+   "<b>0.9.9.N is frozen,</b> about 12 December.",
    "<b>" + cmd("version.h") + " changes once:</b> product 1, release 27H1, "
    "codename Brandaris, build 27100, revision 1000. Nothing else in the "
    "source changes.",
-   "<b>27100.1000 is published as CH30 Public Beta</b> on 11 December. An "
+   "<b>27100.1000 is published as CH30 Public Beta</b> on 13 December. An "
    "installed 0.9.9 sees 27100 &gt; 0 and offers it &mdash; over the "
    "internet, since 0.9.8.",
-   "<b>From 15 December it is CH40 Release Preview:</b> the same kernel; "
+   "<b>From 16 December it is CH40 Release Preview:</b> the same kernel; "
    "only the manifest, the channel file and the release title change.",
    "<b>On 1 January 2027 it is CH50 Stable,</b> marked latest. A fix found "
    "in Release Preview becomes 27100.1001 and restarts the 14 days: the "
@@ -660,8 +713,14 @@ dict(title="The audit, by release", body=[
 # ══════════════════════════════════════════════════════════════════ 20
 dict(title="Risks", body=[
  ("table", ["Risk", "Where", "If it bites"], [
-   ["0.9.8 now carries HTTPS and online updates in nine days, two fewer "
-    "for exception E-1", "0.9.8",
+   ["HD Audio is a new driver on undocumented-to-us silicon, in the last "
+    "week before the freeze", "0.9.9",
+    "it follows HavenDOS 1 as 27101 (open question 8); the PC speaker stays"],
+   ["Five features in 0.9.7 and 0.9.9 leave the Release Preview two weeks "
+    "and HP testing the critical path", "0.9.7&ndash;CH40",
+    "1 January moves, or an exception waits for 27101; Kyan: &ldquo;we "
+    "just need to test quicker&rdquo;"],
+   ["0.9.8 carries HTTPS and online updates in nine days", "0.9.8",
     "online updates move to 0.9.9 or 27101 (open question 2); HTTPS does "
     "not move"],
    ["The clock is wrong", "0.9.8", "every certificate fails; the refusal "
@@ -682,7 +741,7 @@ dict(title="Risks", body=[
 # ══════════════════════════════════════════════════════════════════ 21
 dict(title="Decisions still open", body=[
  ("ol", [
-   "<b>If HTTPS slips past 3 December,</b> does 1 January move, or does "
+   "<b>If HTTPS slips past 5 December,</b> does 1 January move, or does "
    "HavenDOS 1 ship and HTTPS follow as 27101? HTTPS is a must-have, so the "
    "recommendation is that the date moves.",
    "<b>If online updating does not fit in 0.9.8,</b> does it go into 0.9.9, "
@@ -697,7 +756,10 @@ dict(title="Decisions still open", body=[
    "<b>The roots and the key:</b> the ten roots, decided at the start of "
    "0.9.8; who generates the update-signing key, and where its backup is "
    "kept.",
-   "<b>The second tester:</b> who, on what machine, by 15 December.",
+   "<b>The second tester:</b> who, on what machine, by 16 December.",
+   "<b>If HD Audio (E-5) is not ready by the freeze,</b> does HavenDOS 1 "
+   "ship with the PC speaker and HD Audio follow as 27101, or does the "
+   "freeze wait? Recommended: 27101, so 1 January holds.",
  ]),
 ]),
 
@@ -710,8 +772,10 @@ dict(title="Document control", body=[
    ["THS-RM-1004 REV A", "15 Nov 2026", "Versioning standard and roadmap "
     "to 29H2; its numbering sections stand"],
    ["THS-RM-1005 REV A", "17 Nov 2026", "This roadmap"],
-   ["<b>THS-RM-1005 REV B</b>", "17 Nov 2026", "Exception E-1: Retro PC "
+   ["THS-RM-1005 REV B", "17 Nov 2026", "Exception E-1: Retro PC "
     "in 0.9.7; 0.9.7 to ~24 Nov"],
+   ["<b>THS-RM-1005 REV C</b>", "17 Nov 2026", "0.9.6.6; exceptions "
+    "E-2 to E-5; 0.9.7 ~26 Nov, 0.9.8 ~5 Dec, freeze ~12 Dec, Stable 1 Jan"],
  ], [26, 18, 56]),
  ("p", "Built by " + cmd("docs/rm1005/build.py") + " from "
        + cmd("docs/rm1005/content.py") + " in the house style: A5, cream "

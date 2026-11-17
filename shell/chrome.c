@@ -86,7 +86,7 @@ void chrome_layout(int pw, int ph, int boxed, int full, ch_layout_t *L)
 
 /* The three buttons, right-aligned on the title row: " _ " "[ ]" " X " */
 #define BTN_W 3
-static int g_close_req;      /* v0.9.7: see chrome_take_close() */
+static int g_close_req;      /* v0.9.6.6: see chrome_take_close() */
 static int btn_x(const ch_layout_t *L, int which)   /* 0 min, 1 max, 2 close */
 {
     return L->title_x1 - (3 - which) * (BTN_W + 1) + 1;
@@ -124,6 +124,8 @@ typedef struct {
     const char *name;
     uint32_t    sig;            /* what the chrome showed last          */
     uint32_t    next_check;     /* ticks                                */
+    int         grown;          /* v0.9.6.6: full screen at 80x25, filled */
+    int         pc, pr;         /* ... and the grid to go back to         */
 } ch_task_t;
 static ch_task_t g_t[TASK_MAX];
 static void (*g_surround)(int vx, int vy, int vw, int vh, const char *name);
@@ -157,9 +159,13 @@ static void draw_title(const ch_layout_t *L, const char *name)
     if(x1 >= vga_phys_cols()) x1 = vga_phys_cols() - 1;
     fill(x0, x1, y, VGA_BLACK, VGA_CYAN);
     put(x0 + 2, y, name ? name : "App", VGA_BLACK, VGA_CYAN, x1 - x0 - 30);
-    /* the old title bar's promise, kept where there is room for it */
-    if(btn_x(L, 0) - 12 > x0 + 4 + (name ? (int)strlen(name) : 3))
-        put(btn_x(L, 0) - 12, y, "ESC closes", VGA_BLACK, VGA_CYAN, 10);
+    /* the old title bar's promise, kept where there is room for it.
+       v0.9.6.6: not for the Shell, whose ESC clears the line -- it closes
+       with `exit` or the X, and the bar said otherwise on the HP. */
+    if(btn_x(L, 0) - 12 > x0 + 4 + (name ? (int)strlen(name) : 3)){
+        int shell = name && !strcmp(name, "Shell");
+        put(btn_x(L, 0) - 12, y, shell ? "exit closes" : "ESC closes", VGA_BLACK, VGA_CYAN, 11);
+    }
     put(btn_x(L, 0), y, " _ ", VGA_BLACK, VGA_LIGHT_GREY, 3);
     put(btn_x(L, 1), y, L->full ? "[=]" : "[ ]", VGA_BLACK, VGA_LIGHT_GREY, 3);
     put(btn_x(L, 2), y, " X ", VGA_WHITE, VGA_RED, 3);
@@ -257,6 +263,73 @@ static void apply_layout(ch_task_t *t, int repaint_from_old)
     if(L.title_y >= 0 || L.bar_y >= 0) paint(t);
 }
 
+/* ── v0.9.6.6: full screen FILLS for an 80x25 app ─────────────────────
+   Kyan chose it on 17 November: an 80x25 app in full screen was the same
+   80x25 box, centred, at the size it already had. Now the console itself
+   becomes 80x25 with the biggest cell the panel takes
+   (vga_set_mode_fill), and the app's 2000 cells move with it. At 80x25
+   the chrome has no room for a title bar or taskbar, so neither is drawn,
+   exactly as in an any-size app's full screen; F11 or Alt+Enter brings
+   them back.
+
+   It is undone whenever the app stops being the one on the screen --
+   F11 again, closing it, and before Alt+Tab or a taskbar click hands the
+   screen to another app (chrome_leave_front) -- because every other
+   app's console is laid out for the grid the person chose. */
+static uint16_t g_grow_buf[80 * 25];
+
+static int grow(ch_task_t *t)
+{
+    ch_layout_t L; int x, y;
+    if(!vga_fb_active()) return 0;
+    current_layout(t, &L);
+    if(!L.boxed || L.vw != 80 || L.vh != 25) return 0;
+    for(y = 0; y < 25; y++)
+        for(x = 0; x < 80; x++) g_grow_buf[y * 80 + x] = vga_phys_read(L.vx + x, L.vy + y);
+    t->pc = vga_phys_cols(); t->pr = vga_phys_rows();
+    vga_viewport_clear();
+    if(!vga_set_mode_fill(80, 25)){ apply_layout(t, 0); return 0; }
+    for(y = 0; y < 25; y++)
+        for(x = 0; x < 80; x++) vga_phys_write(x, y, g_grow_buf[y * 80 + x]);
+    t->grown = 1; t->full = 1;
+    apply_layout(t, 0);
+    return 1;
+}
+
+static void shrink(ch_task_t *t, int keep)
+{
+    ch_layout_t L; int x, y;
+    if(!t->grown) return;
+    if(keep)
+        for(y = 0; y < 25; y++)
+            for(x = 0; x < 80; x++) g_grow_buf[y * 80 + x] = vga_phys_read(x, y);
+    t->grown = 0; t->full = 0;
+    vga_viewport_clear();
+    vga_set_mode(t->pc, t->pr);
+    current_layout(t, &L);
+    if(keep && L.vw == 80 && L.vh == 25)
+        for(y = 0; y < 25; y++)
+            for(x = 0; x < 80; x++) vga_phys_write(L.vx + x, L.vy + y, g_grow_buf[y * 80 + x]);
+    apply_layout(t, 0);
+}
+
+/* The app in front is about to stop being in front (shell/taskswitch.c,
+   and the taskbar below). Nothing to do unless it is grown. */
+void chrome_leave_front(void)
+{
+    ch_task_t *t = me();
+    if(t && t->grown) shrink(t, 1);
+}
+
+static void toggle_full(ch_task_t *t)
+{
+    if(t->grown){ shrink(t, 1); return; }
+    if(!t->full && t->boxed && grow(t)) return;
+    t->full = !t->full;
+    apply_layout(t, 1);
+    if(t->full && !t->boxed) toast_info("Full screen -- F11 or Alt+Enter brings the taskbar back");
+}
+
 /* ── for app_run_inline() ────────────────────────────────────────────── */
 int chrome_begin(const char *name, int boxed)
 {
@@ -272,6 +345,7 @@ int chrome_on(void){ ch_task_t *t = me(); return t && t->on; }
 void chrome_end(void)
 {
     ch_task_t *t = me();
+    if(t && t->grown) shrink(t, 0);        /* v0.9.6.6: the grid the person chose */
     if(t) t->on = 0;
     vga_viewport_clear();
     mouse_clamp_to_grid();
@@ -303,6 +377,7 @@ static void ptr_show(int x, int y)
 static void bring(int slot)
 {
     ptr_hide();
+    chrome_leave_front();
     if(task_set_front(slot) == 0) task_wait_front();
 }
 
@@ -315,12 +390,13 @@ int chrome_hook(int key)
     if(!t || !t->on){ return key; }
     if(key == KEY_FULLSCREEN){
         ptr_hide();
-        t->full = !t->full;
-        apply_layout(t, 1);
-        if(t->full && !t->boxed) toast_info("Full screen -- F11 or Alt+Enter brings the taskbar back");
+        toggle_full(t);
         return -1;
     }
-    if(key != -1){ ptr_hide(); return key; }
+    /* a real key: any X left unasked-for by the app it was meant for
+       is forgotten, so a later ESC of the keyboard's is never taken
+       for a click */
+    if(key != -1){ g_close_req = 0; ptr_hide(); return key; }
 
     current_layout(t, &L);
     /* the clock and the chips, about four times a second at most */
@@ -343,8 +419,8 @@ int chrome_hook(int key)
     switch(what){
     case CH_CLOSE: ptr_hide(); g_close_req = 1; return 27;
     case CH_FULL:
-        ptr_hide(); t->full = !t->full; apply_layout(t, 1);
-        if(t->full && !t->boxed) toast_info("Full screen -- F11 or Alt+Enter brings the taskbar back");
+        ptr_hide(); toggle_full(t);
+        if(t->grown) toast_info("Full screen -- F11 or Alt+Enter brings the taskbar back");
         return -1;
     case CH_MIN:   bring(0); paint(t); return -1;
     case CH_START: keyboard_inject(KEY_SUPER); bring(0); paint(t); return -1;
@@ -359,8 +435,8 @@ int chrome_hook(int key)
 
 void chrome_init(void){ keyboard_set_chrome_hook(chrome_hook); }
 
-/* v0.9.7: X arrives as ESC, which is what every app here wants -- except
-   one whose ESC belongs to somebody else. Retro PC hands every key to
-   the old PC it is running, so it asks this after an ESC: was it the
-   window's X? One answer per click. */
+/* v0.9.6.6: X arrives as ESC, which is what most apps here want --
+   except one whose ESC means something else. The Shell's ESC clears the
+   line, so on the HP its X did nothing; it asks this after an ESC: was it
+   the window's X? One answer per click. */
 int chrome_take_close(void){ int r = g_close_req; g_close_req = 0; return r; }

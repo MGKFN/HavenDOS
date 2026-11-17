@@ -33,4 +33,5 @@ int  chrome_on(void);
 void chrome_set_surround(void (*fn)(int vx, int vy, int vw, int vh, const char *name));
 int  chrome_hook(int key);
 void chrome_init(void);
-int  chrome_take_close(void);   /* v0.9.7: was that ESC the X? */
+void chrome_leave_front(void);  /* v0.9.6.6: before another app takes the screen */
+int  chrome_take_close(void);   /* v0.9.6.6: was that ESC the X? */

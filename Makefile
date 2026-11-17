@@ -22,7 +22,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           drivers/speaker.c drivers/mode13.c drivers/vesa.c \
           kernel/string.c kernel/idt.c kernel/pit.c kernel/kpoll.c kernel/task.c kernel/appguard.c kernel/bootsplash.c kernel/pmm.c kernel/heap.c kernel/errors.c kernel/klog.c \
           drivers/vga.c drivers/keyboard.c drivers/mouse.c \
-          drivers/ata.c drivers/ahci.c drivers/atapi.c drivers/pci.c drivers/pci_bar.c drivers/uhci.c drivers/nvme.c drivers/virtio.c \
+          drivers/ata.c drivers/ahci.c drivers/atapi.c drivers/pci.c drivers/pci_bar.c drivers/pci_assign.c drivers/uhci.c drivers/nvme.c drivers/virtio.c \
           drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/xedisp.c drivers/xegmbus.c drivers/xemode.c drivers/edid.c drivers/rtc.c \
           fs/blkdev.c fs/ramfs.c fs/gpt.c fs/gpt_write.c fs/esp.c fs/fat16fmt.c fs/fat32fmt.c fs/espmake.c fs/uninstall.c fs/migrate.c fs/migrate_plan.c fs/fat12.c fs/fat16.c fs/fat32.c fs/exfat.c fs/vfs.c fs/sysvol.c fs/instsize.c fs/install.c \
           fs/iso9660.c fs/update.c fs/update_src.c \
@@ -298,6 +298,11 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -o /tmp/hd_tpci tests/test_pci.c drivers/pci_bar.c \
 	           && \
 	  python3 tools/run_suite.py --name test_pci --min 34 -- /tmp/hd_tpci
+	@echo "── test_pci_assign ────────────────────────"
+	@echo "  a memory window for a BAR the firmware left at zero (the HP's trackpad)"
+	@$(TESTCC) -Wall -Wno-unused-function \
+	           -o /tmp/hd_tpa tests/test_pci_assign.c drivers/pci_bar.c && \
+	  python3 tools/run_suite.py --name test_pci_assign --min 44 -- /tmp/hd_tpa
 	@echo "── test_diskname ──────────────────────────"
 	@echo "  a disk is named for the bus it is really on"
 	@# v0.8.6: -Iinclude, because this links fs/blkdev.c now instead of
@@ -555,7 +560,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_ti2c tests/test_i2c.c && \
-	  python3 tools/run_suite.py --name test_i2c --min 49 -- /tmp/hd_ti2c
+	  python3 tools/run_suite.py --name test_i2c --min 55 -- /tmp/hd_ti2c
 	@echo "── test_gfx ───────────────────────────────"
 	@echo "  the Iris Xe inspector, against a model display engine"
 	@# drivers/xedisp.c is INCLUDED: the suite replaces its read seam
@@ -606,7 +611,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -Wno-int-to-pointer-cast \
 	           -o /tmp/hd_tcon tests/test_console.c && \
-	  python3 tools/run_suite.py --name test_console --min 326 -- /tmp/hd_tcon
+	  python3 tools/run_suite.py --name test_console --min 337 -- /tmp/hd_tcon
 	@echo "── test_der ───────────────────────────────"
 	@echo "  writing DER, checked against the bytes -- stage 3"
 	@# -fno-builtin and the kernel's own string.c: net/der.c net/x509.c's
@@ -702,7 +707,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tkp tests/test_kpoll.c && \
-	  python3 tools/run_suite.py --name test_kpoll --min 158 -- /tmp/hd_tkp
+	  python3 tools/run_suite.py --name test_kpoll --min 159 -- /tmp/hd_tkp
 	@echo "── test_task ──────────────────────────────"
 	@echo "  cooperative tasks, switched for real on real stacks"
 	@# v0.9.6. Built -m32 so kernel/task.c's switch -- eight instructions,
@@ -748,7 +753,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -g -fsanitize=address,undefined -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_twin tests/test_window.c && \
-	  python3 tools/run_suite.py --name test_window --min 25 -- /tmp/hd_twin
+	  python3 tools/run_suite.py --name test_window --min 34 -- /tmp/hd_twin
 	@echo "── test_uimouse ───────────────────────────"
 	@echo "  the mouse in every app: clicks, hints, wheel, right-click"
 	@# v0.9.6.3: shell/uimouse.c against a model screen, mouse and task

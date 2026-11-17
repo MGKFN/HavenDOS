@@ -6,9 +6,16 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 [**Download the latest release**](https://github.com/MGKFN/HavenDOS/releases/latest) · [All releases](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-## Current version: 0.9.6.6 Beta "Daedalus"
+## Current version: 0.9.6.7 Beta "Daedalus"
 
 0.9.6 made HavenDOS run several apps at once. Its maintenance updates came from testing on the HP laptop, on 16 and 17 November 2026.
+
+**0.9.6.7. The boot no longer waits on the trackpad.**
+- **The trackpad search held the HP's boot.** 0.9.6.6 gave the trackpad's controllers their memory window, and the search then ran for the first time, on waits of seconds each.
+- **Now it runs after the USB keyboard,** each wait has a 50 ms clock, and a controller that times out once is left alone.
+- **`noi2c` skips the whole step.**
+
+[Changelog](changelogs/CHANGELOG-v0.9.6.7.md).
 
 **0.9.6.6. What the HP showed in 0.9.6.5.**
 - **The Shell's X closes it.**
@@ -123,7 +130,7 @@ Tested on an HP laptop with an Intel Alder Lake CPU, NVMe SSD and xHCI USB, and 
 | iPhone pairing | Stages 1 and 2 working; stage 3 pairs, and the TLS session after it is refused by the phone (not needed for tethering) |
 | External HDMI monitor | **Working** since 0.9.6.2; on 0.9.6.5 it fell back to the unscaled picture, and why is being looked into |
 | Several apps at once, windows, Alt+Tab | **Working** (0.9.6.5) |
-| Built-in trackpad (I2C-HID) | Its controller had no memory window; 0.9.6.6 assigns one. To be tested |
+| Built-in trackpad (I2C-HID) | Its controller now gets a memory window (0.9.6.6); the search for it held the boot until 0.9.6.7. To be tested |
 | MediaTek Wi-Fi | No driver (planned for 28H2) |
 
 AHCI has found a real SATA disk on a friend's older HP.
@@ -134,11 +141,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.6.6.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.6.7.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.6.6.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.6.7.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -162,7 +169,7 @@ sudo apt install gcc-multilib make python3 python3-pip grub-common grub-pc-bin \
 pip install hid-parser
 
 make havendos_pass1.elf && make havendos.elf && make   # the ISO
-sudo make test                                          # 72 suites, 7472 checks
+sudo make test                                          # 72 suites, 7479 checks
 ```
 
 `grub-pc-bin` and `grub-efi-amd64-bin` are both needed: without the first the ISO has no BIOS boot image. The build is two-pass — the kernel embeds a copy of itself for the installer — so build the two kernels before `make`. `make test` runs as root because the exFAT fixture is made with a loop device.

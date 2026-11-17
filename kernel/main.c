@@ -122,6 +122,7 @@ static uint32_t    ram_bytes=32u*1024u*1024u;
 static int         mouse_enabled=1; /* default ON; mode=safe disables it */
 static int         force_install=0;  /* set by install=1 on cmdline */
 static int         g_usb_hid_off=0;  /* set by nousbkbd on cmdline      */
+static int         g_i2c_off=0;      /* v0.9.6.7: set by noi2c            */
 int usb_hid_wanted(void){ return !g_usb_hid_off; }
 static int         gfx_flip_x=0, gfx_flip_y=0;
 
@@ -361,6 +362,11 @@ static void apply_cmdline(const char *s){
            the USB work existed. A machine whose only keyboard is USB
            stays usable either way, which is the point. */
         else if(tok_eq(p,"nousbkbd"))     g_usb_hid_off=1;
+        /* v0.9.6.7 -- the trackpad's controllers, and the search for it,
+           left out of the boot entirely. 0.9.6.6 gave those controllers
+           a memory window for the first time, and on the HP the search
+           that followed held the boot (and, before USB, the keyboard). */
+        else if(tok_eq(p,"noi2c"))        g_i2c_off=1;
         /* v0.8.5.3 -- print every byte read out of the 8042 and say
            whether the interrupt or the poll read it. For working out
            whether a doubled keystroke is one scancode read twice or two
@@ -1069,23 +1075,7 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
        the trackpad is. It touches no device of its own: i2c_init()
        maps the controllers and resets them, and nothing is addressed
        until somebody asks. */
-    i2c_init();
-    /* ── the trackpad, v0.8.8.11 ─────────────────────────────────
-       i2c_init() maps the controllers; this is the step that finds
-       out whether anything on them is a HID device. It probes every
-       address and tries the handful of registers an HID descriptor
-       is ever at, accepting only one whose first four bytes ARE an
-       HID descriptor -- see include/i2c_hid.h on why that is an
-       identification and not a guess.
-
-       It is quiet on a machine with no I2C bus, and on a machine
-       whose bus has nothing HID on it the log says which addresses
-       answered and what was at them, which is the measurement that
-       would settle the next step. */
-    {
-        extern int i2c_hid_init(void);
-        if(i2c_bus_count() > 0) i2c_hid_init();
-    }
+    /* v0.9.6.7: I2C and the trackpad moved below, AFTER USB. */
 
     usb_init();
     /* Keyboards and mice, after the bus has been walked -- usb_hid_init()
@@ -1094,6 +1084,37 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
     if(usb_hid_wanted()) usb_hid_init();
     else klog(KLOG_WARN, "USB HID input disabled by nousbkbd; "
                          "the firmware's keyboard emulation is in charge");
+
+    /* ── I2C and the trackpad, AFTER USB, v0.9.6.7 ────────────────
+       They were before it. On the HP, 0.9.6.6 gave the trackpad's
+       controllers a memory window for the first time, the search for
+       the trackpad ran on real hardware for the first time, and it held
+       the boot -- with the keyboard, which is USB there, not yet up, so
+       "press any key for the boot log" could not be answered. Now the
+       keyboard comes first, drivers/i2c.c gives a controller that
+       times out up at once instead of retrying 112 addresses, and
+       `noi2c` leaves the whole step out. */
+    if(g_i2c_off){
+        klog(KLOG_WARN, "I2C: skipped (noi2c) -- no trackpad this boot");
+    } else {
+        klog(KLOG_INFO, "I2C: looking for the trackpad's controllers");
+        i2c_init();
+        /* ── the trackpad, v0.8.8.11 ─────────────────────────────
+           i2c_init() maps the controllers; this is the step that finds
+           out whether anything on them is a HID device. It probes every
+           address and tries the handful of registers an HID descriptor
+           is ever at, accepting only one whose first four bytes ARE an
+           HID descriptor -- see include/i2c_hid.h on why that is an
+           identification and not a guess. */
+        {
+            extern int i2c_hid_init(void);
+            if(i2c_bus_count() > 0){
+                klog(KLOG_INFO, "I2C: searching %d controller%s for the trackpad",
+                     i2c_bus_count(), i2c_bus_count() == 1 ? "" : "s");
+                i2c_hid_init();
+            }
+        }
+    }
     virtio_blk_init();   /* VirtIO block — primary disk on UTM SE (QEMU TCG) */
     /* v0.7.12: enumerate every VirtIO drive during boot, not just when the
        shell or the installer asks.  virtio_drive_count() was zero until one of

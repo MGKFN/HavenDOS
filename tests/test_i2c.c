@@ -243,12 +243,29 @@ const char *pci_assign_why(int r){ (void)r; return "simulated"; }
 /* klog, swallowed. */
 void klog(int lvl, const char *fmt, ...){ (void)lvl; (void)fmt; }
 
+/* v0.9.6.7: the 10 ms timer, which a wait now also ends on. It moves
+   one tick every `tick_every` reads of it (0: never -- the timer not
+   running yet, where the spin count is the only bound). */
+static uint32_t sim_ticks, tick_calls, tick_every;
+uint32_t get_ticks(void){
+    tick_calls++;
+    if(tick_every && tick_calls % tick_every == 0) sim_ticks++;
+    return sim_ticks;
+}
+/* and a controller that never moves the bus: its status never says the
+   FIFO has room, and no STOP is ever seen -- the HP's case if the
+   controller's clock is not running */
+static int  sim_frozen;
+static long sim_reads;
+
 #include "../drivers/i2c.c"
 
 static uint32_t sim_rd_hook(uint32_t base, uint32_t off)
 {
     (void)base;
+    sim_reads++;
     if(sim_d3) return 0xFFFFFFFFu;
+    if(sim_frozen && (off == IC_STATUS || off == IC_RAW_INTR_STAT)) return 0;
     return sim_read(off);
 }
 static void sim_wr_hook(uint32_t base, uint32_t off, uint32_t v)
@@ -282,6 +299,7 @@ static void reset_sim(int depth)
     fake_pci.class = 0x0C; fake_pci.subclass = 0x80;
     n_pci = 1;
     sim_d3 = 0; d0_calls = 0; d0_delays = 0;
+    sim_frozen = 0; sim_reads = 0; tick_every = 0; tick_calls = 0; sim_ticks = 0;
 }
 
 int main(void)
@@ -365,6 +383,38 @@ int main(void)
     assign_calls = 0;
     ck("a BAR that HAS a window is never re-assigned",
        i2c_init() == 1 && assign_calls == 0, assign_calls);
+
+    head("v0.9.6.7: a controller that never moves the bus holds nothing up");
+    reset_sim(16);
+    i2c_init();
+    sim_frozen = 1; tick_every = 1;            /* the timer runs */
+    sim_reads = 0;
+    ck("a probe on it times out", i2c_probe(0, 0x2c) == I2C_ETIMEOUT, 0);
+    ck("  ... after a wait bounded by the clock, not two million reads",
+       sim_reads < 20000, sim_reads);
+    ck("  ... and the bus is marked stuck, and not ready", i2c_bus_stuck(0) == 1 && i2c_bus_ready(0) == 0, 0);
+    sim_reads = 0;
+    ck("the next transfer refuses at once", i2c_probe(0, 0x2d) == I2C_ENOTREADY && sim_reads == 0, sim_reads);
+    {
+        uint8_t f[112];
+        reset_sim(16);
+        i2c_init();
+        sim_frozen = 1; tick_every = 1; sim_reads = 0;
+        ck("a whole scan of it stops at the first timeout, not 112 of them",
+           i2c_scan(0, f, 112) == 0 && sim_reads < 20000, sim_reads);
+    }
+    reset_sim(16);
+    i2c_init();
+    sim_frozen = 1; tick_every = 0; sim_reads = 0;
+    ck("with no timer yet, the spin count still ends the wait",
+       i2c_probe(0, 0x2c) == I2C_ETIMEOUT && sim_reads <= 2 * (long)SPIN_LIMIT + 64, sim_reads);
+    reset_sim(16);
+    i2c_init();
+    {
+        uint8_t bb = 0;
+        ck("a NAK is an answer: the bus is not marked stuck",
+           i2c_write(0, 0x40, &bb, 1) == I2C_ENAK && !i2c_bus_stuck(0) && i2c_bus_ready(0), 0);
+    }
 
     head("a 64-bit BAR goes through highfb_map_io, not pci_bar_mem");
     reset_sim(16);

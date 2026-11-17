@@ -1,6 +1,6 @@
 # HavenDOS — handoff, 17 November 2026
 
-Current release: **v0.9.6.6** (channel Beta, codename "Daedalus"), commit
+Current release: **v0.9.6.7** (channel Beta, codename "Daedalus"), commit
 5e1cca7 on MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -51,7 +51,47 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.6.6 (17 Nov) — WHAT THE HP SHOWED IN 0.9.6.5
+## START HERE: 0.9.6.7 (17 Nov) — THE BOOT NO LONGER WAITS ON THE TRACKPAD
+
+**The HP's photo of 0.9.6.6:**
+- the splash stopped at "I2C 00:1F.5 at FE010000: not a DesignWare core
+  (type 00000000) / press any key for the boot log", and no key worked;
+- the I2C step had finished, so 00:15.0/15.1 got their windows and came
+  up;
+- `i2c_hid_init()` then ran on real hardware for the first time.
+
+**Why it held:**
+- `wait_bit()` was 2,000,000 MMIO reads, about 1–2 s on the HP;
+- the scan covers 112 addresses per controller;
+- it ran before `usb_init()`, and the HP's keyboard is USB.
+
+**Changes:**
+- **`kernel/main.c`:**
+  - I2C and the trackpad search now run after USB and `usb_hid_init()`;
+  - `noi2c` skips both;
+  - two log lines say when the step starts.
+- **`drivers/i2c.c`:**
+  - `wait_bit()` also ends after `I2C_WAIT_TICKS` (5 ticks, 50 ms) of
+    `get_ticks()`;
+  - the public transfer functions go through `verdict()`: an ETIMEOUT or
+    EBUSY marks the bus `stuck` and not ready, and says so once;
+  - `i2c_bus_stuck()` is new, and `i2c` shows it.
+- **Tests:** `test_i2c` 62; `check_i2c_suite` 18/18. The scan's stop
+  guard was MISSED, removed and recorded.
+
+**Kyan's installed 0.9.6.6 does not boot.** The way back:
+1. `Update-HavenDOS.cmd` to the ESP;
+2. boot the 0.9.6.7 ISO from a stick and choose "Update installed system
+   from the ESP";
+3. run `update`.
+
+Never ask him to downgrade.
+
+**Next photo:** `dmesg | grep I2C`. Either the controllers time out
+(clock off? Linux's intel-lpss may set LPSS private clock registers this
+driver does not), or the search finds the trackpad.
+
+## 0.9.6.6 (17 Nov) — WHAT THE HP SHOWED IN 0.9.6.5
 
 Kyan tested 0.9.6.5 on the HP. Windows, the taskbar, Alt+Tab and the
 mouse work ("starts to look like a real OS"). The changelog has the

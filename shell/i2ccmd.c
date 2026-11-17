@@ -101,7 +101,7 @@ static void show_buses(void)
         up("   ");
         if(!i2c_bus_ready(i)){
             vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
-            up("not ready");
+            up(i2c_bus_stuck(i) ? "timed out at boot -- left alone" : "not ready");
             vga_set_color(VGA_WHITE, VGA_BLACK);
         }
         up("\n");
@@ -118,7 +118,9 @@ static void scan_one(int bus)
     up("  bus "); putu((uint32_t)bus, 1); up(": ");
     if(!i2c_bus_ready(bus)){
         vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
-        up("the controller is not ready -- nothing to scan\n");
+        up(i2c_bus_stuck(bus)
+           ? "it timed out at boot (not moving the bus) -- left alone\n"
+           : "the controller is not ready -- nothing to scan\n");
         vga_set_color(VGA_WHITE, VGA_BLACK);
         return;
     }

@@ -73,14 +73,15 @@
 /* v0.9.6.1: the first maintenance update of 0.9.6, under THS-RM-1004
    section 12 -- fixes only, up to .10 per line. */
 /* v0.9.6.6: the fixes from Kyan's 0.9.6.5 test on the HP, 17 Nov. */
-#define HAVENDOS_VER_BUILD  6
+/* v0.9.6.7: the boot the HP held in 0.9.6.6's trackpad search. */
+#define HAVENDOS_VER_BUILD  7
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.6.6"
+#define HAVENDOS_VER_NUM    "0.9.6.7"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"

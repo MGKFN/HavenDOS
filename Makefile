@@ -769,7 +769,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -no-pie -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tuh tests/test_usbhid.c && \
-	  python3 tools/run_suite.py --name test_usbhid --min 39 -- /tmp/hd_tuh
+	  python3 tools/run_suite.py --name test_usbhid --min 49 -- /tmp/hd_tuh
 	@echo "── test_usbmux ────────────────────────────"
 	@echo "  the Apple Mobile Device channel, against a device that speaks it"
 	@$(TESTCC) -no-pie -Iinclude \

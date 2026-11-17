@@ -49,6 +49,7 @@
 #include "../include/string.h"
 #include "../include/usb.h"
 #include "../include/klog.h"
+#include "../include/hid_rd.h"
 
 extern void keyboard_inject(int c);
 extern void keyboard_usb_mods(uint8_t mods);   /* v0.9.6: Alt, for Alt+Tab */
@@ -78,9 +79,13 @@ typedef struct {
     uint16_t mps;
     uint8_t  proto;     /* HID_PROTO_*                                */
     uint8_t  last[8];   /* the previous keyboard report               */
+    uint8_t  rp;        /* v0.9.7: a mouse in REPORT protocol, g_rd[] */
 } hid_t;
 
 static hid_t g_hid[HID_MAX];
+/* v0.9.7: a mouse's parsed report descriptor, one per g_hid[] slot. */
+static hrd_t   g_rd[HID_MAX];
+static uint8_t g_rdbuf[512];
 static int   g_nhid;
 
 /* ── HID usage codes to this kernel's key codes ─────────────────────
@@ -218,6 +223,75 @@ static void mouse_report(const uint8_t *r, int len)
     if (len >= 4 && r[3]) mouse_wheel_add((int8_t)r[3]);
 }
 
+/* ── v0.9.7: A MOUSE IN REPORT PROTOCOL, FOR ITS WHEEL ─────────────────
+   Kyan, 17 November, on the HP: "the scroll wheel on mouse still no".
+   0.9.6.3 read the wheel from a boot-protocol report's fourth byte,
+   which QEMU's mouse sends and the boot protocol does not promise --
+   most real mice send three bytes in boot protocol and keep the wheel
+   for their own report. So a mouse is now asked for its report
+   descriptor, which usb/hid_rd.c (the trackpad's parser) reads; if X,
+   Y and a button resolve, the mouse stays in report protocol and its
+   reports are decoded from the descriptor. Anything else -- no
+   descriptor, a refusal, a layout this cannot read -- is boot protocol,
+   exactly as before. The decoded report is handed to mouse_report() in
+   the boot layout, so the PS/2 path, the acceleration and the edge
+   detection stay the one copy they are. */
+static int clamp127(int v){ return v > 127 ? 127 : (v < -127 ? -127 : v); }
+
+static void mouse_report_rp(const hrd_t *rd, const uint8_t *r, int len)
+{
+    const uint8_t *data = r;
+    uint32_t dlen = (uint32_t)len;
+    int32_t x = 0, y = 0, w = 0, v;
+    uint8_t b = 0, out[4];
+    int i;
+
+    if (rd->has_report_ids) {
+        if (len < 1 || r[0] != rd->pointer_report_id) return;   /* another report */
+        data++; dlen--;
+    }
+    if (hrd_field_value(&rd->field[rd->i_x], data, dlen, &x) != HRD_OK) return;
+    if (hrd_field_value(&rd->field[rd->i_y], data, dlen, &y) != HRD_OK) return;
+    if (rd->i_wheel >= 0) hrd_field_value(&rd->field[rd->i_wheel], data, dlen, &w);
+    for (i = 0; i < rd->nbuttons && i < 3; i++)
+        if (rd->i_button[i] >= 0 &&
+            hrd_field_value(&rd->field[rd->i_button[i]], data, dlen, &v) == HRD_OK && v)
+            b |= (uint8_t)(1u << i);
+    /* A big move becomes several packets, so nothing is clipped. */
+    do {
+        int sx = clamp127(x), sy = clamp127(y);
+        out[0] = b; out[1] = (uint8_t)(int8_t)sx; out[2] = (uint8_t)(int8_t)sy;
+        out[3] = (uint8_t)(int8_t)clamp127(w);
+        mouse_report(out, 4);
+        x -= sx; y -= sy; w = 0;
+    } while (x || y);
+}
+
+/* Ask the mouse for its descriptor; 1 if it can be driven from it. */
+static int mouse_try_report(usb_dev_t *d, uint8_t num, hrd_t *rd)
+{
+    int n = usb_control(d, USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_INTERFACE,
+                        USB_REQ_GET_DESCRIPTOR, 0x2200, num, g_rdbuf, sizeof g_rdbuf);
+    int r;
+    if (n <= 0) return 0;
+    if (n > (int)sizeof g_rdbuf) n = (int)sizeof g_rdbuf;
+    while (n > 0 && g_rdbuf[n - 1] == 0) n--;           /* a padded reply */
+    r = hrd_parse(g_rdbuf, (uint32_t)n, rd);
+    if (r != HRD_OK || rd->i_x < 0 || rd->i_y < 0 || rd->nbuttons < 1 ||
+        !rd->field[rd->i_x].relative) {
+        klog(KLOG_INFO, "USB HID %4x:%4x interface %u: report descriptor not "
+             "usable (%s) -- boot protocol", (uint32_t)d->vendor,
+             (uint32_t)d->product, (uint32_t)num,
+             r != HRD_OK ? hrd_strerror(r) : "no relative X/Y and button");
+        return 0;
+    }
+    /* REPORT protocol, said out loud: some mice come up in boot. */
+    if (usb_control(d, USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+                    HID_REQ_SET_PROTOCOL, 1, num, 0, 0) < 0)
+        return 0;
+    return 1;
+}
+
 /* ── discovery ───────────────────────────────────────────────────────
 
    ── v0.9.2.1: EVERY INTERFACE, NOT THE FIRST ─────────────────────────
@@ -298,6 +372,18 @@ static int hid_bind(usb_dev_t *d, uint8_t num, uint8_t sub, uint8_t proto)
        Both go to THIS interface: wIndex is the interface number. */
     usb_control(d, USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
                 HID_REQ_SET_IDLE, 0, num, 0, 0);
+    if (proto == HID_PROTO_MOUSE && mouse_try_report(d, num, &g_rd[g_nhid])) {
+        h = &g_hid[g_nhid++];
+        memset(h, 0, sizeof *h);
+        h->dev = d; h->ifnum = num; h->ep = e->addr; h->mps = e->mps;
+        h->proto = proto; h->rp = 1;
+        mouse_usb_attach();
+        klog(KLOG_OK, "USB mouse %4x:%4x interface %u on endpoint %2x, "
+             "report protocol%s", (uint32_t)d->vendor, (uint32_t)d->product,
+             (uint32_t)num, (uint32_t)h->ep,
+             g_rd[g_nhid - 1].i_wheel >= 0 ? ", with its wheel" : "");
+        return 1;
+    }
     if (usb_control(d, USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
                     HID_REQ_SET_PROTOCOL, 0, num, 0, 0) < 0) {
         klog(KLOG_WARN, "USB HID %4x:%4x interface %u refused boot protocol",
@@ -362,11 +448,13 @@ int usb_hid_init(void)
 void usb_hid_poll(void)
 {
     int i;
-    uint8_t rep[8];
+    uint8_t rep[64];
 
     for (i = 0; i < g_nhid; i++) {
         hid_t *h = &g_hid[i];
-        int want = (h->proto == HID_PROTO_KEYBOARD) ? 8 : 4;
+        /* v0.9.7: a report-protocol mouse's report is as long as its
+           endpoint says, not the boot protocol's four bytes */
+        int want = (h->proto == HID_PROTO_KEYBOARD) ? 8 : (h->rp ? (int)h->mps : 4);
         int r;
 
         if (want > (int)h->mps) want = (int)h->mps;
@@ -382,6 +470,8 @@ void usb_hid_poll(void)
 
         if (h->proto == HID_PROTO_KEYBOARD) {
             if (r >= 8) keyboard_report(h, rep);
+        } else if (h->rp) {
+            mouse_report_rp(&g_rd[i], rep, r);
         } else {
             mouse_report(rep, r);
         }

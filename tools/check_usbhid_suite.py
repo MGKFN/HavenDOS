@@ -76,6 +76,34 @@ BUGS = [
      """        if (usb_survey_config(d, (uint8_t)(d->cfgidx + 1), hid_survey_cb, &sv) < 0 || !sv.n) {"""),
 ]
 
+# ── v0.9.7: the wheel, from a report-protocol mouse ───────────────────
+BUGS += [
+    ("a mouse is never tried in report protocol",
+     "the HP's case: real mice send the wheel only in report protocol, so "
+     "the wheel does nothing",
+     """    if (proto == HID_PROTO_MOUSE && mouse_try_report(d, num, &g_rd[g_nhid])) {""",
+     """    if (0) {"""),
+    ("report protocol is assumed and never asked for",
+     "a mouse that powers up in boot protocol sends three-byte reports "
+     "decoded as its descriptor's layout: the pointer jumps",
+     """    if (usb_control(d, USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+                    HID_REQ_SET_PROTOCOL, 1, num, 0, 0) < 0)
+        return 0;""",
+     """    (void)0;"""),
+    ("the report id is not checked",
+     "a mouse's other reports (battery, its vendor page) move the pointer",
+     """        if (len < 1 || r[0] != rd->pointer_report_id) return;   /* another report */""",
+     """        if (len < 1) return;"""),
+    ("a big move is clipped to one packet",
+     "a fast flick across a 1080p screen moves the pointer a fraction of the way",
+     """    } while (x || y);""",
+     """    } while (0);"""),
+    ("a descriptor without relative X is accepted",
+     "an absolute pointer (a tablet) is read as deltas: the pointer flies off",
+     """        !rd->field[rd->i_x].relative) {""",
+     """        0) {"""),
+]
+
 HARMLESS = (
     "a comment is reworded (must not be caught)",
     "nothing about the driver changed",

@@ -95,6 +95,38 @@ static const uint8_t NKRO_KBD[] = {
     9, 4, 0, 0, 1, 3, 1, 1, 0,  HIDD(63),  7, 5, 0x81, 3, 8, 0, 1,
     9, 4, 1, 0, 1, 3, 0, 0, 0,  HIDD(90),  7, 5, 0x82, 3, 32, 0, 1,
 };
+/* v0.9.7: a wheel mouse, as real ones are: its wheel only in REPORT
+   protocol. One boot-mouse interface, and the descriptor below. */
+static const uint8_t WHEELMOUSE[] = {
+    9, 2, 34, 0, 1, 1, 0, 0xA0, 50,
+    9, 4, 0, 0, 1, 3, 1, 2, 0,  HIDD(66),  7, 5, 0x81, 3, 8, 0, 10,
+};
+/* report id 1: five buttons + 3 pad bits, X and Y 16-bit relative,
+   the wheel 8-bit relative -- seven bytes with the id */
+static const uint8_t WHEEL_RD[] = {
+    0x05,0x01, 0x09,0x02, 0xA1,0x01, 0x85,0x01, 0x09,0x01, 0xA1,0x00,
+    0x05,0x09, 0x19,0x01, 0x29,0x05, 0x15,0x00, 0x25,0x01, 0x95,0x05, 0x75,0x01, 0x81,0x02,
+    0x95,0x01, 0x75,0x03, 0x81,0x01,
+    0x05,0x01, 0x09,0x30, 0x09,0x31, 0x16,0x01,0x80, 0x26,0xFF,0x7F, 0x75,0x10, 0x95,0x02, 0x81,0x06,
+    0x09,0x38, 0x15,0x81, 0x25,0x7F, 0x75,0x08, 0x95,0x01, 0x81,0x06,
+    0xC0, 0xC0,
+};
+/* a tablet-like one: X and Y ABSOLUTE (Input 0x02). Read as deltas, the
+   pointer would fly to a corner with every report: boot protocol. */
+static const uint8_t ABS_RD[] = {
+    0x05,0x01, 0x09,0x02, 0xA1,0x01, 0x85,0x01, 0x09,0x01, 0xA1,0x00,
+    0x05,0x09, 0x19,0x01, 0x29,0x05, 0x15,0x00, 0x25,0x01, 0x95,0x05, 0x75,0x01, 0x81,0x02,
+    0x95,0x01, 0x75,0x03, 0x81,0x01,
+    0x05,0x01, 0x09,0x30, 0x09,0x31, 0x16,0x01,0x80, 0x26,0xFF,0x7F, 0x75,0x10, 0x95,0x02, 0x81,0x02,
+    0xC0, 0xC0,
+};
+/* and one whose descriptor has no X and Y: it must stay in boot */
+static const uint8_t NOXY_RD[] = {
+    0x05,0x01, 0x09,0x02, 0xA1,0x01,
+    0x05,0x09, 0x19,0x01, 0x29,0x03, 0x15,0x00, 0x25,0x01, 0x95,0x03, 0x75,0x01, 0x81,0x02,
+    0x95,0x01, 0x75,0x05, 0x81,0x01, 0xC0,
+};
+
 /* Nine boot keyboards in one device: more than the table holds. */
 static uint8_t NINE[9 + 9 * 25];
 
@@ -103,12 +135,13 @@ typedef struct {
     uint16_t vid, pid;
     int refuse_proto_if;          /* SET_PROTOCOL stalls on this, or -1 */
     uint8_t rep[8][8]; int replen[8];   /* a report waiting, per EP n */
+    const uint8_t *rdesc; int rdesc_len;  /* v0.9.7: its report descriptor */
 } dev_sim_t;
 
 static dev_sim_t g_sim[2];
 static int g_nports;
 static int g_setcfg, g_configures, g_refuse_configure;
-static int g_proto_idx[16], g_nproto;
+static int g_proto_idx[16], g_proto_val[16], g_nproto;
 static int g_idle_idx[16], g_nidle;
 
 static void sim_reset(void)
@@ -167,13 +200,21 @@ static int s_control(struct usb_hc *h, const usb_dev_t *d, uint8_t rtype,
         return n;
     }
     if(!(rtype & 0x80u) && req == USB_REQ_SET_CONFIGURATION){ g_setcfg++; return 0; }
+    if(rtype == (USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_INTERFACE) &&
+       req == USB_REQ_GET_DESCRIPTOR && value == 0x2200){
+        int n = s->rdesc_len;
+        if(!s->rdesc) return USB_ESTALL;
+        if(n > (int)len) n = (int)len;
+        if(data) memcpy(data, s->rdesc, (size_t)n);
+        return n;
+    }
     if(rtype == (USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE) && req == 0x0A){
         if(g_nidle < 16) g_idle_idx[g_nidle++] = index;
         return USB_ESTALL;                  /* allowed to stall */
     }
     if(rtype == (USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE) && req == 0x0B){
         if((int)index == s->refuse_proto_if) return USB_ESTALL;
-        if(g_nproto < 16) g_proto_idx[g_nproto++] = index;
+        if(g_nproto < 16){ g_proto_val[g_nproto] = value; g_proto_idx[g_nproto++] = index; }
         return 0;
     }
     return USB_ESTALL;
@@ -227,6 +268,7 @@ int  xhci_hc_register(void)  { return 0; }
 const char *xhci_attach_why(void){ return "(xHCI stubbed in this suite)"; }
 
 #include "../usb/core.c"
+#include "../usb/hid_rd.c"
 #include "../usb/hid.c"
 
 static void report(int port, int ep, const uint8_t *r, int n)
@@ -405,6 +447,50 @@ int main(void)
         usb_enumerate();
         n = usb_hid_init();
         ck("capped at the table, no overrun", n <= 8 && n >= 1, n);
+    }
+
+    head("v0.9.7: a wheel mouse in REPORT protocol, from its own descriptor");
+    {
+        static const uint8_t R1[7] = { 0x01, 0x01, 5, 0, 0xFD, 0xFF, 0xFE };
+        static const uint8_t R2[7] = { 0x02, 0x01, 9, 0, 9, 0, 1 };
+        static const uint8_t BIG[7] = { 0x01, 0x00, 0x2C, 0x01, 0, 0, 0 };   /* x = 300 */
+        int dx = 0;
+        sim_reset();
+        plug(0, WHEELMOUSE, sizeof WHEELMOUSE, 0x046D, 0xC077);
+        g_sim[0].rdesc = WHEEL_RD; g_sim[0].rdesc_len = sizeof WHEEL_RD;
+        usb_enumerate(); usb_hid_init();
+        ck("the mouse is driven", usb_hid_count() == 1 && g_mouse_attach == 1, usb_hid_count());
+        ck("  ... and was set to REPORT protocol (1), not boot (0)",
+           g_nproto == 1 && g_proto_val[0] == 1 && g_proto_idx[0] == 0, g_nproto ? g_proto_val[0] : -1);
+        report(0, 0x81, R1, 7); g_nmouse = 0; g_wheel_fed = 0; usb_hid_poll();
+        ck("its report becomes one PS/2 packet: left button, X +5",
+           g_nmouse == 3 && (g_mouse[0] & 0x07) == 1 && g_mouse[1] == 5, g_nmouse);
+        ck("  ... Y -3 in HID is +3 in PS/2", g_mouse[2] == 3 && !(g_mouse[0] & 0x20), g_mouse[2]);
+        ck("  ... and THE WHEEL: two notches toward the user", g_wheel_fed == -2, g_wheel_fed);
+        report(0, 0x81, R2, 7); g_nmouse = 0; g_wheel_fed = 0; usb_hid_poll();
+        ck("a report with another id is not taken for the pointer", g_nmouse == 0 && g_wheel_fed == 0, g_nmouse);
+        report(0, 0x81, BIG, 7); g_nmouse = 0; usb_hid_poll();
+        for(i = 1; i < g_nmouse; i += 3) dx += (int8_t)g_mouse[i];
+        ck("a 300-count move is three packets and loses nothing", g_nmouse == 9 && dx == 300, dx);
+    }
+    {
+        sim_reset();
+        plug(0, WHEELMOUSE, sizeof WHEELMOUSE, 0x046D, 0xC077);
+        g_sim[0].rdesc = NOXY_RD; g_sim[0].rdesc_len = sizeof NOXY_RD;
+        usb_enumerate(); usb_hid_init();
+        ck("a descriptor with no X and Y: boot protocol, as before",
+           usb_hid_count() == 1 && g_nproto == 1 && g_proto_val[0] == 0, g_nproto ? g_proto_val[0] : -1);
+        sim_reset();
+        plug(0, WHEELMOUSE, sizeof WHEELMOUSE, 0x046D, 0xC077);
+        g_sim[0].rdesc = ABS_RD; g_sim[0].rdesc_len = sizeof ABS_RD;
+        usb_enumerate(); usb_hid_init();
+        ck("an ABSOLUTE X and Y (a tablet): boot protocol, not deltas",
+           usb_hid_count() == 1 && g_nproto == 1 && g_proto_val[0] == 0, g_nproto ? g_proto_val[0] : -1);
+        sim_reset();
+        plug(0, WHEELMOUSE, sizeof WHEELMOUSE, 0x046D, 0xC077);
+        usb_enumerate(); usb_hid_init();
+        ck("no descriptor at all (it stalls): boot protocol, as before",
+           usb_hid_count() == 1 && g_nproto == 1 && g_proto_val[0] == 0, g_nproto ? g_proto_val[0] : -1);
     }
 
     printf("\n%d/%d passed\n", total - fails, total);

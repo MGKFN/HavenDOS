@@ -150,6 +150,13 @@ static uint32_t *fbc_addr;        /* linear framebuffer, 32bpp            */
 static uint32_t  fbc_pitch;       /* in PIXELS, not bytes                 */
 static uint32_t  fbc_w, fbc_h;
 static int       fbc_sx = 2, fbc_sy = 4;
+/* v0.9.6.6: one cell in pixels. 8*sx by 16*sy, except while a boxed app
+   is full screen (vga_set_mode_fill): then any size that keeps the
+   glyph's shape, so an 80x25 app fills the panel instead of sitting at
+   scale 1 in the middle of it -- on the HP's 1024x768, 12x24 rather
+   than 8x16. */
+static uint32_t  fbc_cwp = 16, fbc_chp = 64;
+static int       fbc_fill;
 static uint32_t  fbc_ox = 0, fbc_oy = 0;   /* top-left of the centred grid */
 static int       fbc_active;
 
@@ -161,8 +168,8 @@ static int       fbc_active;
 void vga_cell_px(int *w, int *h)
 {
     if (fbc_active) {
-        if (w) *w = FBC_CW * fbc_sx;
-        if (h) *h = FBC_CH * fbc_sy;
+        if (w) *w = (int)fbc_cwp;
+        if (h) *h = (int)fbc_chp;
         return;
     }
     if (w) *w = 8;
@@ -308,8 +315,11 @@ static void fbc_fit(int want_cols, int want_rows)
     while (g_rows > 1 && g_cols * g_rows > VGA_CELLS_MAX) g_rows--;
     while (g_cols > 1 && g_cols * g_rows > VGA_CELLS_MAX) g_cols--;
 
-    fbc_ox = (fbc_w - (uint32_t)(g_cols * FBC_CW * fbc_sx)) / 2u;
-    fbc_oy = (fbc_h - (uint32_t)(g_rows * FBC_CH * fbc_sy)) / 2u;
+    fbc_cwp = (uint32_t)(FBC_CW * fbc_sx);
+    fbc_chp = (uint32_t)(FBC_CH * fbc_sy);
+    fbc_fill = 0;
+    fbc_ox = (fbc_w - (uint32_t)g_cols * fbc_cwp) / 2u;
+    fbc_oy = (fbc_h - (uint32_t)g_rows * fbc_chp) / 2u;
 }
 
 /* Is this PANEL bigger than the console can express at one pixel per
@@ -432,8 +442,8 @@ static void fbc_clear_margin(void)
 {
     if (!fbc_active || !fbc_addr) return;
     uint32_t gx0 = fbc_ox, gy0 = fbc_oy;
-    uint32_t gx1 = fbc_ox + (uint32_t)(g_cols * FBC_CW * fbc_sx);
-    uint32_t gy1 = fbc_oy + (uint32_t)(g_rows * FBC_CH * fbc_sy);
+    uint32_t gx1 = fbc_ox + (uint32_t)g_cols * fbc_cwp;
+    uint32_t gy1 = fbc_oy + (uint32_t)g_rows * fbc_chp;
     for (uint32_t y = 0; y < fbc_h; y++) {
         uint32_t *line = fbc_addr + y * fbc_pitch;
         if (y < gy0 || y >= gy1) {
@@ -481,9 +491,21 @@ static void fbc_put_ex(int x, int y, uint16_t entry, int record)
     uint32_t bg = fbc_rgb[(attr >> 4) & 0x0F];
     const uint8_t *glyph = &font8x16[(uint32_t)ch * FBC_CH];
 
-    uint32_t px0 = fbc_ox + (uint32_t)x * (uint32_t)FBC_CW * (uint32_t)fbc_sx;
-    uint32_t py0 = fbc_oy + (uint32_t)y * (uint32_t)FBC_CH * (uint32_t)fbc_sy;
+    uint32_t px0 = fbc_ox + (uint32_t)x * fbc_cwp;
+    uint32_t py0 = fbc_oy + (uint32_t)y * fbc_chp;
 
+    if (fbc_fill) {
+        /* v0.9.6.6: a cell of any size, nearest source pixel. Only while
+           a boxed app is full screen; every other cell takes the whole-
+           scale loop below, unchanged. */
+        for (uint32_t py = 0; py < fbc_chp; py++) {
+            uint8_t bits = glyph[py * FBC_CH / fbc_chp];
+            uint32_t *line = fbc_addr + (py0 + py) * fbc_pitch + px0;
+            for (uint32_t px = 0; px < fbc_cwp; px++)
+                *line++ = ((bits >> (FBC_CW - 1 - px * FBC_CW / fbc_cwp)) & 1) ? fg : bg;
+        }
+        return;
+    }
     for (int row = 0; row < FBC_CH; row++) {
         uint8_t bits = glyph[row];
         for (int ry = 0; ry < fbc_sy; ry++) {
@@ -793,6 +815,32 @@ const char *vga_mode_why_name(void){
  * because the two writes are harmless on their own and the real teardown
  * is in seq_program()/crtc_program() further down, which the branch did
  * skip.  A guard that stops three of five writes is not a guard. */
+/* ── v0.9.6.6: an 80x25 app, full screen, fills the panel ─────────────
+   Kyan: "full screen should render the app on full monitor". The grid
+   becomes cols x rows with the biggest cell that fits and keeps the
+   8x16 glyph's 1:2 shape -- not a whole-number scale, which on the HP's
+   1024x768 is 1 (640x400 in the middle). What the console holds is kept
+   and repainted at the new size when the grid was already this one;
+   otherwise vga_set_mode() starts it blank, as any mode change does.
+   Any later vga_set_mode() goes back to whole scales. 0 if refused. */
+int vga_set_mode_fill(int cols, int rows){
+    uint32_t cw;
+    if(!vga_set_mode(cols, rows)) return 0;
+    if(!fbc_active) return 1;              /* a text mode is the whole glass already */
+    cw = fbc_w / (uint32_t)cols;
+    if(fbc_h / (uint32_t)rows / 2u < cw) cw = fbc_h / (uint32_t)rows / 2u;
+    if(cw <= fbc_cwp) return 1;            /* no bigger than the whole scale: nothing to do */
+    fbc_cwp = cw; fbc_chp = 2u * cw; fbc_fill = 1;
+    fbc_ox = (fbc_w - (uint32_t)g_cols * fbc_cwp) / 2u;
+    fbc_oy = (fbc_h - (uint32_t)g_rows * fbc_chp) / 2u;
+    fbc_forget();
+    for(uint32_t py=0;py<fbc_h;py++)
+        for(uint32_t px=0;px<fbc_w;px++) fbc_addr[py*fbc_pitch+px]=0;
+    for(int i=0;i<g_rows*g_cols;i++) fbc_put(i%g_cols,i/g_cols,shadow[i]);
+    return 1;
+}
+int vga_fill_active(void){ return fbc_fill; }
+
 int vga_set_mode(int cols, int rows){
     g_mode_why = VGA_MODE_OK;
 
@@ -814,7 +862,7 @@ int vga_set_mode(int cols, int rows){
            (uint32_t)(rows * FBC_CH) > fbc_h){
             g_mode_why = VGA_MODE_EPANEL; return 0;
         }
-        if(cols==g_cols && rows==g_rows) return 1;
+        if(cols==g_cols && rows==g_rows && !fbc_fill) return 1;
 
         /* No font plane here: the glyphs come from font8x8[] in this file,
            so there is nothing to upload and nothing to restore.  A mode

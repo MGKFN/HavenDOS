@@ -148,6 +148,9 @@ static void overlay_end(vga_ctx_t *saved)
 
 static void switcher(int back)
 {
+    /* v0.9.6.6: a full-screen 80x25 app has the console at its own grid;
+       it goes back to the person's before the panel is drawn */
+    { extern void chrome_leave_front(void); chrome_leave_front(); }
     int list[TASK_MAX];
     int n = mru_list(list);
     vga_ctx_t saved;

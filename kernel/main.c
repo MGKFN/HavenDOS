@@ -1366,6 +1366,28 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
             }
         }
     }
+    /* ── v0.9.6.6: A SAVED GRID IS APPLIED AT BOOT ─────────────────────
+       Kyan, on the HP: "the resolution isn't instantly fitted bc u need
+       to open shell first". A saved grid was applied only at the Shell's
+       prompt -- shell_v076.c's v0.8.8.1 note says why: the desktop then
+       pinned 80x25, so a big grid would have stranded 45 apps in a
+       corner. Since 0.9.6.5 every app is a window laid out on the whole
+       screen and an 80x25 app is boxed and centred, so that reason is
+       gone. Only on the framebuffer console (a CRTC table changed with
+       nobody watching is how a display stops syncing), only a grid that
+       holds 80x25 (the block above has dealt with a smaller one), and
+       the Shell's prompt keeps re-applying it as before. */
+    if(vga_fb_active() && cfg_console_cols() >= 80 && cfg_console_rows() >= 25 &&
+       (cfg_console_cols() != vga_cols() || cfg_console_rows() != vga_rows())){
+        int sc = cfg_console_cols(), sr = cfg_console_rows();
+        int was_c = vga_cols(), was_r = vga_rows();
+        if(vga_set_mode(sc, sr))
+            klog(KLOG_OK, "Console: %dx%d, as saved (was %dx%d)", sc, sr, was_c, was_r);
+        else
+            klog(KLOG_WARN, "Console: the saved %dx%d was refused at boot; "
+                            "staying at %dx%d", sc, sr, was_c, was_r);
+    }
+    { extern void shell_grid_load(void); shell_grid_load(); }
     ui_load_theme();
 
     /* v0.7.12: net_init() used to run AFTER boot_animation(), so the POST

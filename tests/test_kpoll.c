@@ -704,6 +704,12 @@ static int sim_enum_result = 3;   /* v0.8.9.6: a walk can find nothing */
 int  usb_enumerate(void){ note('e'); enumerates++; return sim_enum_result; }
 int  usb_hub_count(void){ return 0; }
 int  usb_hub_devices(void){ return 0; }
+/* v0.9.6.6: keyboards and mice re-bound after the walk -- the step the
+   sequence lacked, so a mouse plugged back in never moved on the HP */
+static long hid_inits;
+static int  sim_hid_wanted = 1;
+int  usb_hid_init(void){ note('h'); hid_inits++; return 1; }
+int  usb_hid_wanted(void){ return sim_hid_wanted; }
 
 /* Two simulated controllers, with a settable connected-port bitmap.
    Reads are COUNTED: "the poll is one MMIO read per root port" is a
@@ -793,8 +799,9 @@ static void clients_main(void)
     /* THE ORDER.  Every step is in usb/hotplug.c's header with the bug
        that put it there; a different order is a different program. */
     ck("the sequence ran in order: release, forget, close, enumerate, "
-       "msc, blk, probe",
-       !strcmp(rescan_order, "rlxembp"), 0);
+       "hid, msc, blk, probe",
+       !strcmp(rescan_order, "rlxehmbp"), 0);
+    ck("  ... keyboards and mice re-bound, once (v0.9.6.6)", hid_inits == 1, hid_inits);
 
     head("hot-plug: ONE plug is ONE rescan");
     /* The bitmap is re-read after the rescan, deliberately, because

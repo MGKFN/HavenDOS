@@ -1,12 +1,12 @@
 # HavenDOS — handoff, 17 November 2026
 
-Current release: **v0.9.6.5** (channel Beta, codename "Daedalus"), commit
+Current release: **v0.9.6.6** (channel Beta, codename "Daedalus"), commit
 5e1cca7 on MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
 ## FOR A NEW CHAT: READ THIS FIRST
 
-- **The plan is THS-RM-1005 REV B** (`docs/roadmap/HavenDOS-Roadmap-RM1005.pdf`,
+- **The plan is THS-RM-1005 REV C** (`docs/roadmap/HavenDOS-Roadmap-RM1005.pdf`,
   built from `docs/rm1005/`). It lays out every release from here to
   29H2. THS-RM-1004 (`docs/rm1004/`) still holds the numbering standard
   (its sections 1–11).
@@ -50,6 +50,66 @@ file into a new chat, with the bundle zip, to pick up where this left off.
 - **Careful:** `tests/test_chrome.c` is the desktop bars' 58-check suite.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
+
+## START HERE: 0.9.6.6 (17 Nov) — WHAT THE HP SHOWED IN 0.9.6.5
+
+Kyan tested 0.9.6.5 on the HP. Windows, the taskbar, Alt+Tab and the
+mouse work ("starts to look like a real OS"). The changelog has the
+full list of what he reported and what each fix is.
+
+**Fixes:**
+- **The Shell's X:**
+  - `chrome_take_close()` (shared with the emu86 branch) marks an ESC
+    that came from the X, and `shell_read_line()` turns it into `exit`;
+  - a real key clears the mark, so a keyboard ESC is never a click;
+  - the Shell's title says "exit closes".
+- **Full screen fills:**
+  - `vga_set_mode_fill()` in `drivers/vga.c`: a cell of any size that
+    keeps 1:2, drawn nearest-pixel only while `fbc_fill` is set; every
+    other path is unchanged;
+  - `shell/chrome.c`'s `grow()`/`shrink()` move the app's 2000 cells
+    between the box and 80x25;
+  - shrink happens on F11, on `chrome_end()`, and from
+    `chrome_leave_front()`, called by `shell/taskswitch.c`'s switcher
+    and the taskbar's `bring()`.
+- **Hot-plug:** `usb_rescan_all()` never re-ran `usb_hid_init()`.
+  - It does now, right after `usb_enumerate()`.
+  - `test_kpoll` checks the order `rlxehmbp`.
+  - `check_hotplug_suite` has 15/15, two of them new.
+- **The trackpad's controller:** `drivers/pci_assign.c` (new).
+  - It assigns a 64-bit BAR the firmware left at zero, right after a
+    firmware-placed range above 4 GB, choosing the closest free gap.
+  - Other devices' BARs are bounded by their alignment and trimmed at
+    the next base, never sized.
+  - Decoding is off during the write, and the write is read back.
+  - `drivers/i2c.c` calls it, and the log line says where the window
+    went or why it couldn't.
+  - Tests: `test_pci_assign` 44; `check_pci_assign_suite` 12/12 (its
+    first run missed 2).
+- **The wheel:** the desktop's Start menu (three apps a notch) and
+  Files, which both read the mouse themselves.
+- **The resolution at boot:** `kernel/main.c` applies a saved grid of
+  80x25 or more on the framebuffer console, then `shell_grid_load()`.
+
+**Waiting on photos:**
+1. `dmesg | grep monitor`: the monitor is on the unscaled fallback
+   again;
+2. `dmesg | grep I2C`: whether the window was assigned, and what
+   answered;
+3. where the cursor is missing;
+4. whether the iPhone tethers again after a replug without `pair`.
+
+**Found and NOT fixed:**
+- `dmesg | grep x` pages before the pipe once the log is longer than
+  the screen, so the grep sees one page. `harness/fixes_0966.py` walks
+  the pages.
+- The text editor only polls the mouse after a key (`keyboard_waitchar`).
+  It is rebuilt with E-2.
+
+**Next:** 0.9.7 (~26 Nov). Merge `emu86` (Retro PC) first. `shell/chrome.c`
+conflicts: take main's version, which has `chrome_take_close()`,
+`chrome_leave_front()` and the grow code. Then the versioning, E-2, E-3
+and E-4 (RM-1005 REV C sections 3 and 7). E-5 HD Audio is in 0.9.9.
 
 ## ON THE BRANCH emu86: RETRO PC (17 Nov), FOR 0.9.7
 

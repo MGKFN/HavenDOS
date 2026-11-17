@@ -2130,7 +2130,11 @@ reload:
                 if(mx!=flm_lx||my!=flm_ly){ ui_draw_cursor(); flm_lx=mx;flm_ly=my; }
 
                 int mc=mouse_get_clicks();
-                if(mc&1){
+                /* v0.9.6.6: the wheel moves through the list */
+                { extern int mouse_get_wheel(void);
+                  int w=mouse_get_wheel();
+                  if(w>0) c=0x148; else if(w<0) c=0x150; }
+                if(c==-1 && (mc&1)){
                     /* Back button: cols 69-74, row 3, only when in a subdir */
                     if(fm_cwd[0] && my==3 && mx>=69 && mx<=74){
                         c=8; /* go up */
@@ -3830,6 +3834,19 @@ void desktop_run(void){
             int mx,my,mb; mouse_get(&mx,&my,&mb);
 
             int mb_click = mouse_get_clicks();
+            /* v0.9.6.6: the wheel (or two fingers) scrolls the start
+               menu's list -- All Apps is longer than the screen, and the
+               desktop reads the mouse itself, so uimouse's wheel never
+               reached it. Three apps a notch; the view follows. Read
+               always, so notches turned elsewhere don't pile up. */
+            { extern int mouse_get_wheel(void);
+              int mw = mouse_get_wheel();
+              if(mw && menu_state==2 && sub_count>0){
+                  sub_sel -= 3*mw;
+                  if(sub_sel < 0) sub_sel = 0;
+                  if(sub_sel > sub_count-1) sub_sel = sub_count-1;
+                  needs_draw=1;
+              } }
 
             /* Cursor tracking — runs regardless of menu state.
                Must flush after draw so cursor appears in same frame

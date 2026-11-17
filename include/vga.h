@@ -241,6 +241,8 @@ int  vga_set_rows(int rows);
    AFTER a refusal; it is not an error return, so the three existing
    callers of this function are unchanged. */
 int  vga_set_mode(int cols, int rows);
+int  vga_set_mode_fill(int cols, int rows);   /* v0.9.6.6: full screen, any cell size */
+int  vga_fill_active(void);
 #define VGA_MODE_OK      0
 #define VGA_MODE_ETEXT   1   /* text console: not one of the four modes  */
 #define VGA_MODE_ERANGE  2   /* outside 1..VGA_COLS_MAX/VGA_ROWS_MAX     */

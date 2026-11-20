@@ -21,6 +21,7 @@ typedef struct {
 #define CH_START 5
 #define CH_CHIP  6
 #define CH_BAR   7
+#define CH_PIN   8    /* v0.9.7 (E-4): a pinned app; *chip is which */
 
 /* pure, for tests/test_window.c */
 void chrome_layout(int pw, int ph, int boxed, int full, ch_layout_t *L);

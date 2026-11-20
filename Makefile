@@ -761,7 +761,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -g -fsanitize=address,undefined -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_twin tests/test_window.c && \
-	  python3 tools/run_suite.py --name test_window --min 34 -- /tmp/hd_twin
+	  python3 tools/run_suite.py --name test_window --min 40 -- /tmp/hd_twin
 	@echo "── test_uimouse ───────────────────────────"
 	@echo "  the mouse in every app: clicks, hints, wheel, right-click"
 	@# v0.9.6.3: shell/uimouse.c against a model screen, mouse and task

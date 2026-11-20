@@ -49,6 +49,7 @@ extern uint32_t pmm_total_blocks(void);
 /* config.c */
 extern void cfg_save(void);
 extern int  cfg_desk_info(void);            extern void cfg_set_desk_info(int);
+extern int  cfg_desk_small(void);           extern void cfg_set_desk_small(int);   /* v0.9.7 */
 extern int  cfg_verbose_boot(void);         extern void cfg_set_verbose_boot(int);
 extern int  cfg_post_screen(void);          extern void cfg_set_post_screen(int);
 extern int  cfg_screensaver_timeout(void);  extern void cfg_set_screensaver_timeout(int);
@@ -252,13 +253,15 @@ static void preview(int n, int x0, int y0, int w, int h){
 
 static int page_appearance(int k, int *sel){
     int nt=ui_theme_count();
-    int nrows=nt+2;                       /* themes, wallpaper, info strip */
+    int nrows=nt+3;                       /* themes, wallpaper, info strip, icon size */
     if(k==KEY_UP && *sel>0) (*sel)--;
     else if(k==KEY_DOWN && *sel<nrows-1) (*sel)++;
     else if(k=='\n'||k=='\r'||k==' '){
         if(*sel<nt){ ui_set_theme(*sel); say(VGA_LIGHT_GREEN,"Theme applied and saved."); }
         else if(*sel==nt){ ui_toggle_desk_pattern(); say(VGA_LIGHT_GREEN,ui_desk_pattern()?"Wallpaper on.":"Wallpaper off: plain desktop colour."); }
-        else { cfg_set_desk_info(!cfg_desk_info()); cfg_save(); say(VGA_LIGHT_GREEN,"Saved."); }
+        else if(*sel==nt+1){ cfg_set_desk_info(!cfg_desk_info()); cfg_save(); say(VGA_LIGHT_GREEN,"Saved."); }
+        else { cfg_set_desk_small(!cfg_desk_small()); cfg_save();
+               say(VGA_LIGHT_GREEN,cfg_desk_small()?"Small desktop icons: one row each.":"Large desktop icons."); }
     }
     else if(k) return 0;
 
@@ -279,6 +282,7 @@ static int page_appearance(int k, int *sel){
     y++;
     row(y++,*sel==nt,   "Wallpaper",          ui_desk_pattern()?"on":"off",VGA_WHITE);
     row(y++,*sel==nt+1, "Desktop info strip", cfg_desk_info()?"on":"off",VGA_WHITE);
+    row(y++,*sel==nt+2, "Desktop icons",      cfg_desk_small()?"small":"large",VGA_WHITE);
     PW=savePW;
     if(PW>=60){
         int pv = (*sel<nt)?*sel:ui_current_theme();

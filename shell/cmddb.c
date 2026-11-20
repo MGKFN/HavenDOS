@@ -813,7 +813,9 @@ const cmddoc_t cmddb[] = {
       "channel this system follows (Beta, Public Beta, Release Preview, "
       "Stable); `update channel stable` changes it -- an update on a less "
       "stable channel is then refused, by name.",
-      "update channel [beta|public-beta|preview|stable]",
+      "update\tinstall a newer kernel from a stick, the ESP or a CD\n"
+      "update channel\tshow which channel this system follows\n"
+      "update channel stable\ttake only Stable updates from now on",
       "rollback install" },
 
     { "rollback", NULL, CDB_DISKS,

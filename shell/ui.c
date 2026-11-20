@@ -345,6 +345,26 @@ void ui_kit_bar(int x,int y,int w,int filled,vga_color_t c){
    Row H-1: [ HavenDOS ]  user (admin)        [!] n   HH:MM:SS
    The start pill keeps the old hit box (columns 0-13), and the
    notification cluster keeps ui_taskbar_notif_hit()'s.                */
+/* v0.9.7 (E-4): where the desktop bar's pinned apps start -- after the
+   user's name -- from ONE function, so drawing and clicking agree (the
+   lesson of ui_taskbar_notif_hit() below). Four cells each. */
+extern int         desktop_tbpin_count(void);
+extern const char *desktop_tbpin_icon(int i);
+static int tbpin_x0(void){
+    int x = 15 + (int)strlen(current_username()) + 2;
+    if(current_user_admin()) x += 8;
+    return x;
+}
+static int tbpin_fits(int i){ return tbpin_x0() + (i + 1) * 4 < vga_cols() - 26; }
+int ui_taskbar_pin_hit(int x, int y)
+{
+    int i;
+    if(y != vga_rows() - 1) return -1;
+    for(i = 0; i < desktop_tbpin_count() && tbpin_fits(i); i++)
+        if(x >= tbpin_x0() + i * 4 && x < tbpin_x0() + i * 4 + 4) return i;
+    return -1;
+}
+
 void ui_draw_desktop_bars(void){
     theme_t *th=ui_theme();
     const int W=vga_cols();
@@ -381,6 +401,14 @@ void ui_draw_desktop_bars(void){
     int ulen=(int)strlen(un);
     vga_puts_at(un,15,BAR_Y,th->bar_fg,th->bar_bg);
     if(current_user_admin()) vga_puts_at("(admin)",16+ulen,BAR_Y,VGA_DARK_GREY,th->bar_bg);
+    for(int i=0;i<desktop_tbpin_count() && tbpin_fits(i);i++){
+        int px=tbpin_x0()+i*4;
+        const char *ic=desktop_tbpin_icon(i);
+        vga_putchar_at(' ',px,BAR_Y,th->bar_fg,th->bar_bg);
+        vga_putchar_at(ic[0],px+1,BAR_Y,VGA_BLACK,VGA_LIGHT_GREY);
+        vga_putchar_at(ic[1],px+2,BAR_Y,VGA_BLACK,VGA_LIGHT_GREY);
+        vga_putchar_at(' ',px+3,BAR_Y,th->bar_fg,th->bar_bg);
+    }
 
     const int CLOCK_X=W-9, BELL_X=W-25;
     extern int notif_get_unread(void);

@@ -325,6 +325,11 @@ static const top_item_t topmenu[]={
 
 static char fav_ids[PIN_MAX][PIN_IDLEN];   static int fav_n=0;
 static char desk_ids[PIN_MAX][PIN_IDLEN];  static int desk_n=0;
+/* v0.9.7 (E-4): apps pinned to the TASKBAR, beside Start -- eight at
+   most, because each takes four cells of a bar that also carries a
+   chip for every open app. */
+#define TB_PIN_MAX 8
+static char tb_ids[PIN_MAX][PIN_IDLEN];    static int tb_n=0;
 
 static int reg_find(const char *id){
     for(int i=0;i<NREG;i++) if(strcmp(appreg[i].id,id)==0) return i;
@@ -413,10 +418,30 @@ static int pin_toggle(const char *path, char ids[][PIN_IDLEN], int *n,
    it is worth a separate look.) */
 #define PIN_FILE_FAV   "FAVORITE.CFG"
 #define PIN_FILE_DESK  "DESKTOP.CFG"
+#define PIN_FILE_TB    "TASKBAR.CFG"     /* v0.9.7 (E-4) */
 
 static void pins_load(void){
     pin_load(PIN_FILE_FAV, fav_ids, &fav_n, "shell");
     pin_load(PIN_FILE_DESK,desk_ids,&desk_n,"shell");
+    pin_load(PIN_FILE_TB,  tb_ids,  &tb_n,  "files");
+    if(tb_n>TB_PIN_MAX) tb_n=TB_PIN_MAX;
+}
+
+/* ── v0.9.7 (E-4): the taskbar's pins, for both bars ───────────────
+   shell/chrome.c's bar (under an app) and ui.c's (the desktop's) draw
+   and hit-test them through these, so the two cannot disagree. */
+int         desktop_tbpin_count(void){ return tb_n; }
+const char *desktop_tbpin_icon(int i){
+    int r = (i>=0&&i<tb_n) ? reg_find(tb_ids[i]) : -1;
+    return r>=0 ? appreg[r].icon : "??";
+}
+const char *desktop_tbpin_name(int i){
+    int r = (i>=0&&i<tb_n) ? reg_find(tb_ids[i]) : -1;
+    return r>=0 ? appreg[r].name : "";
+}
+void desktop_tbpin_open(int i){
+    extern int desktop_open_app(const char *id);
+    if(i>=0&&i<tb_n) desktop_open_app(tb_ids[i]);
 }
 
 static void desktop_run_app(void (*fn)(void), const char *name, int fits);
@@ -487,7 +512,11 @@ static int desk_fill(int *out){
  * scroll_row = first app-row to display (0-based).
  * Each app row is TILE_STEP=4 screen rows tall.
  * Visible content: rows 2..20 = 19 screen rows → 4 app-rows visible. */
-#define ICON_TILE_STEP  4   /* screen rows per app row (icon+name+dot+gap) */
+/* v0.9.7 (E-4): small icons are ONE row each -- the mark and the name
+   side by side -- so four times as many fit. Settings > Appearance, or
+   right-click the desktop. */
+extern int cfg_desk_small(void);
+#define ICON_TILE_STEP  (cfg_desk_small() ? 1 : 4)   /* screen rows per app row */
 #define ICON_PITCH     17   /* screen columns per app column             */
 
 
@@ -559,7 +588,7 @@ static int icon_hit(int mx,int my){
         int vis_row=approw-icon_scroll_row;
         if(vis_row<0||vis_row>=ICON_ROWS_VIS) continue;
         int ix=1+icol*ICON_PITCH, iy=2+vis_row*ICON_TILE_STEP;
-        if(mx>=ix&&mx<ix+15&&my>=iy&&my<iy+2) return i;
+        if(mx>=ix&&mx<ix+15&&my>=iy&&my<iy+(cfg_desk_small()?1:2)) return i;
     }
     return -1;
 }
@@ -629,6 +658,15 @@ static void draw_icons(int sel, int menu_open){
         char nm[15]; int nl=(int)strlen(a->name);
         for(int j=0;j<14;j++) nm[j]=(j<nl)?a->name[j]:' ';
         nm[14]=0;
+        if(cfg_desk_small()){
+            /* v0.9.7: the name beside the mark, eleven cells of it */
+            for(int j=0;j<11;j++){
+                char ch = j<nl ? a->name[j] : ' ';
+                if(s) vga_putchar_at(ch,x+5+j,y,sf,sb);
+                else if(j<nl) vga_putchar_at(ch,x+5+j,y,th->desk_fg,th->desk_bg);
+            }
+            continue;
+        }
         if(s){
             vga_putchar_at(' ',x-1>=0?x-1:x,y+1,sf,sb);
             vga_puts_at(nm,x,y+1,sf,sb);
@@ -906,7 +944,7 @@ static void draw_submenu(void){
    a start-menu entry now offers the pin actions on the thing under the
    cursor; right-clicking bare desktop still gives the original two. */
 #define CTXM_W      20
-#define CTXM_MAX     5
+#define CTXM_MAX     8
 #define CTXM_H      (ctx_nitems+2)
 
 /* What a row does.  Numbered rather than a function pointer because two
@@ -916,6 +954,8 @@ static void draw_submenu(void){
 #define CTXA_OPEN      2
 #define CTXA_DESKTOP   3
 #define CTXA_FAVORITE  4
+#define CTXA_TASKBAR   5    /* v0.9.7 (E-4) */
+#define CTXA_ICONSIZE  6    /* v0.9.7 (E-4) */
 
 static void desktop_run_app(void (*fn)(void), const char *name, int fits);  /* with the main loop */
 
@@ -938,6 +978,13 @@ static void ctx_build(int app){
         ctx_action[ctx_nitems++]=CTXA_DESKTOP;
         ctx_labels[ctx_nitems]= is_fav  ? "Unfavorite"      : "Add to favorites";
         ctx_action[ctx_nitems++]=CTXA_FAVORITE;
+        ctx_labels[ctx_nitems]= pin_index(tb_ids,tb_n,appreg[app].id) >= 0
+                                ? "Unpin from taskbar" : "Pin to taskbar";
+        ctx_action[ctx_nitems++]=CTXA_TASKBAR;
+    } else {
+        extern int cfg_desk_small(void);
+        ctx_labels[ctx_nitems]= cfg_desk_small() ? "Large icons" : "Small icons";
+        ctx_action[ctx_nitems++]=CTXA_ICONSIZE;
     }
     ctx_labels[ctx_nitems]="Settings";
     ctx_action[ctx_nitems++]=CTXA_SETTINGS;
@@ -975,6 +1022,23 @@ static int ctx_menu_activate(int sel){
         else    toast_info(r?"Added to desktop":"Removed from desktop");
         ctx_build(ctx_app);          /* the label it just acted on has flipped */
         return 1;
+    }
+    case CTXA_TASKBAR: {
+        if(ctx_app<0) return 0;
+        if(pin_index(tb_ids,tb_n,appreg[ctx_app].id)<0 && tb_n>=TB_PIN_MAX){
+            toast_warning("The taskbar holds 8 pins -- unpin one first"); return 1;
+        }
+        int r=pin_toggle(PIN_FILE_TB,tb_ids,&tb_n,appreg[ctx_app].id);
+        if(r<0) toast_warning("Could not save the taskbar's pins");
+        else    toast_info(r?"Pinned to the taskbar":"Unpinned from the taskbar");
+        ctx_build(ctx_app);
+        return 1;
+    }
+    case CTXA_ICONSIZE: {
+        extern int cfg_desk_small(void); extern void cfg_set_desk_small(int); extern void cfg_save(void);
+        cfg_set_desk_small(!cfg_desk_small()); cfg_save();
+        icon_scroll_row=0;
+        return 0;
     }
     case CTXA_FAVORITE: {
         if(ctx_app<0) return 0;
@@ -4194,6 +4258,10 @@ void desktop_run(void){
                                         appreg[icon_items[icon_sel]].fits);
                         needs_draw=1;
                     }
+                    /* v0.9.7 (E-4): a pinned app on the bar */
+                    { extern int ui_taskbar_pin_hit(int,int);
+                      int pi=ui_taskbar_pin_hit(mx,my);
+                      if(pi>=0){ desktop_tbpin_open(pi); needs_draw=1; } }
                     /* Start button: row 24, cols 0-13 */
                     if(my==TASKBAR_Y&&mx<=13){
                         menu_state=1; top_sel=0; sub_sel=0; sub_scroll=0;

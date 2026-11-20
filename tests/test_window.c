@@ -27,6 +27,11 @@ int vga_phys_rows(void){ return g_pr; }
 uint16_t vga_phys_read(int x, int y){ return (x >= 0 && y >= 0 && x < g_pc && y < g_pr) ? g_scr[y * g_pc + x] : 0; }
 void vga_phys_write(int x, int y, uint16_t v){ if(x >= 0 && y >= 0 && x < g_pc && y < g_pr) g_scr[y * g_pc + x] = v; }
 int vga_fb_active(void){ return 1; }
+/* v0.9.7 (E-4): the taskbar's pins, as shell/desktop.c would give them */
+static int g_npins, g_pin_opened = -1;
+int         desktop_tbpin_count(void){ return g_npins; }
+const char *desktop_tbpin_icon(int i){ (void)i; return "FM"; }
+void        desktop_tbpin_open(int i){ g_pin_opened = i; }
 int vga_set_mode(int c, int r){ modes++; g_pc = c; g_pr = r; g_fillon = 0; for(int i = 0; i < 240 * 135; i++) g_scr[i] = 0x0720; return 1; }
 int vga_set_mode_fill(int c, int r){ fills++; vga_set_mode(c, r); g_fillon = 1; return 1; }
 int vga_viewport_active(void){ return 0; }
@@ -118,6 +123,28 @@ int main(void)
     chrome_layout(128, 48, 0, 1, &L);
     ck("full screen: no title bar, no taskbar to hit", chrome_hit(&L, 128, 126, 0, 0) == CH_NONE &&
        chrome_hit(&L, 128, 2, 47, 0) == CH_NONE, 0);
+
+    head("v0.9.7 (E-4): pinned apps on the taskbar, between Start and the chips");
+    {
+        int ch;
+        chrome_layout(128, 48, 0, 0, &L);
+        g_npins = 0;
+        ck("no pins: the first chip starts where it always did (x=8)",
+           chrome_hit(&L, 128, 8, L.bar_y, &ch) == CH_CHIP && ch == 0, ch);
+        g_npins = 2;
+        ck("two pins: x=8 is the first pin", chrome_hit(&L, 128, 8, L.bar_y, &ch) == CH_PIN && ch == 0, ch);
+        ck("  ... x=11 still the first, x=12 the second",
+           chrome_hit(&L, 128, 11, L.bar_y, &ch) == CH_PIN && ch == 0 &&
+           chrome_hit(&L, 128, 12, L.bar_y, &ch) == CH_PIN && ch == 1, ch);
+        ck("  ... x=16 is the gap, not a chip and not a pin",
+           chrome_hit(&L, 128, 16, L.bar_y, &ch) == CH_BAR, ch);
+        ck("  ... and the first chip moved to x=17",
+           chrome_hit(&L, 128, 17, L.bar_y, &ch) == CH_CHIP && ch == 0 &&
+           chrome_hit(&L, 128, 30, L.bar_y, &ch) == CH_CHIP && ch == 0 &&
+           chrome_hit(&L, 128, 31, L.bar_y, &ch) == CH_CHIP && ch == 1, ch);
+        ck("Start is still Start", chrome_hit(&L, 128, 3, L.bar_y, &ch) == CH_START, 0);
+        g_npins = 0;
+    }
 
     head("v0.9.6.6: full screen FILLS for an 80x25 app, and always comes back");
     {

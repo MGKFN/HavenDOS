@@ -92,8 +92,16 @@ static int btn_x(const ch_layout_t *L, int which)   /* 0 min, 1 max, 2 close */
     return L->title_x1 - (3 - which) * (BTN_W + 1) + 1;
 }
 
-/* Taskbar: "Start" then chips of CHIP_W, the clock at the right. */
-#define CHIP_X0 8
+/* Taskbar: "Start", the pinned apps (v0.9.7, four cells each), then
+   chips of CHIP_W, the clock at the right. The pins come from
+   shell/desktop.c, the same list the desktop's own bar shows. */
+#define PIN_X0  8
+#define PIN_W   4
+extern int         desktop_tbpin_count(void);
+extern const char *desktop_tbpin_icon(int i);
+extern void        desktop_tbpin_open(int i);
+static int chip_x0(void){ int n = desktop_tbpin_count(); return PIN_X0 + n * PIN_W + (n ? 1 : 0); }
+#define CHIP_X0 chip_x0()
 #define CHIP_W  14
 
 int chrome_hit(const ch_layout_t *L, int pw, int x, int y, int *chip)
@@ -108,6 +116,10 @@ int chrome_hit(const ch_layout_t *L, int pw, int x, int y, int *chip)
     }
     if(L->bar_y >= 0 && y == L->bar_y){
         if(x < 7) return CH_START;
+        if(x >= PIN_X0 && x < PIN_X0 + desktop_tbpin_count() * PIN_W){
+            if(chip) *chip = (x - PIN_X0) / PIN_W;
+            return CH_PIN;
+        }
         if(x >= CHIP_X0 && x < pw - 7){
             if(chip) *chip = (x - CHIP_X0) / CHIP_W;
             return CH_CHIP;
@@ -188,6 +200,13 @@ static void draw_bar(int y)
     if(y < 0) return;
     fill(0, pw - 1, y, VGA_WHITE, VGA_DARK_GREY);
     put(0, y, " Start ", VGA_BLACK, VGA_LIGHT_CYAN, 7);
+    for(i = 0; i < desktop_tbpin_count() && PIN_X0 + (i + 1) * PIN_W < pw - 7; i++){
+        const char *ic = desktop_tbpin_icon(i);
+        int px = PIN_X0 + i * PIN_W;
+        put(px, y, " ", VGA_WHITE, VGA_DARK_GREY, 1);
+        put(px + 1, y, ic, VGA_BLACK, VGA_LIGHT_GREY, 2);
+        put(px + 3, y, " ", VGA_WHITE, VGA_DARK_GREY, 1);
+    }
     g_nchips = 0;
     for(i = 1; i < TASK_MAX && x + CHIP_W <= pw - 7 && g_nchips < 16; i++){
         const char *n;
@@ -424,6 +443,7 @@ int chrome_hook(int key)
         return -1;
     case CH_MIN:   bring(0); paint(t); return -1;
     case CH_START: keyboard_inject(KEY_SUPER); bring(0); paint(t); return -1;
+    case CH_PIN:   ptr_hide(); chrome_leave_front(); desktop_tbpin_open(chip); paint(t); return -1;
     case CH_CHIP:
         if(chip >= 0 && chip < g_nchips && g_chip_slot[chip] != task_current()){
             bring(g_chip_slot[chip]); paint(t);

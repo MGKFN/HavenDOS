@@ -77,6 +77,7 @@ static int  g_shell_fg             = -1;   /* -1 = the theme's default   */
 static int  g_shell_bg             = -1;
 static char g_prompt[64]           = "";   /* "" = \u@havendos:\w\$     */
 static int  g_desk_info            = 1;    /* RAM/uptime strip           */
+static int  g_desk_small           = 0;    /* v0.9.7 (E-4): small desktop icons */
 
 /* Per-account hidden flags (index maps to login.c user order) */
 /* 0=admin 1=bootos 2=guest */
@@ -143,6 +144,8 @@ void cfg_load(void){
             g_desk_pattern=cfg_val_int(line,"desk_pattern");
         else if(cfg_startswith(line,"desk_info="))
             g_desk_info=cfg_val_int(line,"desk_info");
+        else if(cfg_startswith(line,"desk_small="))
+            g_desk_small=cfg_val_int(line,"desk_small")?1:0;
         else if(cfg_startswith(line,"shell_fg="))
             g_shell_fg=cfg_val_int(line,"shell_fg");
         else if(cfg_startswith(line,"shell_bg="))
@@ -191,6 +194,7 @@ void cfg_save(void){
     EMIT_KS("hostname",             g_hostname);
     EMIT_KV("desk_pattern",         g_desk_pattern);
     EMIT_KV("desk_info",            g_desk_info);
+    EMIT_KV("desk_small",           g_desk_small);
     /* -1 does not survive utoa, so "unset" is written as 99 and read
        back as out of range. */
     EMIT_KV("shell_fg",             g_shell_fg<0?99:g_shell_fg);
@@ -243,6 +247,8 @@ int         cfg_desk_pattern(void)            { return g_desk_pattern; }
 void        cfg_set_desk_pattern(int v)       { g_desk_pattern=v?1:0; }
 int         cfg_desk_info(void)               { return g_desk_info; }
 void        cfg_set_desk_info(int v)          { g_desk_info=v?1:0; }
+int         cfg_desk_small(void)              { return g_desk_small; }     /* v0.9.7 */
+void        cfg_set_desk_small(int v)         { g_desk_small=v?1:0; }
 int         cfg_shell_fg(void)                { return (g_shell_fg>=0&&g_shell_fg<16)?g_shell_fg:-1; }
 int         cfg_shell_bg(void)                { return (g_shell_bg>=0&&g_shell_bg<16)?g_shell_bg:-1; }
 void        cfg_set_shell_colors(int fg,int bg){ g_shell_fg=fg; g_shell_bg=bg; }

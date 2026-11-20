@@ -330,6 +330,7 @@ static char desk_ids[PIN_MAX][PIN_IDLEN];  static int desk_n=0;
    chip for every open app. */
 #define TB_PIN_MAX 8
 static char tb_ids[PIN_MAX][PIN_IDLEN];    static int tb_n=0;
+static int  tb_loaded;
 
 static int reg_find(const char *id){
     for(int i=0;i<NREG;i++) if(strcmp(appreg[i].id,id)==0) return i;
@@ -425,12 +426,18 @@ static void pins_load(void){
     pin_load(PIN_FILE_DESK,desk_ids,&desk_n,"shell");
     pin_load(PIN_FILE_TB,  tb_ids,  &tb_n,  "files");
     if(tb_n>TB_PIN_MAX) tb_n=TB_PIN_MAX;
+    tb_loaded=1;
 }
 
 /* ── v0.9.7 (E-4): the taskbar's pins, for both bars ───────────────
    shell/chrome.c's bar (under an app) and ui.c's (the desktop's) draw
    and hit-test them through these, so the two cannot disagree. */
-int         desktop_tbpin_count(void){ return tb_n; }
+int         desktop_tbpin_count(void){
+    /* loaded on first use too: an app opened from the boot console
+       draws the bar before the desktop has ever run */
+    if(!tb_loaded){ tb_loaded=1; pin_load(PIN_FILE_TB,tb_ids,&tb_n,"files"); if(tb_n>TB_PIN_MAX) tb_n=TB_PIN_MAX; }
+    return tb_n;
+}
 const char *desktop_tbpin_icon(int i){
     int r = (i>=0&&i<tb_n) ? reg_find(tb_ids[i]) : -1;
     return r>=0 ? appreg[r].icon : "??";
@@ -1702,7 +1709,8 @@ static int popup_menu(int x, int y, const char *const *items, int n)
     if(x<0) x=0;
     if(y+n+2>H) y=H-n-2;
     if(y<0) y=0;
-    if(mouse_is_ready()) mouse_get_clicks();          /* the click that opened it */
+    int lmx=-1, lmy=-1;
+    if(mouse_is_ready()){ mouse_get_clicks(); mouse_get(&lmx,&lmy,&sel); sel=0; }   /* the click that opened it */
     for(;;){
         for(int xx=x;xx<x+w;xx++){
             vga_putchar_at(' ',xx,y,VGA_WHITE,th->accent);
@@ -1733,7 +1741,12 @@ static int popup_menu(int x, int y, const char *const *items, int n)
                 cl = mouse_get_clicks();
                 if(cl&1){ ui_erase_cursor(); return in ? my-y : 0; }
                 if(cl&2){ ui_erase_cursor(); return 0; }
-                if(in && my-y-1!=sel){ ui_erase_cursor(); sel=my-y-1; break; }
+                /* hover follows the mouse only when it MOVES: a pointer
+                   resting over the menu must not undo the arrow keys */
+                if(mx!=lmx || my!=lmy){
+                    lmx=mx; lmy=my;
+                    if(in && my-y-1!=sel){ ui_erase_cursor(); sel=my-y-1; break; }
+                }
                 ui_draw_cursor();
             }
             kpoll_sleep_ms(10);

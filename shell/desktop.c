@@ -1501,6 +1501,37 @@ static void ed_split_line(int row, int col){
 
 /* ── Clipboard operations ────────────────────────────────── */
 
+/* ── v0.9.7 (E-2): the editor's lines and the shared clipboard ──────
+   ed_clip[] stays the editor's working copy; shell/clipboard.c is the
+   one every app reads. Each copy or cut publishes to it, and a paste
+   first takes it back if another app (or another editor) set it since. */
+#include "../include/clipboard.h"
+static uint32_t ed_clip_serial;
+static void ed_clip_publish(void){
+    static char t[CLIP_MAX];
+    int n=0;
+    for(int l=0;l<ed_clip_lines;l++){
+        for(int i=0;ed_clip[l][i]&&n<CLIP_MAX-1;i++) t[n++]=ed_clip[l][i];
+        if(l<ed_clip_lines-1&&n<CLIP_MAX-1) t[n++]='\n';
+    }
+    clip_set(t,n);
+    ed_clip_serial=clip_serial();
+}
+static void ed_clip_pull(void){
+    static char t[CLIP_MAX+1];
+    if(clip_serial()==ed_clip_serial) return;
+    ed_clip_serial=clip_serial();
+    int n=clip_get(t,sizeof t), l=0, c=0;
+    for(int i=0;i<ED_CLIP_LINES;i++) ed_clip[i][0]=0;
+    ed_clip_lines=n?1:0;
+    for(int i=0;i<n&&l<ED_CLIP_LINES;i++){
+        if(t[i]=='\r') continue;
+        if(t[i]=='\n'){ ed_clip[l][c]=0; l++; c=0; if(l<ED_CLIP_LINES) ed_clip_lines=l+1; continue; }
+        if(c<ED_COLS-1) ed_clip[l][c++]=t[i];
+        ed_clip[l][c]=0;
+    }
+}
+
 /* Copy selection into clipboard. Returns 1 if something was copied. */
 static int ed_copy_sel(void){
     if(!ed_sel_active) return 0;
@@ -1517,6 +1548,7 @@ static int ed_copy_sel(void){
         ed_clip[ed_clip_lines][n]=0;
         ed_clip_lines++;
     }
+    ed_clip_publish();                   /* v0.9.7: every app can paste it */
     return 1;
 }
 
@@ -1550,6 +1582,7 @@ static void ed_delete_sel(int *crow,int *ccol){
 
 /* Paste clipboard at cursor position */
 static void ed_paste(int *crow,int *ccol){
+    ed_clip_pull();                      /* v0.9.7: what another app copied */
     if(ed_clip_lines==0) return;
     if(ed_sel_active) ed_delete_sel(crow,ccol);
     int r=*crow, c=*ccol;
@@ -1716,7 +1749,80 @@ static void app_texteditor_run(void){
             }
         }
 
-        int c=keyboard_waitchar();
+        /* ── v0.9.7 (E-2): KEYS AND THE MOUSE, EVERY PASS ─────────────
+           This was keyboard_waitchar(): the mouse was looked at only
+           after a key, so on the HP the pointer never showed here and a
+           click did nothing until something was typed. Now the pointer
+           is drawn while waiting; a click puts the cursor where it
+           points, a drag selects, Shift+click extends, the wheel
+           scrolls three lines a notch. A right-click goes to the menu
+           at the top of the loop, as before. */
+        int c=-1;
+        {
+            static int drag, dr, dc;
+            extern int  mouse_get_wheel(void);
+            extern int  kbd_shift(void);
+            extern void kpoll_sleep_ms(uint32_t);
+            vga_flush();
+            for(;;){
+                c=keyboard_getchar();
+                if(c!=-1) break;
+                if(mouse_is_ready()){
+                    int mx,my,mb,w;
+                    mouse_get(&mx,&my,&mb);
+                    ui_draw_cursor();
+                    w=mouse_get_wheel();
+                    if(w){
+                        int n=3*(w>0?w:-w);
+                        while(n--){
+                            if(w>0&&crow>0) crow--;
+                            else if(w<0&&crow<ed_last_row()) crow++;
+                        }
+                        { int l=(int)strlen(ed_buf[crow]); if(ccol>l) ccol=l; }
+                        c=-2; break;
+                    }
+                    if(mb&2){ c=-3; break; }
+                    if(mb&1){
+                        int tr=srow+(my-2), tc=scol+(mx-ED_LNPAD);
+                        if(my>=2 && my<2+ED_VROWS && mx>=ED_LNPAD){
+                            int l;
+                            if(tr>ed_last_row()) tr=ed_last_row();
+                            if(tr<0) tr=0;
+                            l=(int)strlen(ed_buf[tr]);
+                            if(tc>l) tc=l;
+                            if(tc<0) tc=0;
+                            if(!drag){
+                                drag=1;
+                                if(kbd_shift()){
+                                    if(!ed_sel_active){ ed_sel_active=1; ed_sel_sr=crow; ed_sel_sc=ccol; }
+                                    dr=ed_sel_sr; dc=ed_sel_sc;
+                                    ed_sel_er=tr; ed_sel_ec=tc;
+                                } else { ed_sel_active=0; dr=tr; dc=tc; }
+                                crow=tr; ccol=tc; c=-2; break;
+                            }
+                            if(tr!=crow||tc!=ccol){
+                                ed_sel_active=1; ed_sel_sr=dr; ed_sel_sc=dc;
+                                ed_sel_er=tr; ed_sel_ec=tc;
+                                crow=tr; ccol=tc; c=-2; break;
+                            }
+                        }
+                    } else drag=0;
+                }
+                kpoll_sleep_ms(10);
+            }
+        }
+        if(c==-3) continue;                  /* the right-click menu, above */
+        if(c==-2){
+            if(ed_sel_active&&ed_sel_sr==ed_sel_er&&ed_sel_sc==ed_sel_ec) ed_sel_active=0;
+            if(crow<srow) srow=crow;
+            if(crow>=srow+ED_VROWS) srow=crow-ED_VROWS+1;
+            if(ccol<scol) scol=ccol;
+            if(ccol>=scol+ED_VCOLS) scol=ccol-ED_VCOLS+1;
+            ui_erase_cursor();
+            ed_redraw(crow,ccol,srow,scol);
+            continue;
+        }
+        ui_erase_cursor();
         extern int kbd_shift(void);
         int shift=kbd_shift();
 
@@ -1755,6 +1861,7 @@ static void app_texteditor_run(void){
                 for(int i=0;i<ED_CLIP_LINES;i++) ed_clip[i][0]=0;
                 ed_clip_lines=1;
                 strncpy(ed_clip[0],ed_buf[crow],ED_COLS-1);
+                ed_clip_publish();       /* v0.9.7 */
                 for(int i=crow;i<ED_ROWS-1;i++) strcpy(ed_buf[i],ed_buf[i+1]);
                 ed_buf[ED_ROWS-1][0]=0;
                 if(crow>ed_last_row()&&crow>0) crow--;

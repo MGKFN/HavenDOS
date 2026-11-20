@@ -22,6 +22,7 @@ extern int delete_user(const char*);
 extern int passwd_user(const char*, const char*, const char*);
 extern int keyboard_getchar(void);
 extern int chrome_take_close(void);   /* shell/chrome.c, v0.9.6.6 */
+#include "../include/clipboard.h"     /* v0.9.7 */
 extern int keyboard_waitchar(void);
 extern void screensaver_run_matrix(void);
 extern void screensaver_run_stars(void);
@@ -577,6 +578,22 @@ void shell_read_line(char *buf, int max, const char *prompt){
            nothing, so on the HP the Shell's X did nothing. It is `exit`. */
         if(c==27 && chrome_take_close()){
             vga_putchar('\n'); strncpy(buf,"exit",max-1); buf[max-1]=0; return;
+        }
+
+        /* v0.9.7 (E-2): Ctrl+V pastes the shared clipboard -- what the
+           editor copied -- up to its first line break, at the cursor. */
+        if(c==0x16){
+            static char clip[CLIP_MAX+1];
+            int n=clip_get(clip,sizeof clip);
+            for(int k=0;k<n && clip[k]!='\n' && clip[k]!='\r' && len<max-1;k++){
+                char ch=clip[k];
+                if(ch=='\t') ch=' ';
+                if((unsigned char)ch<32) continue;
+                for(int i=len;i>pos;i--) buf[i]=buf[i-1];
+                buf[pos++]=ch; len++; buf[len]=0;
+            }
+            line_redraw(prompt,buf,pos,&shown);
+            continue;
         }
 
         /* ---- cursor movement ---- */

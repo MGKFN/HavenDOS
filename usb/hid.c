@@ -379,7 +379,7 @@ static int hid_bind(usb_dev_t *d, uint8_t num, uint8_t sub, uint8_t proto)
         h->proto = proto; h->rp = 1;
         mouse_usb_attach();
         /* short: klog cuts a line at 80 columns, and the end is the point */
-        klog(KLOG_OK, "USB mouse %4x:%4x if %u: report protocol%s",
+        klog(KLOG_OK, "USB mouse %4x:%4x interface %u: report protocol%s",
              (uint32_t)d->vendor, (uint32_t)d->product, (uint32_t)num,
              g_rd[g_nhid - 1].i_wheel >= 0 ? ", wheel" : ", no wheel");
         return 1;

@@ -29,12 +29,12 @@ META = dict(
     subtitle=("Every release from today to December 2029,<br/>"
               "laid out: what is in it, the work,<br/>"
               "how it is accepted, what it waits on"),
-    part="THS-RM-1005 REV C",
-    date="17 NOV 2026",
+    part="THS-RM-1005 REV D",
+    date="20 NOV 2026",
     author="Kyan Hoekstra / TechHaven Studios",
-    baseline="v0.9.6.6 Beta &ldquo;Daedalus&rdquo;, 7472 checks across 72 suites",
+    baseline="v0.9.7 Beta &ldquo;Mnemosyne&rdquo;, 7654 checks across 75 suites",
     supersedes="THS-RM-1004 sections 12&ndash;22 (its numbering standard stands)",
-    status="DECIDED TO 17 NOV 2026 &mdash; eight questions open (section 21)",
+    status="DECIDED TO 20 NOV 2026 &mdash; eight questions open (section 21)",
     cover_bars=[
         ("MONITOR",      18, 20, "lit, scaled, automatic"),
         ("MOUSE",        15, 20, "every app; HP to confirm"),
@@ -90,7 +90,7 @@ def _timeline():
 _ROAD = [
     # label, from (month, day), to (month, day)  -- all 2026/27
     ("0.9.6.x  HP",       (11, 16), (11, 21)),
-    ("0.9.7    VERS+UI",  (11, 18), (11, 26)),
+    ("0.9.7    VERS+UI",  (11, 18), (11, 20)),
     ("0.9.8    HTTPS",    (11, 27), (12, 5)),
     ("0.9.9    HARD+HDA", (12, 6),  (12, 12)),
     ("27100    CH30",     (12, 13), (12, 15)),
@@ -310,7 +310,7 @@ dict(title="How a release is made", body=[
 dict(title="The plan at a glance", body=[
  ("table", ["Release", "Target", "In one line"], [
    ["0.9.6.x", "to 21 Nov", "What the HP shows; nothing new"],
-   ["0.9.7", "~26 Nov", "The new versioning in the updater; Retro PC "
+   ["0.9.7", "<b>20 Nov, released</b>", "The new versioning in the updater; Retro PC "
     "(E-1); the editor&rsquo;s clipboard (E-2); Files&rsquo; right-click "
     "menu (E-3); taskbar pins and smaller icons (E-4)"],
    ["0.9.8", "~5 Dec", "Real HTTPS, then updating over the internet"],
@@ -358,7 +358,7 @@ dict(title="0.9.6.x: finishing on the HP", body=[
 
 # ══════════════════════════════════════════════════════════════════ 7
 dict(title="0.9.7: the new versioning in the updater", body=[
- ("spec", [("TARGET", "~26 November 2026, with exceptions E-1 to E-4"), ("CHANNEL", "CH20 Beta, the "
+ ("spec", [("TARGET", "Released 20 November 2026 as &ldquo;Mnemosyne&rdquo;, with exceptions E-1 to E-4, six days early"), ("CHANNEL", "CH20 Beta, the "
            "first pre-release"), ("STANDARD", "THS-RM-1004 sections 1&ndash;11")]),
  ("p", "The updater learns the numbers HavenDOS 1 will carry, so that by "
        "the switch every installed 0.9.x already understands them. Nothing a "
@@ -774,8 +774,11 @@ dict(title="Document control", body=[
    ["THS-RM-1005 REV A", "17 Nov 2026", "This roadmap"],
    ["THS-RM-1005 REV B", "17 Nov 2026", "Exception E-1: Retro PC "
     "in 0.9.7; 0.9.7 to ~24 Nov"],
-   ["<b>THS-RM-1005 REV C</b>", "17 Nov 2026", "0.9.6.6; exceptions "
+   ["THS-RM-1005 REV C", "17 Nov 2026", "0.9.6.6; exceptions "
     "E-2 to E-5; 0.9.7 ~26 Nov, 0.9.8 ~5 Dec, freeze ~12 Dec, Stable 1 Jan"],
+   ["<b>THS-RM-1005 REV D</b>", "20 Nov 2026", "0.9.7 &ldquo;Mnemosyne&rdquo; "
+    "released with E-1 to E-4, the first GitHub pre-release; other dates "
+    "unchanged"],
  ], [26, 18, 56]),
  ("p", "Built by " + cmd("docs/rm1005/build.py") + " from "
        + cmd("docs/rm1005/content.py") + " in the house style: A5, cream "

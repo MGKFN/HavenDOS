@@ -365,6 +365,21 @@ int ui_taskbar_pin_hit(int x, int y)
     return -1;
 }
 
+/* drawn outside ui_draw_desktop_bars() so tests/bars.inc, which lifts
+   that function out for test_chrome, needs only this one name */
+void ui_draw_tbpins(int bar_y)
+{
+    theme_t *th = ui_theme();
+    for(int i=0;i<desktop_tbpin_count() && tbpin_fits(i);i++){
+        int px=tbpin_x0()+i*4;
+        const char *ic=desktop_tbpin_icon(i);
+        vga_putchar_at(' ',px,bar_y,th->bar_fg,th->bar_bg);
+        vga_putchar_at(ic[0],px+1,bar_y,VGA_BLACK,VGA_LIGHT_GREY);
+        vga_putchar_at(ic[1],px+2,bar_y,VGA_BLACK,VGA_LIGHT_GREY);
+        vga_putchar_at(' ',px+3,bar_y,th->bar_fg,th->bar_bg);
+    }
+}
+
 void ui_draw_desktop_bars(void){
     theme_t *th=ui_theme();
     const int W=vga_cols();
@@ -401,14 +416,7 @@ void ui_draw_desktop_bars(void){
     int ulen=(int)strlen(un);
     vga_puts_at(un,15,BAR_Y,th->bar_fg,th->bar_bg);
     if(current_user_admin()) vga_puts_at("(admin)",16+ulen,BAR_Y,VGA_DARK_GREY,th->bar_bg);
-    for(int i=0;i<desktop_tbpin_count() && tbpin_fits(i);i++){
-        int px=tbpin_x0()+i*4;
-        const char *ic=desktop_tbpin_icon(i);
-        vga_putchar_at(' ',px,BAR_Y,th->bar_fg,th->bar_bg);
-        vga_putchar_at(ic[0],px+1,BAR_Y,VGA_BLACK,VGA_LIGHT_GREY);
-        vga_putchar_at(ic[1],px+2,BAR_Y,VGA_BLACK,VGA_LIGHT_GREY);
-        vga_putchar_at(' ',px+3,BAR_Y,th->bar_fg,th->bar_bg);
-    }
+    ui_draw_tbpins(BAR_Y);          /* v0.9.7 (E-4), beside the user's name */
 
     const int CLOCK_X=W-9, BELL_X=W-25;
     extern int notif_get_unread(void);

@@ -38,6 +38,7 @@ void ui_draw_desktop_bars(void){
     int ulen=(int)strlen(un);
     vga_puts_at(un,15,BAR_Y,th->bar_fg,th->bar_bg);
     if(current_user_admin()) vga_puts_at("(admin)",16+ulen,BAR_Y,VGA_DARK_GREY,th->bar_bg);
+    ui_draw_tbpins(BAR_Y);          /* v0.9.7 (E-4), beside the user's name */
 
     const int CLOCK_X=W-9, BELL_X=W-25;
     extern int notif_get_unread(void);

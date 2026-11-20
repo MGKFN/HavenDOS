@@ -1,12 +1,12 @@
 # HavenDOS — handoff, 17 November 2026
 
-Current release: **v0.9.6.7** (channel Beta, codename "Daedalus"), commit
+Current release: **v0.9.7** (a GitHub pre-release) (channel Beta, codename "Daedalus"), commit
 5e1cca7 on MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
 ## FOR A NEW CHAT: READ THIS FIRST
 
-- **The plan is THS-RM-1005 REV C** (`docs/roadmap/HavenDOS-Roadmap-RM1005.pdf`,
+- **The plan is THS-RM-1005 REV D** (`docs/roadmap/HavenDOS-Roadmap-RM1005.pdf`,
   built from `docs/rm1005/`). It lays out every release from here to
   29H2. THS-RM-1004 (`docs/rm1004/`) still holds the numbering standard
   (its sections 1–11).
@@ -51,7 +51,75 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.6.7 (17 Nov) — THE BOOT NO LONGER WAITS ON THE TRACKPAD
+## START HERE: 0.9.7 "Mnemosyne" (20 Nov) — EVERYTHING REV C PLANNED
+
+Kyan, after 0.9.6.7 booted again: "just gimme the emulator lol, also I
+like it so that u release 0.9.7 with all planned stuff okay". So 0.9.7
+carries all of it. The preview ISO of Retro PC on 0.9.6.7 went to him
+first, the same day.
+
+**It is the first GitHub PRE-release.** `tools/release_names.py` gives
+the workflow the tag, ISO name, title and `--prerelease` (below CH50).
+"latest" stays on v0.9.6.7 until a Stable release.
+
+**What is in it:**
+- **Retro PC:** `emu/`, `shell/retro.c` and `archive/retro/`. See the
+  section below. The branch `emu86` is merged; build on main.
+- **The wheel on real mice** (`usb/hid.c`):
+  - `mouse_try_report()` reads the report descriptor with
+    `usb/hid_rd.c` and sets REPORT protocol when relative X, Y and a
+    button resolve;
+  - `mouse_report_rp()` decodes it into the boot layout for
+    `mouse_report()` and splits big moves;
+  - anything else is boot protocol, as before;
+  - `test_usbhid` 49, `check_usbhid_suite` 13/13.
+- **Versioning** (`kernel/verinfo.c`, `include/verinfo.h`):
+  - `version.h` has PRODUCT/RELEASE/BUILD/REVISION/CHANNEL_ID/LEVEL;
+    product 0 is the 0.9.x line;
+  - `ver_display()` is used by `ver`, System, Settings' About,
+    neofetch and the splash;
+  - the manifest keys are parsed in `fs/update_src.c`;
+  - `fs/update.c` refuses a less stable channel before writing;
+  - `update channel [name]` is handled in `shell/shell.c`, with the
+    subscription in `/boot/channel.inf`, defaulting to the build's own
+    channel;
+  - `make_iso_manifest.py` writes `channel=` and `level=`;
+  - tests: `test_verinfo` 43, `check_verinfo_suite` 8/8,
+    `test_vercmp` 39, `test_update` 169.
+- **E-2:**
+  - `shell/clipboard.c` is the one clipboard;
+  - the editor (`app_texteditor_run` in `shell/desktop.c`) polls keys
+    and the mouse, draws the pointer, and handles click, drag,
+    Shift+click and the wheel;
+  - `ed_clip_publish()` and `ed_clip_pull()` sync with the clipboard;
+  - the Shell's Ctrl+V is in `shell_read_line()`.
+- **E-3:**
+  - `popup_menu()` in `shell/desktop.c`: the mouse and the keys, and
+    hover follows only movement (a resting pointer once undid Down);
+  - `fm_menu()`, `fm_prompt()` and `fm_copy_file()` for Files;
+  - every action is judged by `vfs_exists()` afterwards, because
+    fat16 returns 0 for success and fat32 returns 1.
+- **E-4:**
+  - `TASKBAR.CFG` pins (max 8, default `files`) through
+    `desktop_tbpin_*()`;
+  - the chrome bar (`CH_PIN`, `chip_x0()`) and the desktop bar
+    (`ui_draw_tbpins()`, `ui_taskbar_pin_hit()`) both show them;
+  - `cfg desk_small` gives small icons (`ICON_TILE_STEP` 1);
+  - `test_window` 40.
+- **QEMU:** `harness/features_097.py` 10/10. Note that the pointer is a
+  '.' cell: move it off text before reading the screen.
+
+**Checks:** 7654/7654 in 75 suites. `retro_boot` 9/9 twice,
+`fixes_0966`, `window_apps`, `mouse_apps` and `hid_boot` all pass.
+
+**Next: 0.9.8, HTTPS (~5 Dec), then online updates. HP photos wanted:**
+1. `dmesg | grep I2C` (the trackpad);
+2. `dmesg | grep monitor` (the fallback);
+3. where the cursor is still missing;
+4. the wheel on his mouse;
+5. the iPhone after a replug.
+
+## 0.9.6.7 (17 Nov) — THE BOOT NO LONGER WAITS ON THE TRACKPAD
 
 **The HP's photo of 0.9.6.6:**
 - the splash stopped at "I2C 00:1F.5 at FE010000: not a DesignWare core
@@ -155,7 +223,7 @@ conflicts: take main's version, which has `chrome_take_close()`,
 `chrome_leave_front()` and the grow code. Then the versioning, E-2, E-3
 and E-4 (RM-1005 REV C sections 3 and 7). E-5 HD Audio is in 0.9.9.
 
-## ON THE BRANCH emu86: RETRO PC (17 Nov), FOR 0.9.7
+## RETRO PC (built 17 Nov on the branch emu86, merged in 0.9.7)
 
 Kyan sent `kernel.img`, K-DOS Beta 1.1b, the oldest build that
 survived, and asked for it to run as an emulator inside HavenDOS.

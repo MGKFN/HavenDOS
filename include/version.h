@@ -34,7 +34,7 @@
 
 #define HAVENDOS_VER_MAJOR  0
 #define HAVENDOS_VER_MINOR  9
-#define HAVENDOS_VER_PATCH  6
+#define HAVENDOS_VER_PATCH  7
 /* A fourth number, for a patch release that fixes the release before it
    without adding a feature.  ver_cmp() in fs/update.c already parses four
    components, so 0.8.5.1 compares as newer than 0.8.5 and `update`
@@ -73,15 +73,15 @@
 /* v0.9.6.1: the first maintenance update of 0.9.6, under THS-RM-1004
    section 12 -- fixes only, up to .10 per line. */
 /* v0.9.6.6: the fixes from Kyan's 0.9.6.5 test on the HP, 17 Nov. */
-/* v0.9.6.7: the boot the HP held in 0.9.6.6's trackpad search. */
-#define HAVENDOS_VER_BUILD  7
+/* v0.9.7: a new line, so its maintenance number starts again. */
+#define HAVENDOS_VER_BUILD  0
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.6.7"
+#define HAVENDOS_VER_NUM    "0.9.7"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"
@@ -96,7 +96,10 @@
    with more than one thing moving in it -- several apps open at once.
    RM-1003 gave the name to an app-port wave that Hephaestus finished;
    the handoff said it would take whatever number it reached. */
-#define HAVENDOS_CODENAME   "Daedalus"
+/* "Mnemosyne", v0.9.7: memory -- the release that keeps the oldest
+   builds alive (Retro PC boots K-DOS Beta 1.1b) and teaches every
+   install the numbers it will be known by. */
+#define HAVENDOS_CODENAME   "Mnemosyne"
 #define HAVENDOS_FULL       HAVENDOS_NAME " " HAVENDOS_VER " " HAVENDOS_CHANNEL \
                             " \"" HAVENDOS_CODENAME "\""
 

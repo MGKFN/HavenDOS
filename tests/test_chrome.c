@@ -57,6 +57,7 @@ void ui_sel_colors(vga_color_t *fg, vga_color_t *bg){ *fg = VGA_BLACK; *bg = VGA
 #endif
 const char *current_username(void){ return "kyan"; }
 int current_user_admin(void){ return 1; }
+void ui_draw_tbpins(int y){ (void)y; }   /* v0.9.7: the pins have their own checks */
 static int g_unread = 0;
 int notif_get_unread(void){ return g_unread; }
 

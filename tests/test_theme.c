@@ -92,6 +92,8 @@ void vga_fill_row(int y,char c,vga_color_t f,vga_color_t b){ for(int x=0;x<80;x+
 const char *current_username(void){ return "admin"; }
 int  current_user_admin(void){ return 1; }
 int  notif_get_unread(void){ return 0; }
+int         desktop_tbpin_count(void){ return 0; }      /* v0.9.7: the taskbar's pins */
+const char *desktop_tbpin_icon(int i){ (void)i; return "??"; }
 int  bpkg_is_installed(const char *n){ (void)n; return g_extra_installed; }
 /* v0.9.5: the wallpaper switch lives in kernel/config.c. */
 static int g_cfg_pattern = 1, g_cfg_saves;

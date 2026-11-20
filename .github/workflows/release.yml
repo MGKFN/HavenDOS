@@ -44,7 +44,14 @@ jobs:
           ver=$(sed -n 's/^#define[[:space:]]\+HAVENDOS_VER_NUM[[:space:]]\+"\([^"]*\)".*/\1/p' include/version.h)
           [ -n "$ver" ] || { echo "::error::no HAVENDOS_VER_NUM in include/version.h"; exit 1; }
           echo "ver=$ver" >> "$GITHUB_OUTPUT"
-          if gh release view "v$ver" >/dev/null 2>&1; then
+          # v0.9.7: the tag, the ISO's name, the title and whether it is a
+          # pre-release all come from tools/release_names.py (THS-RM-1004
+          # s.9-11): v0.9.7 now, 27100.1000 and HavenDOS-1-27H1.iso from
+          # HavenDOS 1. Everything below Stable is a pre-release.
+          python3 tools/release_names.py --selftest >/dev/null
+          eval "$(python3 tools/release_names.py include/version.h)"
+          { echo "tag=$TAG"; echo "iso=$ISO"; echo "title=$TITLE"; echo "pre=$PRERELEASE"; } >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" >/dev/null 2>&1; then
             echo "exists=1" >> "$GITHUB_OUTPUT"
           else
             echo "exists=0" >> "$GITHUB_OUTPUT"
@@ -53,11 +60,11 @@ jobs:
             echo "::error::changelogs/CHANGELOG-v$ver.md is missing -- write it before bumping the version"
             exit 1
           fi
-          echo "HavenDOS $ver"
+          echo "$TITLE  (tag $TAG, $ISO, pre-release: $PRERELEASE)"
 
       - name: Already published
         if: steps.v.outputs.exists == '1' && github.event_name == 'push'
-        run: echo "v${{ steps.v.outputs.ver }} is already a release; nothing to do. Run the workflow by hand to rebuild it."
+        run: echo "${{ steps.v.outputs.tag }} is already a release; nothing to do. Run the workflow by hand to rebuild it."
 
       - name: Toolchain
         if: steps.v.outputs.exists == '0' || github.event_name == 'workflow_dispatch'
@@ -94,14 +101,21 @@ jobs:
         if: steps.v.outputs.exists == '0' || github.event_name == 'workflow_dispatch'
         run: |
           ver="${{ steps.v.outputs.ver }}"
+          tag="${{ steps.v.outputs.tag }}"
+          iso="${{ steps.v.outputs.iso }}"
+          title="${{ steps.v.outputs.title }}"
+          pre="${{ steps.v.outputs.pre }}"
           stage="dist/HavenDOS-$ver"
+          # the build names its ISO after VER_NUM; from HavenDOS 1 the
+          # release's own name differs (HavenDOS-1-27H1.iso)
+          [ "HavenDOS-$ver.iso" = "$iso" ] || cp -f "HavenDOS-$ver.iso" "$iso"
           notes=$(mktemp)
           {
             echo "**Which file do I want?**"
             echo ""
             echo "| File | For |"
             echo "|---|---|"
-            echo "| \`HavenDOS-$ver.iso\` | Booting or installing -- BIOS and UEFI, Secure Boot off |"
+            echo "| \`$iso\` | Booting or installing -- BIOS and UEFI, Secure Boot off |"
             echo "| \`HavenDOS-$ver-bundle.zip\` | Updating an installed system: the kernel, \`update.inf\` and the Windows/Linux staging scripts, plus the ISO, handoff and hardware-test docs |"
             echo "| \`HavenDOS-$ver-source.zip\` | Building it yourself -- \`make && make test\` |"
             echo ""
@@ -109,13 +123,14 @@ jobs:
             echo ""
             cat "changelogs/CHANGELOG-v$ver.md"
           } > "$notes"
-          files=("HavenDOS-$ver.iso" "$stage/HavenDOS-$ver-source.zip" "dist/HavenDOS-$ver-bundle.zip")
+          files=("$iso" "$stage/HavenDOS-$ver-source.zip" "dist/HavenDOS-$ver-bundle.zip")
           for f in "${files[@]}"; do [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }; done
-          if gh release view "v$ver" >/dev/null 2>&1; then
-            gh release upload "v$ver" "${files[@]}" --clobber
-            gh release edit "v$ver" --notes-file "$notes"
+          preflag=(); [ "$pre" = "true" ] && preflag=(--prerelease)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber
+            gh release edit "$tag" --notes-file "$notes" "${preflag[@]}"
           else
-            gh release create "v$ver" "${files[@]}" \
-              --title "HavenDOS $ver" --notes-file "$notes" --target "$GITHUB_SHA"
+            gh release create "$tag" "${files[@]}" "${preflag[@]}" \
+              --title "$title" --notes-file "$notes" --target "$GITHUB_SHA"
           fi
-          gh release view "v$ver" --json url,assets --jq '.url, (.assets[] | "  \(.name)  \(.size)")'
+          gh release view "$tag" --json url,assets --jq '.url, (.assets[] | "  \(.name)  \(.size)")'

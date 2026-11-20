@@ -1729,7 +1729,8 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
             {
                 const char *l1 = HAVENDOS_EA_LINE1;
                 const char *l2 = HAVENDOS_EA_LINE2;
-                const char *l3 = HAVENDOS_FULL;
+                extern const char *ver_display(void);   /* v0.9.7 */
+                const char *l3 = ver_display();
                 const char *l4 = "press any key";
                 vga_puts_at(l3, (W - (int)strlen(l3)) / 2, top + 1,
                             VGA_LIGHT_CYAN, VGA_BLACK);

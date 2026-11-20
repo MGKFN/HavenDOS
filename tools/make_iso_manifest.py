@@ -51,6 +51,16 @@ def main():
             "size=%u\n"
             "crc32=%08x\n"
             "kernel=%s\n" % (ver, len(data), crc, os.path.basename(kernel)))
+    # v0.9.7, THS-RM-1004: what HavenDOS 1's updaters read. An updater
+    # from before 0.9.7 ignores keys it does not know; one from 0.9.7 on
+    # refuses an update from a less stable channel than it follows.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import release_names
+    f = release_names.fields(open(header, encoding="utf-8").read())
+    text += "channel=CH%02d\nlevel=%d\n" % (f["channel"], f["level"])
+    if f["product"] >= 1:
+        text += ("product=%d\nrelease=%s\ncodename=%s\nbuild=%d\nrevision=%d\n"
+                 % (f["product"], f["release"], f["codename"], f["build"], f["revision"]))
     with open(out, "w", encoding="ascii", newline="\n") as f:
         f.write(text)
 

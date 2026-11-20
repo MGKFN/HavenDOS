@@ -99,6 +99,27 @@
 #define HAVENDOS_CODENAME   "Daedalus"
 #define HAVENDOS_FULL       HAVENDOS_NAME " " HAVENDOS_VER " " HAVENDOS_CHANNEL \
                             " \"" HAVENDOS_CODENAME "\""
+
+/* ── v0.9.7: THE NUMBERS HAVENDOS 1 WILL CARRY (THS-RM-1004 s.1-11) ────
+   Taught to the updater now, so that every installed 0.9.x already
+   understands them when 27100.1000 arrives.
+
+   PRODUCT 0 is the 0.9.x line: it keeps HAVENDOS_VER_NUM and the
+   display above. From HavenDOS 1, PRODUCT is 1, RELEASE "27H1",
+   BUILD 27100, REVISION 1000, and HAVENDOS_VER_NUM is "27100.1000" --
+   still plain dotted numbers, so ver_cmp() takes 27100.1000 as newer
+   than any 0.9.9.N and the tools need nothing new to compare them.
+
+   CHANNEL_ID: CH00 Experimental, CH10 Development (local only), CH20
+   Beta, CH30 Public Beta, CH40 Release Preview, CH50 Stable. The
+   HAVENDOS_CHANNEL word above is the fallback; kernel/verinfo.c names
+   channels from the number. */
+#define HAVENDOS_PRODUCT     0
+#define HAVENDOS_RELEASE     ""
+#define HAVENDOS_BUILD       0
+#define HAVENDOS_REVISION    0
+#define HAVENDOS_CHANNEL_ID  20
+#define HAVENDOS_LEVEL       1      /* 1 maintenance, 2 feature update, 3 the half-year release */
 #define HAVENDOS_VENDOR     "TechHaven Studios"
 
 /* ── IS THIS A PRE-RELEASE? ──────────────────────────────────────────

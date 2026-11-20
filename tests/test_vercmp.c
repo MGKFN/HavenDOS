@@ -127,6 +127,19 @@ int main(void)
     ck("so 'same version already installed' can actually fire",
        ver_cmp("v0.7.19", "0.7.19") == 0, ver_cmp("v0.7.19", "0.7.19"));
 
+    /* v0.9.7, THS-RM-1004: the numbers HavenDOS 1 carries are plain
+       dotted numbers, so the comparison every 0.9.x updater already
+       makes takes them in the right order -- proved, not assumed. */
+    cmp_is("27100.1000", "0.9.9.10", 1);
+    cmp_is("27100.1000", "0.9.9", 1);
+    cmp_is("27100.1001", "27100.1000", 1);
+    cmp_is("27101.1000", "27100.1009", 1);
+    cmp_is("27500.1000", "27101.1000", 1);
+    cmp_is("27100.0999", "27100.1000", -1);    /* a local build is older than the release */
+    cmp_is("27100.1000", "27100.1000", 0);
+    cmp_is("0.9.7", "0.9.6.7", 1);
+    cmp_is("0.9.6.7", "0.9.7", -1);
+
     printf("\n%d/%d passed\n", total - fails, total);
     return fails ? 1 : 0;
 }

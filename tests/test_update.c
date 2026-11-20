@@ -281,6 +281,8 @@ int iso9660_read_file(const char *path, uint8_t *buf, uint32_t max){
     return (int)n;
 }
 
+#define VERINFO_NO_SYSTEM
+#include "../kernel/verinfo.c"       /* v0.9.7: ver_channel_parse, for channel= */
 #include "../fs/update_src.c"
 
 /* ── helpers ────────────────────────────────────────────────────────── */
@@ -1004,6 +1006,36 @@ int main(void){
             ck("probe refuses it", cd_src_probe() == 0, 0);
             g_iso_kernel_sz = keep;
         }
+    }
+
+    /* ── v0.9.7: HavenDOS 1's manifest keys (THS-RM-1004) ───────── */
+    {
+        upd_manifest_t m;
+        static const char HD1[] =
+            "HAVENDOS-UPDATE 1\r\n"
+            "version=27100.1000\r\nsize=4300000\r\ncrc32=1234abcd\r\nkernel=havendos.elf\r\n"
+            "product=1\r\nrelease=27H1\r\ncodename=Brandaris\r\nbuild=27100\r\n"
+            "revision=1000\r\nlevel=3\r\nchannel=CH40\r\n";
+        ck("v0.9.7: a HavenDOS 1 manifest parses", parse(HD1, &m) == UPDM_OK, 0);
+        ck("  ... product, build, revision, level",
+           m.product == 1 && m.build == 27100 && m.revision == 1000 && m.level == 3, m.build);
+        ck("  ... release and codename", !strcmp(m.release, "27H1") && !strcmp(m.codename, "Brandaris"), 0);
+        ck("  ... channel=CH40 is Release Preview", m.channel == 40, m.channel);
+        ck("  ... and version= is still what is compared", !strcmp(m.version, "27100.1000"), 0);
+        ck("channel=beta and channel=50 read too",
+           parse("HAVENDOS-UPDATE 1\nversion=0.9.8\nsize=9\nkernel=k\nchannel=beta\n", &m) == UPDM_OK &&
+           m.channel == 20 &&
+           parse("HAVENDOS-UPDATE 1\nversion=0.9.8\nsize=9\nkernel=k\nchannel=50\n", &m) == UPDM_OK &&
+           m.channel == 50, m.channel);
+        ck("a channel that is no channel is refused, not guessed",
+           parse("HAVENDOS-UPDATE 1\nversion=0.9.8\nsize=9\nkernel=k\nchannel=gamma\n", &m) == UPDM_E_VALUE, 0);
+        ck("a build that is not a number is refused",
+           parse("HAVENDOS-UPDATE 1\nversion=0.9.8\nsize=9\nkernel=k\nbuild=27k\n", &m) == UPDM_E_VALUE, 0);
+        ck("a manifest from before 0.9.7 still parses, naming no channel",
+           parse("HAVENDOS-UPDATE 1\nversion=0.9.6.7\nsize=9\nkernel=k\n", &m) == UPDM_OK &&
+           m.channel == -1 && m.product == -1 && m.release[0] == 0, m.channel);
+        ck("  ... and such a manifest is taken whatever the subscription",
+           ver_channel_accepts(CH_STABLE, m.channel), 0);
     }
 
     if(g_img){ fclose(g_img); g_img=NULL; }

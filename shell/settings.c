@@ -646,8 +646,8 @@ static int page_about(int k, int *sel){
     if(k && k!=KEY_UP && k!=KEY_DOWN) return 0;
     const theme_t *th=ui_theme();
     char mem[24]; utoa_s((pmm_total_blocks()*4u)/1024u,mem); { int p=(int)strlen(mem); const char *u=" MB"; while(*u) mem[p++]=*u++; mem[p]=0; }
-    put(PX+1,3,"HavenDOS",th->accent,VGA_BLACK);
-    put(PX+10,3,HAVENDOS_VER_NUM " " HAVENDOS_CHANNEL " \"" HAVENDOS_CODENAME "\"",VGA_WHITE,VGA_BLACK);
+    /* v0.9.7: the one version string (kernel/verinfo.c) */
+    { extern const char *ver_display(void); put(PX+1,3,ver_display(),th->accent,VGA_BLACK); }
     put(PX+1,4,"Written from scratch in C and x86 assembly.",VGA_LIGHT_GREY,VGA_BLACK);
     info(6,"Made by",HAVENDOS_VENDOR,VGA_WHITE);
     info(7,"Kernel","x86 32-bit, Multiboot, GRUB 2",VGA_WHITE);

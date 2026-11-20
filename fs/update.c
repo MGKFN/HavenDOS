@@ -396,6 +396,37 @@ static void cmd_update_inner(void) {
     }
     vga_puts("\n\n");
 
+    /* ── v0.9.7: the channel (THS-RM-1004) ──
+       A system follows a channel; an update on a LESS stable one is
+       refused before anything is written, and the refusal names both
+       and the command that changes it. A manifest from before 0.9.7
+       names no channel and is taken as it always was. */
+    {
+        extern int ver_subscription(void), ver_channel_accepts(int, int);
+        extern const char *ver_channel_name(int);
+        int sub = ver_subscription();
+        if (man.channel >= 0) {
+            UC_NORM; vga_puts("  Channel : ");
+            update_color(VGA_LIGHT_CYAN, VGA_BLACK);
+            vga_puts(ver_channel_name(man.channel));
+            UC_DIM; vga_puts("   (this system follows ");
+            vga_puts(ver_channel_name(sub)); vga_puts(")\n\n"); UC_NORM;
+        }
+        if (!ver_channel_accepts(sub, man.channel)) {
+            update_color(VGA_LIGHT_RED, VGA_BLACK);
+            vga_puts("  This update is on the "); vga_puts(ver_channel_name(man.channel));
+            vga_puts(" channel. This system follows ");
+            vga_puts(ver_channel_name(sub)); vga_puts(",\n");
+            vga_puts("  and takes only updates at least that stable. Nothing was written.\n");
+            UC_NORM;
+            vga_puts("  To take it anyway:  update channel ");
+            vga_puts(man.channel == 20 ? "beta" : man.channel == 30 ? "public-beta" :
+                     man.channel == 40 ? "preview" : "beta");
+            vga_puts("\n\n");
+            goto done;
+        }
+    }
+
     /* ── Version check ── */
     if (strcmp(g_iso_version, "unknown") != 0) {
         int cmp = ver_cmp(g_iso_version, HAVENDOS_VERSION);

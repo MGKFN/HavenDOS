@@ -45,6 +45,25 @@
    somebody else's operating system also writes to; it is not a C string
    and it is not promised to be terminated.  Every read here is bounded
    by `len` and nothing walks off the end looking for a NUL. */
+/* v0.9.7: is text[ks..ke) the key `k`? */
+static int key_is(const char *text, uint32_t ks, uint32_t ke, const char *k)
+{
+    uint32_t i = 0;
+    while(ks + i < ke && k[i] && text[ks + i] == k[i]) i++;
+    return ks + i == ke && !k[i];
+}
+/* a small decimal, or -1 for anything else */
+static int small_num(const char *text, uint32_t vs, uint32_t ve)
+{
+    int v = 0; uint32_t z;
+    if(ve <= vs || ve - vs > 6) return -1;
+    for(z = vs; z < ve; z++){
+        if(text[z] < '0' || text[z] > '9') return -1;
+        v = v * 10 + (text[z] - '0');
+    }
+    return v;
+}
+
 int upd_manifest_parse(const char *text, uint32_t len, upd_manifest_t *out)
 {
     /* Always fully initialised, including on every refusal below, so a
@@ -57,6 +76,9 @@ int upd_manifest_parse(const char *text, uint32_t len, upd_manifest_t *out)
         out->size = 0; out->crc = 0;
         out->have_version = 0; out->have_kernel = 0;
         out->have_size = 0;    out->have_crc = 0;
+        out->product = out->build = out->revision = out->level = out->channel = -1;
+        for(z = 0; z < sizeof out->release;  z++) out->release[z]  = 0;
+        for(z = 0; z < sizeof out->codename; z++) out->codename[z] = 0;
     }
     if(!text || len == 0) return UPDM_E_MAGIC;
 
@@ -191,6 +213,39 @@ int upd_manifest_parse(const char *text, uint32_t len, upd_manifest_t *out)
                 }
                 if(n == 0) return UPDM_E_VALUE;
                 out->crc = v; out->have_crc = 1;
+                continue;
+            }
+            /* ── v0.9.7: HavenDOS 1's keys ── a number that will not
+               parse is refused like size=, because a channel misread is an
+               update taken from a channel nobody chose */
+            if(key_is(text, ks, ke, "product") || key_is(text, ks, ke, "build") ||
+               key_is(text, ks, ke, "revision") || key_is(text, ks, ke, "level")){
+                int v = small_num(text, vs, ve);
+                if(v < 0) return UPDM_E_VALUE;
+                if     (key_is(text, ks, ke, "product"))  out->product  = v;
+                else if(key_is(text, ks, ke, "build"))    out->build    = v;
+                else if(key_is(text, ks, ke, "revision")) out->revision = v;
+                else                                      out->level    = v;
+                continue;
+            }
+            if(key_is(text, ks, ke, "channel")){
+                /* "CH20", "20" or a name -- verinfo.c reads all three */
+                char t[24]; uint32_t n = ve - vs, z;
+                extern int ver_channel_parse(const char *s);
+                if(n == 0 || n >= sizeof t) return UPDM_E_VALUE;
+                for(z = 0; z < n; z++) t[z] = text[vs + z];
+                t[n] = 0;
+                out->channel = ver_channel_parse(t);
+                if(out->channel < 0) return UPDM_E_VALUE;
+                continue;
+            }
+            if(key_is(text, ks, ke, "release") || key_is(text, ks, ke, "codename")){
+                char *dst = key_is(text, ks, ke, "release") ? out->release : out->codename;
+                uint32_t cap = key_is(text, ks, ke, "release") ? sizeof out->release : sizeof out->codename;
+                uint32_t n = ve - vs, z;
+                if(n >= cap) n = cap - 1;
+                for(z = 0; z < n; z++) dst[z] = text[vs + z];
+                dst[n] = 0;
                 continue;
             }
             /* Any other key is ignored, so a manifest written by a later

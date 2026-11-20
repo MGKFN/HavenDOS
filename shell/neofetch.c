@@ -169,8 +169,7 @@ void cmd_neofetch_v2(void)
     }
 
     /* ── OS: the one place the codename belongs ── */
-    line("OS", HAVENDOS_NAME " " HAVENDOS_VER " " HAVENDOS_CHANNEL
-              " \"" HAVENDOS_CODENAME "\"", acc);
+    { extern const char *ver_display(void); line("OS", ver_display(), acc); }   /* v0.9.7 */
     line("Kernel", "x86 32-bit protected mode", acc);
 
     /* ── uptime ── */

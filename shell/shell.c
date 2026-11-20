@@ -2441,7 +2441,8 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
 
     else if(!strcmp(cmd,"ver")||!strcmp(cmd,"version")){
         vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-        vga_puts("HavenDOS " HAVENDOS_VER " " HAVENDOS_CHANNEL " \"" HAVENDOS_CODENAME "\"  (32-bit x86)\n");
+        { extern const char *ver_display(void);   /* v0.9.7: the one version string */
+          vga_printf("%s  (32-bit x86)\n", ver_display()); }
         vga_set_color(VGA_DARK_GREY,VGA_BLACK);
         vga_puts(HAVENDOS_VENDOR "\n");
         vga_set_color(VGA_WHITE,VGA_BLACK);
@@ -3010,6 +3011,35 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
         cmd_uninstall();
     }
 
+    else if(!strcmp(cmd,"update") && !strcmp(arg1,"channel")){
+        /* v0.9.7: which channel this system takes updates from
+           (THS-RM-1004). No name shows it; a name sets it. */
+        extern int ver_subscription(void), ver_set_subscription(int);
+        extern int ver_channel_parse(const char*), ver_channel(void);
+        extern const char *ver_channel_name(int);
+        if(!arg2[0]){
+            int sub=ver_subscription();
+            vga_printf("This system follows the %s channel (CH%02d).\n",
+                       ver_channel_name(sub), sub);
+            vga_printf("It takes updates on %s or anything more stable. "
+                       "This build is on %s.\n", ver_channel_name(sub),
+                       ver_channel_name(ver_channel()));
+            vga_puts("Change it: update channel beta | public-beta | preview | stable\n");
+        } else {
+            int ch=ver_channel_parse(arg2);
+            if(ch<0 || ch<20){
+                vga_printf("'%s' is not a channel you can follow. "
+                           "beta, public-beta, preview or stable.\n", arg2);
+            } else if(!ver_set_subscription(ch)){
+                vga_puts("Could not save it: /boot/channel.inf would not write "
+                         "(a live ISO keeps no settings).\n");
+            } else {
+                vga_printf("Now following %s (CH%02d). `update` takes updates on %s "
+                           "or anything more stable.\n", ver_channel_name(ch), ch,
+                           ver_channel_name(ch));
+            }
+        }
+    }
     else if(!strcmp(cmd,"update")){
         cmd_update();
     }

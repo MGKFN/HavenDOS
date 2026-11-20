@@ -92,6 +92,13 @@ typedef struct {
     int      have_kernel;
     int      have_size;
     int      have_crc;
+    /* v0.9.7, THS-RM-1004: what HavenDOS 1's manifests add. All
+       optional -- a manifest from before 0.9.7 has none of them, and
+       `version=` (build.revision from 27100 on) is still what is
+       compared. -1 / "" when absent. */
+    int      product, build, revision, level, channel;
+    char     release[8];             /* "27H1"                               */
+    char     codename[24];           /* "Brandaris"                          */
 } upd_manifest_t;
 
 /* Parser return codes.  Each refusal is its own code because the failure

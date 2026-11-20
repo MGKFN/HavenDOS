@@ -18,7 +18,7 @@ CFLAGS  = -m32 -ffreestanding -fno-stack-protector -fno-pie -fno-pic \
 LDFLAGS = -m elf_i386 -T boot/linker.ld --oformat elf32-i386 \
           --strip-debug
 
-SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/machine.c shell/login.c shell/bootanim.c shell/screensaver.c shell/tetris.c \
+SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/verinfo.c kernel/machine.c shell/login.c shell/bootanim.c shell/screensaver.c shell/tetris.c \
           drivers/speaker.c drivers/mode13.c drivers/vesa.c \
           kernel/string.c kernel/idt.c kernel/pit.c kernel/kpoll.c kernel/task.c kernel/appguard.c kernel/bootsplash.c kernel/pmm.c kernel/heap.c kernel/errors.c kernel/klog.c \
           drivers/vga.c drivers/keyboard.c drivers/mouse.c \
@@ -389,9 +389,13 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@echo "── test_tiles ─────────────────────────────"
 	@$(TESTCC) -o /tmp/hd_tti tests/test_tiles.c && \
 	  python3 tools/run_suite.py --name test_tiles --min 64 -- /tmp/hd_tti
+	@echo "── test_verinfo ───────────────────────────"
+	@echo "  the version as people see it, and the channels (v0.9.7)"
+	@$(TESTCC) -Wall -o /tmp/hd_tvi tests/test_verinfo.c && \
+	  python3 tools/run_suite.py --name test_verinfo --min 43 -- /tmp/hd_tvi
 	@echo "── test_vercmp ────────────────────────────"
 	@$(TESTCC) -Itests -o /tmp/hd_tvc tests/test_vercmp.c && \
-	  python3 tools/run_suite.py --name test_vercmp --min 30 -- /tmp/hd_tvc
+	  python3 tools/run_suite.py --name test_vercmp --min 39 -- /tmp/hd_tvc
 	@echo "── test_fat16path ─────────────────────────"
 	@$(TESTCC) -Iinclude -Wno-builtin-declaration-mismatch \
 	           -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast \
@@ -490,7 +494,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tupd tests/test_update.c fs/gpt.c fs/exfat.c \
 	           && \
-	  python3 tools/run_suite.py --name test_update --min 159 -- /tmp/hd_tupd
+	  python3 tools/run_suite.py --name test_update --min 169 -- /tmp/hd_tupd
 	@echo "── test_fat32 ─────────────────────────────"
 	@echo "  FAT32 against an image made by mkfs.vfat -- the ESP an install needs"
 	@$(TESTCC) -Iinclude -Itests -Wno-builtin-declaration-mismatch \

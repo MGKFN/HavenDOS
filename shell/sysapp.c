@@ -210,7 +210,7 @@ static int dev_scroll;
 static void tab_overview(void){
     sb_t s; char cpu[64];
     COLX=14;
-    put(2,Y,"HavenDOS " HAVENDOS_VER_NUM " " HAVENDOS_CHANNEL " \"" HAVENDOS_CODENAME "\"",VGA_WHITE);
+    { extern const char *ver_display(void); put(2,Y,ver_display(),VGA_WHITE); }   /* v0.9.7 */
     if(W>=70) put(W-1-(int)strlen(HAVENDOS_VENDOR),Y,HAVENDOS_VENDOR,VGA_DARK_GREY);
     Y+=2;
 

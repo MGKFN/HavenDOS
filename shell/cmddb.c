@@ -809,8 +809,11 @@ const cmddoc_t cmddb[] = {
       "on a USB stick or the EFI System Partition, or on an update CD, "
       "checks it, and replaces the installed kernel. The old one is kept "
       "as /boot/havendos.bak. The release zip has scripts that put the "
-      "files in place from Windows or Linux.",
-      NULL,
+      "files in place from Windows or Linux. `update channel` shows which "
+      "channel this system follows (Beta, Public Beta, Release Preview, "
+      "Stable); `update channel stable` changes it -- an update on a less "
+      "stable channel is then refused, by name.",
+      "update channel [beta|public-beta|preview|stable]",
       "rollback install" },
 
     { "rollback", NULL, CDB_DISKS,

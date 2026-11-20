@@ -44,6 +44,7 @@ extern void        vfs_list(void(*)(const char*,int,uint32_t));
 extern int         vfs_delete(const char*);
 extern int         vfs_exists(const char*);
 extern int         vfs_rename(const char*,const char*);
+extern int         vfs_mkdir(const char*);
 extern int         vfs_using_disk(void);
 extern int         vfs_using_fat16(void);
 extern const char *current_username(void);
@@ -1619,34 +1620,67 @@ static void ed_paste(int *crow,int *ccol){
 /* ── Right-click context menu ────────────────────────────── */
 /* Shows a small popup at a fixed position, returns chosen action:
    0=nothing, 1=copy, 2=cut, 3=paste, 4=select all             */
-static int ed_ctx_menu(void){
-    /* Draw menu at col 10, row 8 — clear area around it */
-    const char *items[]={"Copy","Cut","Paste","Select All"};
-    int n=4;
-    int mx=20, my=8, mw=14;
-    /* Draw box */
-    for(int x=mx;x<mx+mw;x++) vga_putchar_at(' ',x,my-1,VGA_WHITE,VGA_DARK_GREY);
-    for(int i=0;i<n;i++){
-        for(int x=mx;x<mx+mw;x++) vga_putchar_at(' ',x,my+i,VGA_WHITE,VGA_DARK_GREY);
-        vga_puts_at(items[i],mx+1,my+i,VGA_WHITE,VGA_DARK_GREY);
-    }
-    for(int x=mx;x<mx+mw;x++) vga_putchar_at(' ',x,my+n,VGA_WHITE,VGA_DARK_GREY);
-
-    int sel=0;
-    while(1){
-        /* Highlight current item */
+/* ── v0.9.7: A POPUP MENU THE MOUSE CAN USE ─────────────────────────
+   For Files' right-click menu (exception E-3) and the editor's. Drawn
+   at (x, y), moved in to fit the screen. The mouse highlights what it
+   is over and a click picks it; a click anywhere else, a right-click,
+   or ESC cancels; Up, Down and Enter work as they always did. Returns
+   the item, 1-based, or 0. The caller redraws what was under it. */
+static int popup_menu(int x, int y, const char *const *items, int n)
+{
+    extern int  mouse_get_clicks(void);
+    extern void kpoll_sleep_ms(uint32_t);
+    const theme_t *th=ui_theme();
+    int w=0, sel=0, W=vga_cols(), H=vga_rows();
+    for(int i=0;i<n;i++){ int l=(int)strlen(items[i]); if(l>w) w=l; }
+    w+=4;
+    if(x+w>W) x=W-w;
+    if(x<0) x=0;
+    if(y+n+2>H) y=H-n-2;
+    if(y<0) y=0;
+    if(mouse_is_ready()) mouse_get_clicks();          /* the click that opened it */
+    for(;;){
+        for(int xx=x;xx<x+w;xx++){
+            vga_putchar_at(' ',xx,y,VGA_WHITE,th->accent);
+            vga_putchar_at(' ',xx,y+n+1,VGA_WHITE,th->accent);
+        }
         for(int i=0;i<n;i++){
             vga_color_t bg=(i==sel)?VGA_BLUE:VGA_DARK_GREY;
             vga_color_t fg=(i==sel)?VGA_WHITE:VGA_LIGHT_GREY;
-            for(int x=mx;x<mx+mw;x++) vga_putchar_at(' ',x,my+i,fg,bg);
-            vga_puts_at(items[i],mx+1,my+i,fg,bg);
+            for(int xx=x;xx<x+w;xx++) vga_putchar_at(' ',xx,y+1+i,fg,bg);
+            vga_puts_at(items[i],x+2,y+1+i,fg,bg);
         }
-        int k=keyboard_waitchar();
-        if(k==0x148&&sel>0) sel--;           /* Up   */
-        else if(k==0x150&&sel<n-1) sel++;    /* Down */
-        else if(k=='\n'||k=='\r') return sel+1;
-        else if(k==27) return 0;             /* ESC  */
+        if(mouse_is_ready()) ui_draw_cursor();
+        vga_flush();
+        for(;;){
+            int k=keyboard_getchar();
+            if(k!=-1){
+                ui_erase_cursor();
+                if(k==0x148){ if(sel>0) sel--; break; }
+                if(k==0x150){ if(sel<n-1) sel++; break; }
+                if(k=='\n'||k=='\r') return sel+1;
+                if(k==27) return 0;
+                continue;
+            }
+            if(mouse_is_ready()){
+                int mx,my,mb,cl, in;
+                mouse_get(&mx,&my,&mb);
+                in = mx>=x && mx<x+w && my>=y+1 && my<y+1+n;
+                cl = mouse_get_clicks();
+                if(cl&1){ ui_erase_cursor(); return in ? my-y : 0; }
+                if(cl&2){ ui_erase_cursor(); return 0; }
+                if(in && my-y-1!=sel){ ui_erase_cursor(); sel=my-y-1; break; }
+                ui_draw_cursor();
+            }
+            kpoll_sleep_ms(10);
+        }
     }
+}
+
+static int ed_ctx_menu(void){
+    /* v0.9.7: the shared popup -- the mouse picks from it now */
+    static const char *const items[]={"Copy","Cut","Paste","Select All"};
+    return popup_menu(20,8,items,4);
 }
 
 /* ── Save prompt ─────────────────────────────────────────── */
@@ -2205,7 +2239,139 @@ static void fm_draw(int sel, int scroll){
     else if(fm_count==0)
         vga_puts_at("(empty directory)",28,12,VGA_DARK_GREY,VGA_BLACK);
 
-    vga_puts_at("Tap=Open  Del=Delete  Bksp=Up  ESC=Close  Mouse supported",5,21,VGA_DARK_GREY,VGA_BLACK);
+    vga_puts_at("Click=Open  Right-click/F2=Menu  Del=Delete  Bksp=Up  ESC=Close",5,21,VGA_DARK_GREY,VGA_BLACK);
+}
+
+/* ── v0.9.7: FILES' RIGHT-CLICK MENU (exception E-3, THS-RM-1005) ────
+   Open, Rename, Copy, Move, Delete (asked first), New folder. Every
+   failure says what failed and leaves the file as it was: a copy that
+   did not write is deleted again, and a move only deletes the original
+   after the copy reads back the same size. */
+#define FM_KEY_MENU      0x2001
+#define FM_KEY_MENU_DIR  0x2002
+static int g_fm_menu_x = 30, g_fm_menu_y = 8;
+
+static void fm_path(char *out, int max, const char *dir, const char *name)
+{
+    out[0]=0;
+    if(dir && dir[0]){ strncpy(out,dir,(size_t)max-1); out[max-1]=0;
+                       if((int)strlen(out)<max-1) strcat(out,"/"); }
+    strncat(out,name,(size_t)(max-1-(int)strlen(out)));
+}
+
+/* A one-line prompt on row 21. 1 if Enter with something typed. */
+static int fm_prompt(const char *label, char *buf, int max)
+{
+    int n=(int)strlen(buf), lx=(int)strlen(label)+3;
+    for(;;){
+        for(int x=2;x<78;x++) vga_putchar_at(' ',x,21,VGA_BLACK,VGA_CYAN);
+        vga_puts_at(label,3,21,VGA_BLACK,VGA_CYAN);
+        vga_puts_at(buf,lx,21,VGA_WHITE,VGA_CYAN);
+        vga_set_cursor(lx+n,21); vga_flush();
+        int k=keyboard_waitchar();
+        if(k=='\n'||k=='\r') return n>0;
+        if(k==27) return 0;
+        if((k==8||k==127) && n>0){ buf[--n]=0; continue; }
+        if(k>=32 && k<127 && n<max-1 && lx+n<77){ buf[n++]=(char)k; buf[n]=0; }
+    }
+}
+
+static void fm_say(const char *msg, int bad)
+{
+    for(int x=2;x<78;x++) vga_putchar_at(' ',x,21,VGA_WHITE,bad?VGA_RED:VGA_GREEN);
+    vga_puts_at(msg,3,21,VGA_WHITE,bad?VGA_RED:VGA_GREEN);
+    vga_flush(); sleep_ms(bad?1800:900);
+}
+
+/* copy one file; 1 on success, a reason on failure */
+static int fm_copy_file(const char *from, const char *to, uint32_t size, const char **why)
+{
+    char *b; int n, w;
+    if(size > 8u*1024u*1024u){ *why="Copy failed: files over 8 MB are copied from the Shell"; return 0; }
+    if(vfs_exists(to)){ *why="Copy failed: something with that name is already there"; return 0; }
+    b=(char*)kmalloc(size?size:1);
+    if(!b){ *why="Copy failed: not enough memory for it"; return 0; }
+    n=vfs_read(from,b,size?size:1);
+    if(n<0 || (uint32_t)n!=size){ kfree(b); *why="Copy failed: the file would not read"; return 0; }
+    w=vfs_write(to,b,(uint32_t)n);
+    kfree(b);
+    if(w!=n){ vfs_delete(to); *why="Copy failed: the copy would not write (disk full or read-only?)"; return 0; }
+    return 1;
+}
+
+/* idx: the file or folder right-clicked, or -1 for the folder itself.
+   Returns 1 if something changed. */
+static int fm_menu(int idx)
+{
+    static const char *const FILE_ITEMS[]={"Open","Rename","Copy","Move","Delete","New folder"};
+    static const char *const DIR_ONLY[]={"New folder"};
+    char full[64], dest[64], name[40];
+    const char *why="";
+    int pick, isdir = idx>=0 && fm_dirs[idx];
+    if(idx>=0) fm_path(full,sizeof full,fm_cwd,fm_names[idx]);
+    pick = idx>=0 ? popup_menu(g_fm_menu_x,g_fm_menu_y,FILE_ITEMS,6)
+                  : (popup_menu(g_fm_menu_x,g_fm_menu_y,DIR_ONLY,1) ? 6 : 0);
+    switch(pick){
+    case 1:                                             /* Open */
+        if(isdir){ strncpy(fm_cwd,full,63); fm_cwd[63]=0; return 1; }
+        app_texteditor_load(full); return 1;
+    case 2:                                             /* Rename */
+        strncpy(name,fm_names[idx],sizeof name-1); name[sizeof name-1]=0;
+        if(!fm_prompt("New name:",name,sizeof name)) return 0;
+        if(strchr(name,'/')){ fm_say("Rename: a name, not a path -- use Move for that",1); return 0; }
+        fm_path(dest,sizeof dest,fm_cwd,name);
+        if(vfs_exists(dest)){ fm_say("Rename failed: that name is taken",1); return 0; }
+        vfs_rename(full,dest);           /* judged by what it did: the FATs disagree on return codes */
+        if(!vfs_exists(dest) || vfs_exists(full)){ fm_say("Rename failed: the file system refused it",1); return 0; }
+        fm_say("Renamed",0); return 1;
+    case 3:                                             /* Copy */
+        if(isdir){ fm_say("Copy: folders are copied from the Shell (cp -r is not here yet)",1); return 0; }
+        strcpy(name,"copy_"); strncat(name,fm_names[idx],sizeof name-6);
+        if(!fm_prompt("Copy as:",name,sizeof name)) return 0;
+        if(name[0]=='/') { strncpy(dest,name+1,sizeof dest-1); dest[sizeof dest-1]=0; }
+        else fm_path(dest,sizeof dest,fm_cwd,name);
+        if(!fm_copy_file(full,dest,fm_sizes[idx],&why)){ fm_say(why,1); return 0; }
+        fm_say("Copied",0); return 1;
+    case 4:                                             /* Move */
+        dest[0]=0;
+        if(!fm_prompt("Move to folder (/ for the top):",dest,sizeof dest)) return 0;
+        {
+            char to[64], folder[64];
+            const char *f = dest[0]=='/' ? dest+1 : dest;
+            strncpy(folder,f,sizeof folder-1); folder[sizeof folder-1]=0;
+            { int l=(int)strlen(folder); while(l>0 && folder[l-1]=='/') folder[--l]=0; }
+            fm_path(to,sizeof to,folder,fm_names[idx]);
+            if(!strcmp(to,full)){ fm_say("Move: it is already there",1); return 0; }
+            if(vfs_exists(to)){ fm_say("Move failed: something with that name is already there",1); return 0; }
+            vfs_rename(full,to);
+            if(vfs_exists(to) && !vfs_exists(full)){ fm_say("Moved",0); return 1; }
+            if(isdir){ fm_say("Move failed: folders move only within one disk's FAT32 tree",1); return 0; }
+            /* the file system cannot move it in place (FAT16 renames only
+               within a folder): copy, check, then delete the original */
+            if(!fm_copy_file(full,to,fm_sizes[idx],&why)){ fm_say(why,1); return 0; }
+            vfs_delete(full);
+            if(vfs_exists(full)){ fm_say("Moved a copy -- the original would not delete",1); return 1; }
+            fm_say("Moved",0); return 1;
+        }
+    case 5:                                             /* Delete */
+        for(int x=2;x<78;x++) vga_putchar_at(' ',x,21,VGA_BLACK,VGA_LIGHT_RED);
+        vga_puts_at(isdir?"  Delete this folder (it must be empty)? Y/N":"  Delete this file? Y/N",2,21,VGA_BLACK,VGA_LIGHT_RED);
+        vga_flush();
+        { int k=keyboard_waitchar(); if(k!='y'&&k!='Y') return 0; }
+        vfs_delete(full);
+        if(vfs_exists(full)){ fm_say(isdir?"Delete failed: is the folder empty?":"Delete failed: file still present",1); return 0; }
+        fm_say("Deleted",0); return 1;
+    case 6:                                             /* New folder */
+        name[0]=0;
+        if(!fm_prompt("New folder name:",name,sizeof name)) return 0;
+        if(strchr(name,'/')){ fm_say("New folder: a name, not a path",1); return 0; }
+        fm_path(dest,sizeof dest,fm_cwd,name);
+        if(vfs_exists(dest)){ fm_say("New folder failed: that name is taken",1); return 0; }
+        vfs_mkdir(dest);
+        if(!vfs_exists(dest)){ fm_say("New folder failed: the file system refused it",1); return 0; }
+        fm_say("Folder made",0); return 1;
+    }
+    return 0;
 }
 
 static void app_filemanager(void){
@@ -2244,6 +2410,16 @@ reload:
                 { extern int mouse_get_wheel(void);
                   int w=mouse_get_wheel();
                   if(w>0) c=0x148; else if(w<0) c=0x150; }
+                /* v0.9.7 (E-3): a right-click on a file or folder picks it
+                   and opens its menu; anywhere else in the list, the menu
+                   for this folder (New folder) */
+                if(c==-1 && (mc&2) && my>=6 && my<6+row_offset+effective_visible && mx>=3 && mx<77){
+                    int list_y0=6+row_offset;
+                    int idx=(my-list_y0)+scroll;
+                    g_fm_menu_x=mx; g_fm_menu_y=my;
+                    if(my>=list_y0 && idx>=0 && idx<fm_count){ sel=idx; c=FM_KEY_MENU; }
+                    else c=FM_KEY_MENU_DIR;
+                }
                 if(c==-1 && (mc&1)){
                     /* Back button: cols 69-74, row 3, only when in a subdir */
                     if(fm_cwd[0] && my==3 && mx>=69 && mx<=74){
@@ -2272,6 +2448,14 @@ reload:
         /* ─────────────────────────────────────────────────────── */
 
         if(c==27) { fm_cwd[0]=0; return; }
+
+        /* v0.9.7 (E-3): the right-click menu, and F2 / the menu key */
+        if(c==FM_KEY_MENU || c==FM_KEY_MENU_DIR || c==0x13C /* F2 */){
+            ui_erase_cursor();
+            if(c==0x13C){ g_fm_menu_x=30; g_fm_menu_y=8; if(fm_count>0) c=FM_KEY_MENU; else c=FM_KEY_MENU_DIR; }
+            if(fm_menu(c==FM_KEY_MENU ? sel : -1)) { if(sel>=fm_count && sel>0) sel=fm_count-1; }
+            goto reload;
+        }
 
         /* Backspace or left arrow = go up */
         if((c==8||c==0x14b) && fm_cwd[0]){

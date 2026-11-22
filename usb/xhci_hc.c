@@ -373,7 +373,13 @@ static uint8_t  g_spad  [XHCI_MAX_HC][XHCI_MAX_SCRATCH][4096]
    transmit on real hardware was refused by THIS BOUND, before the
    controller was touched: `usb eth` reported tx 0/48 -- forty-eight
    frames attempted, forty-eight refused, none on the wire. */
-static uint8_t  g_bounce[XHCI_MAX_HC][2048] __attribute__((aligned(64)));
+/* v0.9.7.3: 32 KB, aligned to 32 KB so one TRB never crosses a 64 KB
+   boundary. 2 KB meant a USB stick was read one 512-byte sector per
+   command -- a CBW, the sector and a CSW, three transfers and three
+   waits for every half kilobyte. Kyan: "update over USB holy fucking
+   slow". usb/msc.c now reads up to 64 sectors per command into this. */
+#define XHCI_BOUNCE 32768u
+static uint8_t  g_bounce[XHCI_MAX_HC][32768] __attribute__((aligned(32768)));   /* XHCI_BOUNCE */
 
 /* An outstanding transfer owns its buffer until the controller completes
    it, so an asynchronous poll cannot use g_bounce -- the next transfer
@@ -881,6 +887,19 @@ static int x_port_connected(usb_hc_t *h, int port)
     xhci_t *x = &g_x[h->index];
     if (!x->valid || port < 0 || port >= x->maxports) return 0;
     return (mmio_read32(x->op, XOP_PORTSC(port)) & PORTSC_CCS) ? 1 : 0;
+}
+
+/* v0.9.7.3: CSC, read and left alone. port_reset() acknowledges it for
+   every connected port when the bus is walked, so on a port that was
+   connected then and is connected now, a CSC set again means the
+   device went away and came back between two polls -- the replug the
+   connected-bitmap alone cannot see. usb/hotplug.c says why it is a
+   read and not a clear. */
+static int x_port_changed(usb_hc_t *h, int port)
+{
+    xhci_t *x = &g_x[h->index];
+    if (!x->valid || port < 0 || port >= x->maxports) return 0;
+    return (mmio_read32(x->op, XOP_PORTSC(port)) & PORTSC_CSC) ? 1 : 0;
 }
 
 /* ── A USB 3 PORT THAT IS ALREADY ENABLED MUST NOT BE RESET ──────────
@@ -1937,6 +1956,7 @@ static const usb_hc_ops_t XHCI_OPS = {
     .name           = "xHCI",
     .port_count     = x_port_count,
     .port_connected = x_port_connected,
+    .port_changed   = x_port_changed,
     .attach         = x_attach,
     .attach_path    = x_attach_path,
     .detach         = x_detach,

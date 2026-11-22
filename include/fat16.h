@@ -96,5 +96,10 @@ int  fat16_exists_path(const char *path);
 
 /* v0.9.6: list a subdirectory ("" or "/" is the root); 0 if not a dir. */
 int      fat16_list_path(const char *dir, void (*cb)(const char*,int,uint32_t));
+/* v0.9.7.3: folders at any depth. 1/0; and 0 or -1 for the other three. */
+int      fat16_is_dir_path(const char *path);
+int      fat16_mkdir_path(const char *path);
+int      fat16_rename_path(const char *from, const char *to);
+int      fat16_remove_path(const char *path);
 /* v0.9.6: where the mounted system volume starts; 0 if none or lent. */
 uint64_t fat16_part_lba(void);

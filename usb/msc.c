@@ -114,6 +114,7 @@ typedef struct {
     uint32_t  blocks;       /* in the device's own block size           */
     uint32_t  bsize;        /* bytes per block, 512..4096              */
     uint32_t  per;          /* 512-byte sectors per device block        */
+    int       ra_off;       /* v0.9.7.3: multi-block reads failed once  */
     uint32_t  per_shift;    /* log2(per); no 64-bit divide in a kernel  */
     uint64_t  sectors;      /* blocks * per, what the block layer sees  */
     uint32_t  tag;
@@ -494,6 +495,53 @@ static int scsi_rw10(msc_dev_t *m, uint32_t lba, void *buf, int write)
     return USB_OK;
 }
 
+/* ── v0.9.7.3: several blocks per command, and a read-ahead ────────────
+   Every sector was its own READ(10): a command wrapper, 512 bytes and a
+   status wrapper, three bulk transfers with a wait on each. Reading a
+   kernel off a stick for `update` took minutes on the HP.
+
+   READ(10) takes a count. A read that misses the cache asks for 8
+   blocks; each miss that carries straight on from the last read doubles
+   it, up to 64 (32 KB, the host controllers' bounce buffer). Random
+   reads -- a FAT, a directory -- stay small, and a file read end to end
+   becomes one command per 32 KB.
+
+   A write that lands on a cached block updates the cached copy, so a
+   read never returns what was there before the write. A failed read is
+   reported as failed, as it always was -- except when the stick says
+   INVALID FIELD IN CDB (05/24), the answer of a device that will not
+   take that transfer length: that one is read a block at a time from
+   then on, slower and exactly what worked before. */
+#define RA_MAX 64u
+static uint8_t  g_ra[RA_MAX * 512u] __attribute__((aligned(64)));
+static int      g_ra_dev = -1;
+static uint32_t g_ra_lba, g_ra_n, g_ra_next, g_ra_want = 8;
+
+static int scsi_read_n(msc_dev_t *m, uint32_t lba, uint32_t n, void *buf, uint8_t *sense)
+{
+    uint8_t cmd[10];
+    uint32_t residue = 0;
+    int r;
+    *sense = 0;   /* 1 only for 05/24: INVALID FIELD IN CDB -- the length */
+    memset(cmd, 0, sizeof cmd);
+    cmd[0] = SCSI_READ10;
+    st32be(cmd + 2, lba);
+    cmd[7] = (uint8_t)(n >> 8);
+    cmd[8] = (uint8_t)n;
+    r = bot_cmd(m, cmd, 10, buf, (int)(n * m->bsize), 1, &residue);
+    if (r == CSW_PASS && residue == 0) return USB_OK;
+    if (r >= 0 && r != CSW_PASS){
+        uint8_t key = 0, asc = 0, ascq = 0;
+        scsi_request_sense(m, &key, &asc, &ascq);
+        *sense = (key == 5 && asc == 0x24) ? 1 : 0;
+        klog(KLOG_WARN, "USB MSC: read lba %u x%u failed, sense %1x/%2x/%2x",
+             lba, n, (uint32_t)key, (uint32_t)asc, (uint32_t)ascq);
+    }
+    return USB_EXFER;
+}
+
+static void ra_drop(void){ g_ra_dev = -1; g_ra_n = 0; }
+
 /* ── probing ──────────────────────────────────────────────────────────
  *
  * Walks the core's device table for a Bulk-Only mass storage interface.
@@ -511,6 +559,7 @@ int msc_probe(void)
     g_nmsc  = 0;
     g_probed = 1;
     memset(g_msc, 0, sizeof g_msc);
+    ra_drop();                 /* the indices are about to mean other disks */
 
     n = usb_device_count();
     for (i = 0; i < n && g_nmsc < MSC_MAX_DEV; i++) {
@@ -682,8 +731,29 @@ int msc_read_sector(int i, uint64_t lba, uint8_t *buf)
     if (!m->valid) return 0;
     if (lba >= m->sectors) return 0;
 
-    if (m->per == 1)
-        return scsi_rw10(m, (uint32_t)lba, buf, 0) == USB_OK;
+    if (m->per == 1) {
+        uint32_t l = (uint32_t)lba, n;
+        if (g_ra_dev == i && l >= g_ra_lba && l < g_ra_lba + g_ra_n) {
+            memcpy(buf, g_ra + (l - g_ra_lba) * 512u, 512);
+            return 1;
+        }
+        if (m->ra_off)
+            return scsi_rw10(m, l, buf, 0) == USB_OK;
+        g_ra_want = (g_ra_dev == i && l == g_ra_next) ? (g_ra_want * 2u > RA_MAX ? RA_MAX : g_ra_want * 2u) : 8u;
+        n = g_ra_want;
+        if ((uint64_t)l + n > m->sectors) n = (uint32_t)(m->sectors - l);
+        { uint8_t key;
+          if (scsi_read_n(m, l, n, g_ra, &key) != USB_OK) {
+              ra_drop();
+              if (!key) return 0;
+              m->ra_off = 1;
+              klog(KLOG_WARN, "USB MSC: the stick refuses %u-block reads -- reading one block at a time", n);
+              return scsi_rw10(m, l, buf, 0) == USB_OK;
+          } }
+        g_ra_dev = i; g_ra_lba = l; g_ra_n = n; g_ra_next = l + n;
+        memcpy(buf, g_ra, 512);
+        return 1;
+    }
 
     { uint32_t blk = (uint32_t)(lba >> m->per_shift);
       uint32_t off = (uint32_t)(lba & (uint64_t)(m->per - 1u)) * 512u;
@@ -706,6 +776,13 @@ int msc_write_sector(int i, uint64_t lba, const uint8_t *buf)
     if (m->per != 1) return 0;
 
     { uint8_t tmp[512];
+      int ok;
       memcpy(tmp, buf, 512);      /* scsi_rw10 takes a writable pointer */
-      return scsi_rw10(m, (uint32_t)lba, tmp, 1) == USB_OK; }
+      ok = scsi_rw10(m, (uint32_t)lba, tmp, 1) == USB_OK;
+      /* the read-ahead must not keep what was there before */
+      if (g_ra_dev == i && (uint32_t)lba >= g_ra_lba && (uint32_t)lba < g_ra_lba + g_ra_n) {
+          if (ok) memcpy(g_ra + ((uint32_t)lba - g_ra_lba) * 512u, buf, 512);
+          else ra_drop();
+      }
+      return ok; }
 }

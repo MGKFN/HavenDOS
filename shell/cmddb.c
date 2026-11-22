@@ -585,6 +585,14 @@ const cmddoc_t cmddb[] = {
       NULL,
       "system df" },
 
+    { "mouse", NULL, CDB_HW,
+      "mouse",
+      "Where the pointer is and what drives it",
+      "Prints the pointer's position and buttons, and how many USB pointers "
+      "and trackpads are driving it -- after a mouse is plugged back in, or "
+      "to see whether the trackpad was found.",
+      "mouse\tthe position, the buttons, and the devices",
+      "usb i2c dmesg" },
     { "uptime", NULL, CDB_SYSTEM,
       "uptime",
       "How long since boot",

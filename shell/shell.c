@@ -406,7 +406,7 @@ static const char *shell_cmds[]={
     "kill","kpoll",
     "host","hplusplus","htop","i2c","i2chid","ifconfig","install","jobs","lock","log","ls",
     "uninstall",
-    "layout","lspci","man","matrix","mem","migrate","mkdir","motd","music","mv",
+    "layout","lspci","man","matrix","mem","migrate","mkdir","motd","mouse","music","mv",
     "neofetch","netstat","notepad","notify","nslookup","open","paint","pair","passwd","ping",
     "pipes","play","poweroff","ps","ps1","pwd","quit","quiz",
     "reboot","rename","repeat","res","resolution","retro","rm","rollback","rsa","run",
@@ -2554,12 +2554,24 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     }
 
     else if(!strcmp(cmd,"ls")||!strcmp(cmd,"dir")){
-        if(pipe_mode) vfs_list_dir(shell_cwd, ls_pipe_callback);
+        /* v0.9.7.3: `ls <folder>` lists that folder. It listed the
+           current one whatever it was given, so `ls /USB` showed / */
+        char ls_dir[64];
+        if(arg1[0] && arg1[0]!='-'){
+            make_path(ls_dir,arg1);
+            if(!vfs_is_dir(ls_dir)){
+                vga_set_color(VGA_LIGHT_RED,VGA_BLACK);
+                vga_printf("  ls: not a folder: %s\n",ls_dir);
+                vga_set_color(VGA_WHITE,VGA_BLACK);
+                return;
+            }
+        } else { strncpy(ls_dir,shell_cwd,63); ls_dir[63]=0; }
+        if(pipe_mode) vfs_list_dir(ls_dir, ls_pipe_callback);
         else {
             /* color legend header */
             vga_set_color(VGA_DARK_GREY,VGA_BLACK);
-            /* show current path */
-            vga_puts(shell_cwd[0] ? shell_cwd : "/");
+            /* show the path listed */
+            vga_puts(ls_dir[0] ? ls_dir : "/");
             vga_puts("   ");
             vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);  vga_puts("DIR ");
             vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK); vga_puts("FILE ");
@@ -2568,7 +2580,7 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
             vga_set_color(VGA_DARK_GREY,VGA_BLACK);
 
             vga_putchar('\n');
-            vfs_list_dir(shell_cwd, ls_callback);
+            vfs_list_dir(ls_dir, ls_callback);
             vga_set_color(VGA_WHITE,VGA_BLACK);
         }
     }
@@ -2792,6 +2804,20 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
         } else {
             vga_printf("Free: %u KB  Used: %u KB  Total: %u KB\n",f*4,(t-f)*4,t*4);
         }
+    }
+
+    /* v0.9.7.3: where the pointer is and what drives it -- for "the
+       mouse stopped after I plugged it back in" and the trackpad, a
+       photo of one line instead of a guess */
+    else if(!strcmp(cmd,"mouse")){
+        extern int  mouse_is_ready(void);
+        extern void mouse_get(int*,int*,int*);
+        extern int  mouse_i2c_count(void);
+        extern int  mouse_usb_count(void);
+        if(!mouse_is_ready()){ vga_puts("mouse: none ready\n"); return; }
+        int mx,my,mb; mouse_get(&mx,&my,&mb);
+        vga_printf("mouse: x %d  y %d  buttons %d   USB pointers %d, trackpad %d\n",
+                   mx,my,mb,mouse_usb_count(),mouse_i2c_count());
     }
 
     else if(!strcmp(cmd,"uptime")){

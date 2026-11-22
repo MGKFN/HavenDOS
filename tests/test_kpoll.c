@@ -701,7 +701,14 @@ int  usbnet_probe(void){ note('p'); probes++; return 1; }
 void lockdown_forget(void){ note('l'); forgets++; }
 void usbmux_close(void){ note('x'); closes++; }
 static int sim_enum_result = 3;   /* v0.8.9.6: a walk can find nothing */
-int  usb_enumerate(void){ note('e'); enumerates++; return sim_enum_result; }
+/* v0.9.7.3: the change bits a real walk acknowledges (port_reset) */
+static uint32_t sim_changed[2];
+int  usb_enumerate(void){ note('e'); enumerates++; sim_changed[0] = sim_changed[1] = 0; return sim_enum_result; }
+/* v0.9.7.3: which root ports had a device that enumerated */
+static usb_dev_t sim_devs[4];
+static int       sim_ndev;
+int              usb_device_count(void){ return sim_ndev; }
+const usb_dev_t *usb_device(int i){ return (i >= 0 && i < sim_ndev) ? &sim_devs[i] : 0; }
 int  usb_hub_count(void){ return 0; }
 int  usb_hub_devices(void){ return 0; }
 /* v0.9.6.6: keyboards and mice re-bound after the walk -- the step the
@@ -734,6 +741,17 @@ static int sim_port_connected(struct usb_hc *h, int p){
 static const usb_hc_ops_t SIM_OPS = {
     .port_count     = sim_port_count,
     .port_connected = sim_port_connected,
+};
+/* v0.9.7.3: one that also reports the latched change bit, as xHCI does */
+static long changed_reads;
+static int sim_port_changed(struct usb_hc *h, int p){
+    changed_reads++;
+    return (sim_changed[h->index] >> p) & 1u;
+}
+static const usb_hc_ops_t CSC_OPS = {
+    .port_count     = sim_port_count,
+    .port_connected = sim_port_connected,
+    .port_changed   = sim_port_changed,
 };
 /* A controller that cannot report its ports at all -- a back-end
    without the optional ops.  It must contribute nothing rather than
@@ -943,6 +961,46 @@ static void clients_main(void)
     ck("an EMPTY bus that enumerates nothing is not retried",
        enumerates - e == 1, enumerates - e);
     sim_enum_result = 3;
+
+    head("v0.9.7.3: a replug inside one poll, seen by the change bit");
+    /* Kyan: "usb devices plugging back in out still an pain point".
+       Connected at both polls, so the bitmap says nothing happened. */
+    sim_hc[0].ops = &CSC_OPS; sim_nhc = 1;
+    sim_ports[0] = 0x3; sim_changed[0] = 0;
+    sim_ndev = 2;
+    memset(sim_devs, 0, sizeof sim_devs);
+    sim_devs[0].hc = 0; sim_devs[0].port = 0; sim_devs[0].parent = -1;
+    sim_devs[1].hc = 0; sim_devs[1].port = 1; sim_devs[1].parent = -1;
+    kpoll_init();
+    usb_kpoll_register();
+    for(int i = 0; i < 70; i++){ ticks(100); kernel_poll(); }   /* out of any storm hold */
+    e = enumerates;
+    ticks(100); kernel_poll();
+    ck("connected both times, no change bit: nothing", enumerates == e, enumerates - e);
+    sim_changed[0] = 0x1;                  /* port 0: out and back in */
+    ticks(100); kernel_poll();
+    ck("connected both times WITH the change bit: the bus is walked", enumerates - e == 1, enumerates - e);
+    ticks(100); kernel_poll();
+    ck("  ... once: the walk acknowledged it", enumerates - e == 1, enumerates - e);
+    e = enumerates;
+    for(int i = 0; i < 70; i++){ ticks(100); kernel_poll(); }
+    e = enumerates;
+    sim_ports[0] = 0x7;                    /* port 2 connected, nothing on it answered */
+    usb_hotplug_baseline();
+    sim_changed[0] = 0x4;
+    ticks(100); kernel_poll();
+    ck("a change bit on a port whose device never enumerated: ignored", enumerates == e, enumerates - e);
+    sim_ports[0] = 0x1; usb_hotplug_baseline();
+    sim_changed[0] = 0x2;                  /* port 1: empty now */
+    ticks(100); kernel_poll();
+    ck("a change bit on an EMPTY port: ignored (nothing ever clears it)", enumerates == e, enumerates - e);
+    {
+        long before = changed_reads;
+        sim_hc[0].ops = &SIM_OPS;
+        ticks(100); kernel_poll();
+        ck("a back-end without port_changed is never asked", changed_reads == before, changed_reads - before);
+    }
+    sim_ndev = 0; sim_changed[0] = 0;
 
     head("hot-plug: a NIC that arrives gets the DHCP sequence reset");
     /* The retry sequence has to have MOVED first.  The first version

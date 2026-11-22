@@ -77,14 +77,16 @@
 /* v0.9.7.1: the first maintenance update of 0.9.7, from Kyan's photo of
    the sign-in screen over the Start menu, 22 Nov. Tested in QEMU only. */
 /* v0.9.7.2: Retro PC's 386 and BOOT OS, exception E-6. QEMU only. */
-#define HAVENDOS_VER_BUILD  2
+/* v0.9.7.3: /USB everywhere, faster stick reads, file types, replugging.
+   QEMU only. */
+#define HAVENDOS_VER_BUILD  3
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.7.2"
+#define HAVENDOS_VER_NUM    "0.9.7.3"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"

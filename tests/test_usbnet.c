@@ -302,7 +302,7 @@ static int s_control(struct usb_hc *h, const usb_dev_t *d, uint8_t rtype,
  * and compared against the kernel's own constants by
  * tools/check_usb_buffers.py -- the suite covers the behaviour, the
  * build check covers the numbers. */
-#define SIM_SYNC_MAX   2048      /* sizeof g_bounce[0]  in xhci_hc.c */
+#define SIM_SYNC_MAX   32768     /* sizeof g_bounce[0]  in xhci_hc.c (v0.9.7.3) */
 #define SIM_ASYNC_MAX  2048      /* XHCI_ABUF_SZ        in xhci_hc.c */
 
 static int g_sync_refused, g_async_refused;

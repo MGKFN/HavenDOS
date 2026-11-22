@@ -1613,6 +1613,194 @@ int fat16_delete_path(const char *path){
 }
 
 /* Debug: dump raw root directory entries */
+/* ══════════════════════════════════════════════════════════════════════
+ * v0.9.7.3: FOLDERS AT ANY DEPTH -- is it one, make one, rename or move,
+ * delete one.
+ *
+ * The VFS sent FAT16 folders to the RAM filesystem or to the root: on an
+ * installed FAT16 system (the HP's 2 GB partition) Files listed the ROOT
+ * inside every folder, `New folder` inside one made it in the root, a
+ * rename inside one did nothing, and an empty file or any folder could
+ * not be deleted at all (fat16_delete_path() went one level deep and
+ * refused a file with no clusters). Kyan: "some other small problems and
+ * bugs". These are the four the folder view needs, at any depth.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/* Find the 32-byte entry for the last component of `path`. *dir is the
+   cluster of the folder holding it (0 = root), *lba and *slot where the
+   entry sits. 1 if found. */
+static int ent_locate(const char *path, uint16_t *dir, uint32_t *lba, int *slot)
+{
+    const char *leaf;
+    char n83[8], e83[3];
+    uint8_t buf[BYTES_PER_SECT];
+    const int per = BYTES_PER_SECT / 32;
+    if(!path_walk(path, 0, dir, &leaf)) return 0;
+    name_to_83(leaf, n83, e83);
+    if(*dir == 0){
+        for(uint32_t s = 0; s < root_sects; s++){
+            if(!rd(root_start + s, buf)) return 0;
+            for(int i = 0; i < per; i++){
+                uint8_t *d = buf + i * 32;
+                if(d[DE_NAME] == 0x00) return 0;
+                if(d[DE_NAME] == 0xE5 || (d[DE_ATTR] & ATTR_VOLUME_ID)) continue;
+                if(n83_eq(d, n83, e83)){ *lba = root_start + s; *slot = i; return 1; }
+            }
+        }
+        return 0;
+    }
+    {
+        uint16_t c = *dir;
+        int guard = 0;
+        while(c >= 2 && c < FAT_BAD && guard++ < 65536){
+            uint32_t l = cluster_to_lba(c);
+            for(int sp = 0; sp < bpb_sects_per_clust; sp++){
+                if(!rd(l + sp, buf)) return 0;
+                for(int i = 0; i < per; i++){
+                    uint8_t *d = buf + i * 32;
+                    if(d[DE_NAME] == 0x00) return 0;
+                    if(d[DE_NAME] == 0xE5 || (d[DE_ATTR] & ATTR_VOLUME_ID)) continue;
+                    if(d[DE_NAME] == '.') continue;
+                    if(n83_eq(d, n83, e83)){ *lba = l + sp; *slot = i; return 1; }
+                }
+            }
+            c = fat_get(c);
+        }
+    }
+    return 0;
+}
+
+static int read_ent(uint32_t lba, int slot, uint8_t out[32])
+{
+    uint8_t buf[BYTES_PER_SECT];
+    if(!rd(lba, buf)) return 0;
+    memcpy(out, buf + slot * 32, 32);
+    return 1;
+}
+
+/* A free slot in folder `dir` (0 = root), as an lba and a slot number. */
+static int slot_alloc(uint16_t dir, uint32_t *lba, int *slot)
+{
+    uint8_t buf[BYTES_PER_SECT];
+    const int per = BYTES_PER_SECT / 32;
+    if(dir == 0){
+        for(uint32_t s = 0; s < root_sects; s++){
+            if(!rd(root_start + s, buf)) return 0;
+            for(int i = 0; i < per; i++)
+                if(buf[i * 32] == 0x00 || buf[i * 32] == 0xE5){ *lba = root_start + s; *slot = i; return 1; }
+        }
+        return 0;
+    }
+    *lba = subdir_alloc_slot(dir, slot);
+    return *lba != 0 && *slot >= 0;
+}
+
+int fat16_is_dir_path(const char *path)
+{
+    uint16_t dir; uint32_t lba; int slot; uint8_t e[32];
+    const char *p = path ? path : "";
+    if(!fat16_ready || g_borrowed) return 0;
+    while(*p == '/') p++;
+    if(!*p) return 1;                                   /* the root */
+    if(!ent_locate(p, &dir, &lba, &slot) || !read_ent(lba, slot, e)) return 0;
+    return (e[DE_ATTR] & ATTR_DIRECTORY) ? 1 : 0;
+}
+
+/* 0 made, or already a folder; -1 if not (a file in the way, disk full) */
+int fat16_mkdir_path(const char *path)
+{
+    uint16_t dir; const char *leaf;
+    if(!fat16_ready || g_borrowed) return -1;
+    if(!path_walk(path, 1, &dir, &leaf)) return -1;
+    return dir_mkdir_at(dir, leaf) ? 0 : -1;
+}
+
+/* Rename, or move to another folder. The entry is copied whole -- size,
+   clusters, attributes, dates -- under its new name, and a folder that
+   moves has its ".." pointed at its new parent. 0, or -1 if `to` exists,
+   `from` does not, a folder would move into itself, or the disk fails. */
+int fat16_rename_path(const char *from, const char *to)
+{
+    uint16_t d0, d1; uint32_t l0, l1; int s0, s1;
+    const char *leaf;
+    uint8_t e[32], buf[BYTES_PER_SECT];
+    char n83[8], e83[3];
+    uint16_t me;
+    if(!fat16_ready || g_borrowed) return -1;
+    if(!ent_locate(from, &d0, &l0, &s0) || !read_ent(l0, s0, e)) return -1;
+    { uint16_t td; uint32_t tl; int ts;
+      if(ent_locate(to, &td, &tl, &ts)) return -1; }    /* never over another */
+    if(!path_walk(to, 0, &d1, &leaf) || !*leaf) return -1;
+    me = DE_GET_U16(e, DE_START_CLUSTER);
+    if((e[DE_ATTR] & ATTR_DIRECTORY) && me >= 2){
+        /* not into itself or anything under it */
+        uint16_t up = d1; int guard = 0;
+        while(up >= 2 && guard++ < 64){
+            if(up == me) return -1;
+            { uint8_t b[BYTES_PER_SECT];
+              if(!rd(cluster_to_lba(up), b)) return -1;
+              up = DE_GET_U16(b + 32, DE_START_CLUSTER); }     /* its ".." */
+        }
+    }
+    name_to_83(leaf, n83, e83);
+    memcpy(e + DE_NAME, n83, 8);
+    memcpy(e + DE_EXT,  e83, 3);
+    if(d0 == d1){                                       /* a rename in place */
+        if(!rd(l0, buf)) return -1;
+        memcpy(buf + s0 * 32, e, 32);
+        return wr(l0, buf) ? 0 : -1;
+    }
+    if(!slot_alloc(d1, &l1, &s1)) return -1;
+    if(!rd(l1, buf)) return -1;
+    memcpy(buf + s1 * 32, e, 32);
+    if(!wr(l1, buf)) return -1;
+    if(!rd(l0, buf)) return -1;
+    buf[s0 * 32] = 0xE5;
+    if(!wr(l0, buf)) return -1;
+    if((e[DE_ATTR] & ATTR_DIRECTORY) && me >= 2){
+        uint32_t fl = cluster_to_lba(me);
+        if(!rd(fl, buf)) return -1;
+        buf[32 + DE_START_CLUSTER]     = (uint8_t)d1;
+        buf[32 + DE_START_CLUSTER + 1] = (uint8_t)(d1 >> 8);
+        if(!wr(fl, buf)) return -1;
+    }
+    return fat_flush() ? 0 : -1;
+}
+
+/* Delete a file, or an EMPTY folder, at any depth. 0, or -1 (not there,
+   a folder with something in it, the disk). */
+int fat16_remove_path(const char *path)
+{
+    uint16_t dir, c; uint32_t lba; int slot;
+    uint8_t e[32], buf[BYTES_PER_SECT];
+    if(!fat16_ready || g_borrowed) return -1;
+    if(!ent_locate(path, &dir, &lba, &slot) || !read_ent(lba, slot, e)) return -1;
+    c = DE_GET_U16(e, DE_START_CLUSTER);
+    if((e[DE_ATTR] & ATTR_DIRECTORY) && c >= 2){
+        uint16_t k = c; int guard = 0;
+        const int per = BYTES_PER_SECT / 32;
+        while(k >= 2 && k < FAT_BAD && guard++ < 65536){
+            uint32_t l = cluster_to_lba(k);
+            for(int sp = 0; sp < bpb_sects_per_clust; sp++){
+                if(!rd(l + sp, buf)) return -1;
+                for(int i = 0; i < per; i++){
+                    uint8_t *d = buf + i * 32;
+                    if(d[DE_NAME] == 0x00) goto empty;
+                    if(d[DE_NAME] == 0xE5 || d[DE_NAME] == '.') continue;
+                    return -1;                          /* not empty */
+                }
+            }
+            k = fat_get(k);
+        }
+    }
+empty:
+    if(c >= 2) fat_free_chain(c);
+    if(!rd(lba, buf)) return -1;
+    buf[slot * 32] = 0xE5;
+    if(!wr(lba, buf)) return -1;
+    return fat_flush() ? 0 : -1;
+}
+
 void fat16_debug_root(void){
     extern void vga_printf(const char *fmt, ...);
     if(!fat16_ready){ vga_printf("FAT16 not ready\n"); return; }

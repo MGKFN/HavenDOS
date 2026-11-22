@@ -17,6 +17,7 @@
 #include "../include/fat16.h"
 #include "../include/blkdev.h"   /* v0.9.6: vol= */
 #include "../include/klog.h"
+#include "../include/usbvol.h"   /* v0.9.7.3: /USB */
 
 /* FAT12 API */
 extern int  fat12_init(void);
@@ -61,6 +62,7 @@ extern int  fat32_exists(const char*);
 extern int  fat32_is_dir(const char*);
 extern int  fat32_mkdir(const char*);
 extern int  fat32_rename(const char*, const char*);
+extern int  fat32_rmdir(const char*);
 extern int  fat32_exists(const char*);
 extern int  fat32_sys_begin(void);
 extern void fat32_sys_end(void);
@@ -269,7 +271,38 @@ void vfs_refresh_fat32(void) {
  * hit this: `cd boot` followed by any write, wget/curl with a subdirectory
  * target, bpkg installing into /apps.  It looked like a write that "worked"
  * and a read that came back empty. */
+/* ── v0.9.7.3: /USB, AND A MOVE BETWEEN TWO VOLUMES ─────────────────
+   Every route below starts by asking whether the path is under /USB, and
+   if it is, the stick answers (fs/usbvol.c). A rename from one volume to
+   the other cannot be a directory-entry move, so it is a copy and a
+   delete, for files; folders between volumes are refused. */
+extern void *kmalloc(size_t);
+extern void  kfree(void *);
+int vfs_is_dir(const char *name);
+int vfs_read(const char *name, char *buf, uint32_t bufsz);
+int vfs_write(const char *name, const char *data, uint32_t size);
+int vfs_delete(const char *name);
+int vfs_exists(const char *name);
+void vfs_list_dir_sys(const char *dir, void (*cb)(const char*, int, uint32_t));
+static int x_copy_delete(const char *from, const char *to){
+    uint32_t cap = 65536;
+    char *b = 0; int n = -1;
+    if (vfs_is_dir(from)) return -1;
+    for (;;) {
+        b = (char *)kmalloc(cap);
+        if (!b) return -1;
+        n = vfs_read(from, b, cap);
+        if (n < 0 || (uint32_t)n < cap || cap >= 16u * 1024u * 1024u) break;
+        kfree(b); cap *= 2;
+    }
+    if (n < 0 || (uint32_t)n >= cap) { kfree(b); return -1; }
+    if (vfs_write(to, b, (uint32_t)n) != n) { kfree(b); vfs_delete(to); return -1; }
+    kfree(b);
+    return vfs_delete(from) == 0 || !vfs_exists(from) ? 0 : -1;
+}
+
 int vfs_write(const char *name, const char *data, uint32_t size) {
+    { const char *r; if (usbv_path(name, &r)) return usbv_write(r, data, size); }
     /* v0.9.4.1: the byte count on success, -1 on failure -- fs/fat16.c's
        convention, which every caller of vfs_write() is written against.
        fat32_write() returns 1 or 0, and this route passed that through:
@@ -292,6 +325,7 @@ int vfs_write(const char *name, const char *data, uint32_t size) {
 }
 
 int vfs_read(const char *name, char *buf, uint32_t bufsz) {
+    { const char *r; if (usbv_path(name, &r)) return usbv_read(r, buf, bufsz); }
     if (using_fat32) { F32_SYS(fat32_read(name, buf, bufsz)); }
     if (using_fat16 && fs_borrowed()) return -1;
     if (using_fat16) return has_dir(name) ? fat16_read_path(name, buf, bufsz)
@@ -301,10 +335,13 @@ int vfs_read(const char *name, char *buf, uint32_t bufsz) {
 }
 
 int vfs_delete(const char *name) {
-    if (using_fat32) { F32_SYS(fat32_delete(name)); }
+    { const char *r; if (usbv_path(name, &r)) return usbv_delete(r); }
+    /* v0.9.7.3: 0 or -1, as on FAT16 -- fat32_delete() says 1 or 0, and
+       Files read a failed delete (0) as success */
+    if (using_fat32) { F32_SYS((fat32_is_dir(name) ? fat32_rmdir(name) : fat32_delete(name)) == 1 ? 0 : -1); }
     if (using_fat16 && fs_borrowed()) return -1;
-    if (using_fat16) return has_dir(name) ? fat16_delete_path(name)
-                                          : fat16_delete(name);
+    /* v0.9.7.3: any depth, empty files and empty folders too */
+    if (using_fat16) return fat16_remove_path(name);
     if (using_fat12) return fat12_delete(name);
     return ramfs_delete(name);
 }
@@ -318,6 +355,7 @@ void vfs_list(void (*cb)(const char*, int, uint32_t)) {
 }
 
 int vfs_exists(const char *name) {
+    { const char *r; if (usbv_path(name, &r)) return usbv_exists(r); }
     if (using_fat32) { F32_SYS_Q(fat32_exists(name)); }
     if (using_fat16 && fs_borrowed()) return 0;
     if (using_fat16) return has_dir(name) ? fat16_exists_path(name)
@@ -327,28 +365,35 @@ int vfs_exists(const char *name) {
 }
 
 int vfs_rename(const char *old, const char *newname) {
+    {
+        const char *r1, *r2;
+        int u1 = usbv_path(old, &r1), u2 = usbv_path(newname, &r2);
+        if (u1 && u2) return usbv_rename(r1, r2);
+        if (u1 || u2) return x_copy_delete(old, newname);
+    }
     /* v0.9.3: FAT32 renames now -- fat32_rename() moves the directory
        entry. Until this it returned 0 here, which was harmless while FAT32
        was only ever somebody else's volume and is a lost file the day it is
        the system's own. */
-    if (using_fat32) { F32_SYS(fat32_rename(old, newname)); }
+    if (using_fat32) { F32_SYS(fat32_rename(old, newname) == 1 ? 0 : -1); }   /* v0.9.7.3: 0 or -1 */
     if (using_fat16 && fs_borrowed()) return -1;
-    if (using_fat16) return fat16_rename(old, newname);
+    if (using_fat16) return fat16_rename_path(old, newname);   /* v0.9.7.3: any depth, and moves */
     if (using_fat12) return fat12_rename(old, newname);
     return ramfs_rename(old, newname);
 }
 
 int vfs_mkdir(const char *name) {
+    { const char *r; if (usbv_path(name, &r)) return usbv_mkdir(r); }
     if (using_fat32) {
         int r_;
         if (!fat32_sys_begin()) return -1;
         f32_make_parents(name);
-        r_ = fat32_mkdir(name);
+        r_ = fat32_mkdir(name) == 1 ? 0 : -1;               /* v0.9.7.3: 0 or -1 */
         fat32_sys_end();
         return r_;
     }
     if (using_fat16 && fs_borrowed()) return -1;
-    if (using_fat16) return fat16_mkdir(name);
+    if (using_fat16) return fat16_mkdir_path(name);            /* v0.9.7.3: any depth */
     if (using_fat12) return 0; /* FAT12 mkdir not implemented */
     return ramfs_mkdir(name);
 }
@@ -372,11 +417,36 @@ extern int  ramfs_is_dir(const char*);
 extern void ramfs_list_dir(const char*, void(*)(const char*,int,uint32_t));
 
 int vfs_is_dir(const char *name) {
+    { const char *r; if (usbv_path(name, &r)) return usbv_is_dir(r); }
     if (using_fat32) { F32_SYS_Q(fat32_is_dir(name)); }
+    if (using_fat16 && !fs_borrowed()) return fat16_is_dir_path(name);  /* v0.9.7.3 */
     return ramfs_is_dir(name);
 }
 
+static int is_root(const char *d){ while (d && *d == '/') d++; return !d || !*d; }
+static int g_root_has_usb;
+static void (*g_root_cb)(const char*, int, uint32_t);
+static void root_cb(const char *n, int d, uint32_t sz){
+    if ((n[0]=='U'||n[0]=='u') && (n[1]=='S'||n[1]=='s') && (n[2]=='B'||n[2]=='b') && !n[3]) g_root_has_usb = 1;
+    g_root_cb(n, d, sz);
+}
+
 void vfs_list_dir(const char *dir, void (*cb)(const char*, int, uint32_t)) {
+    { const char *r; if (usbv_path(dir, &r)) { usbv_list_dir(r, cb); return; } }
+    /* the root gets a USB folder while a stick is in, unless a real one
+       of that name is already there (it would be unreachable anyway) */
+    if (is_root(dir)) {
+        g_root_has_usb = 0; g_root_cb = cb;
+        vfs_list_dir_sys(dir, root_cb);
+        /* bus-label-ok: the folder's NAME is /USB, a path, not a label
+           put on a disk -- the same word `cd /USB` is typed with */
+        if (!g_root_has_usb && usbv_present()) cb("USB", 1, 0);
+        return;
+    }
+    vfs_list_dir_sys(dir, cb);
+}
+
+void vfs_list_dir_sys(const char *dir, void (*cb)(const char*, int, uint32_t)) {
     /* Route through same priority as vfs_list so File Manager
        sees the same files as Notepad writes to.
        FAT32 is the only one of the three that can actually list a
@@ -384,7 +454,7 @@ void vfs_list_dir(const char *dir, void (*cb)(const char*, int, uint32_t)) {
        is the behaviour this release leaves exactly as it found it. */
     if (using_fat32)      { if (fat32_sys_begin()) { fat32_list_dir(dir, cb); fat32_sys_end(); } }
     else if (using_fat16 && fs_borrowed()) { /* see fs_borrowed() */ }
-    else if (using_fat16) fat16_list(cb);
+    else if (using_fat16) fat16_list_path(dir, cb);   /* v0.9.7.3: the folder asked for */
     else if (using_fat12) fat12_list(cb);
     else                  ramfs_list_dir(dir, cb);
 }

@@ -215,6 +215,10 @@ typedef struct {
 
     int  (*port_count)(struct usb_hc *);
     int  (*port_connected)(struct usb_hc *, int port);
+    /* v0.9.7.3, optional: has the port's connection changed since the
+       last enumeration acknowledged it? A READ of the latched change
+       bit (xHCI PORTSC.CSC) -- never cleared here. */
+    int  (*port_changed)(struct usb_hc *, int port);
 
     /* Reset the port, give the device an address, and leave its default
        pipe usable. Fills the addressing and device-descriptor fields of

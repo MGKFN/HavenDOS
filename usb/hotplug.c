@@ -79,8 +79,26 @@
        the next release was spent finding out what was wrong with it.
        Not again, in the same release, on a path with a control
        transfer in it.
-     - AN UNPLUG AND REPLUG INSIDE ONE INTERVAL.  The bitmap is the
-       same before and after.  `usb rescan` is still there.
+     - AN UNPLUG AND REPLUG INSIDE ONE INTERVAL -- on UHCI. The bitmap
+       is the same before and after. On xHCI, v0.9.7.3 sees it: see
+       "THE REPLUG" below.
+
+   ── THE REPLUG, v0.9.7.3 ────────────────────────────────────────────
+   Kyan: "usb devices plugging back in out still an pain point". A
+   person pulls a mouse and pushes it back in about a second; the
+   bitmap read a second apart says "connected" both times and nothing
+   happens, and the device -- which has been reset by its own unplug --
+   answers nothing, because its slot was set up for the device that
+   was there before.
+
+   The change bit is still not CLEARED from here, for the reason above.
+   It is READ (the optional port_changed op): port_reset() acknowledges
+   it on every connected port whenever the bus is walked, so a port that
+   was connected at the last walk, is connected now, and shows the bit
+   set again, was disconnected and reconnected in between. That is a
+   change, and the bus is walked; the walk acknowledges it again, so one
+   replug is one rescan. A port that is EMPTY is ignored: nothing
+   acknowledges an empty port, and its bit can stay set forever.
    ════════════════════════════════════════════════════════════════════ */
 #include "../include/kpoll.h"
 #include "../include/usb.h"
@@ -204,6 +222,35 @@ static void note_rescan(uint32_t now)
     g_rescan_n++;
 }
 
+/* Is a device that enumerated last time on this root port? A port whose
+   device did NOT answer (the HP's port 12 says "no answer (-4)" every
+   boot) can drop and reconnect as a consequence of being reset, which
+   sets its change bit again; acting on that would walk the bus every
+   second, for ever. Only a port that had a working device counts. */
+static int port_had_device(int hc, int port)
+{
+    int n = usb_device_count();
+    for(int i = 0; i < n; i++){
+        const usb_dev_t *d = usb_device(i);
+        if(d && d->hc == hc && (d->parent < 0 ? d->port == port : d->rootport == port)) return 1;
+    }
+    return 0;
+}
+
+/* connected ports whose change bit is set: see THE REPLUG above */
+static uint32_t replugged_of(const usb_hc_t *h, int hc, uint32_t connected)
+{
+    uint32_t bits = 0;
+    int n = h->ops->port_count ? h->ops->port_count((usb_hc_t *)h) : 0;
+    if(n > HP_MAX_PORTS) n = HP_MAX_PORTS;
+    if(!h->ops->port_changed) return 0;
+    for(int p = 0; p < n; p++)
+        if((connected >> p) & 1u)
+            if(h->ops->port_changed((usb_hc_t *)h, p) && port_had_device(hc, p))
+                bits |= (uint32_t)1u << p;
+    return bits;
+}
+
 static uint32_t ports_of(const usb_hc_t *h, int *n_out)
 {
     uint32_t bits = 0;
@@ -241,7 +288,18 @@ static void usb_hotplug_work(void)
         if(!h || !h->ops) continue;
         uint32_t now = ports_of(h, 0);
         if(!g_have[c]){ g_seen[c] = now; g_have[c] = 1; continue; }
-        if(now == g_seen[c]) continue;
+        if(now == g_seen[c]){
+            uint32_t back = replugged_of(h, c, now & g_seen[c]);
+            if(!back) continue;
+            for(int p = 0; p < HP_MAX_PORTS; p++){
+                if(!(back & ((uint32_t)1u << p))) continue;
+                g_changes++;
+                klog(KLOG_INFO, "usb: %s port %u: device unplugged and plugged back in",
+                     usb_hc_name(h), (uint32_t)p);
+            }
+            changed = 1;
+            continue;
+        }
 
         /* Report the direction, per port, before rescanning -- a bus
            walk prints a dozen lines and the one fact worth having is

@@ -51,7 +51,57 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.7.2 (22 Nov) — A 386 IN RETRO PC, EXCEPTION E-6
+## START HERE: 0.9.7.3 (22 Nov) — /USB, FASTER STICKS, FILE TYPES, REPLUG
+
+Kyan after 0.9.7.2: "update over USB holy fucking slow", "the abbility
+to save smth to usb", "general file name extensions". He chose
+"Everywhere" for USB saves, and "Just like windows or Mac OS Linux .txt
+.md etc .zip" for extensions. Mid-build: "usb devices plugging back in
+out still an pain point ... needs fixed before hand". Released untested
+on the HP, like every 0.9.7.N.
+
+**The pieces:**
+- **`usb/msc.c` read-ahead:** READ(10) of up to 64 blocks into `g_ra`
+  (32 KB, the size of the xHCI bounce buffer, now `[32768]`).
+  `scsi_read_n` returns sense=1 only for 05/24, and then that one read
+  falls back to a single block. Writes update or drop the cache;
+  `msc_probe` drops it. QEMU: 8.5 MB went from 16.7 s to 2.1 s.
+- **`fs/usbvol.c`:** `/USB` is the first removable FAT32 volume (rw) or
+  exFAT (ro); FAT16 sticks are not mounted. Every call mounts with
+  `fat32_mount_dev` and the `v_rd`/`v_wr` callbacks, and unmounts with
+  `fat32_unmount`, which gives back the parked system volume.
+  `fs/vfs.c` routes `/USB` in every function, adds USB to the root
+  listing, and moves across volumes with `x_copy_delete`.
+- **FAT16 folders:** `fat16_is_dir_path`, `fat16_mkdir_path`,
+  `fat16_rename_path` (also moves), `fat16_remove_path`, `fat16_list_path`.
+  This was the HP bug where Files showed the root in every folder.
+- **VFS return convention:** delete/rename/mkdir give 0 or -1 everywhere;
+  FAT32 used to give 1 for success.
+- **Files types:** `FM_TYPES` in `shell/desktop.c`, `fm_type`,
+  `fm_size_str`, `fm_open_file` (e editor, r Retro PC, h hex viewer via
+  `g_hex_next`, m Music, n "cannot open yet").
+- **Replug:** optional `port_changed` op (xHCI reads PORTSC.CSC, read
+  only; `port_reset` during the walk acknowledges it). `usb/hotplug.c`
+  `replugged_of()` walks when a port is connected at both polls but its
+  change bit is set, only if `port_had_device()`: the HP's port 12 that
+  never answers must not walk every second.
+- **`mouse` command:** pointer position, buttons, USB pointer and
+  trackpad counts.
+
+**Tests:** `make test` 77 suites, 7723 checks (test_msc 125, test_kpoll
+165). Harnesses: `usb_files_0973.py` 17/17 (checked with mtools and
+fsck.vfat), `replug_0973.py` 9/9. QEMU `device_del` deletes the
+device's `-drive`, so the replug harness uses separate stick images.
+
+**Open:**
+- Trackpad: waiting for Kyan's photos of `dmesg | grep I2C`, `i2c` and
+  `mouse`.
+- FAT16 long names; FAT16 sticks; real `.zip`.
+- After this release, ask Kyan which Retro PC idea comes first: HavenDOS
+  inside HavenDOS, or Retro PC as a standalone program for Windows and
+  Linux. Do not start either without his answer.
+
+## 0.9.7.2 (22 Nov) — A 386 IN RETRO PC, EXCEPTION E-6
 
 Kyan sent five old ISOs and wanted them "within HavenDOS". He chose
 "Now, as 0.9.7.2" for 32-bit, and "Later, after BOOT OS works" for the

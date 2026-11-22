@@ -8,7 +8,17 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 From 0.9.7, every release below Stable is a GitHub **pre-release**, so the newest is at the top of the releases list, not under "latest" (which stays on 0.9.6.7 until HavenDOS 1 is Stable on 1 January 2027).
 
-## Current version: 0.9.7.2 Beta "Mnemosyne"
+## Current version: 0.9.7.3 Beta "Mnemosyne"
+
+**0.9.7.3. Save to a USB stick from anywhere.** Tested in QEMU only, not yet on a real machine.
+
+- A FAT32 USB stick is **`/USB`** in Files, the Shell and every app's Save. exFAT sticks are read only.
+- Reading from a stick is about **eight times faster** in QEMU, so updating from a stick no longer crawls.
+- Files shows a **Type** for each file and opens it in the app for that type.
+- A mouse, keyboard or stick pulled and put back, however quickly, works again.
+- Folders on a FAT16 system work: Files no longer shows the root inside every folder.
+
+[Changelog](changelogs/CHANGELOG-v0.9.7.3.md).
 
 **0.9.7.2. BOOT OS runs inside HavenDOS.** Tested in QEMU only, not yet on a real machine.
 
@@ -163,11 +173,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.2.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.3.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.2.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.3.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -191,7 +201,7 @@ sudo apt install gcc-multilib make python3 python3-pip grub-common grub-pc-bin \
 pip install hid-parser
 
 make havendos_pass1.elf && make havendos.elf && make   # the ISO
-sudo make test                                          # 77 suites, 7706 checks
+sudo make test                                          # 77 suites, 7723 checks
 ```
 
 `grub-pc-bin` and `grub-efi-amd64-bin` are both needed: without the first the ISO has no BIOS boot image. The build is two-pass — the kernel embeds a copy of itself for the installer — so build the two kernels before `make`. `make test` runs as root because the exFAT fixture is made with a loop device.
@@ -220,7 +230,7 @@ sudo make test                                          # 77 suites, 7706 checks
 
 ## How releases are made
 
-Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.2` now, `27100.1000` from HavenDOS 1) with three files:
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.3` now, `27100.1000` from HavenDOS 1) with three files:
 
 | File | For |
 | --- | --- |
@@ -236,7 +246,7 @@ The plan is [THS-RM-1005](docs/roadmap/HavenDOS-Roadmap-RM1005.pdf), every relea
 
 | Release | Target | What |
 | --- | --- | --- |
-| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick. 0.9.7.2, 22 Nov: a 386 in Retro PC, BOOT OS built in |
+| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick. 0.9.7.2, 22 Nov: a 386 in Retro PC, BOOT OS built in. 0.9.7.3, 22 Nov: /USB everywhere, faster sticks, file types, replugging |
 | 0.9.8 | ~5 Dec 2026 | Real HTTPS (TLS 1.2 with X25519 and AES-GCM, certificates checked), then signed updates over the internet |
 | 0.9.9 | ~12 Dec 2026 | Hardening; real audio through the speakers (Intel HD Audio); the freeze |
 | **HavenDOS 1, version 27H1 "Brandaris"** | 1 Jan 2027 | OS Build 27100.1000, the first Stable release |

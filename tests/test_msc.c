@@ -66,6 +66,8 @@ typedef enum { PH_CBW = 0, PH_DATA_IN, PH_DATA_OUT, PH_CSW } phase_t;
 
 static struct {
     uint8_t  media[SIM_MAX_BYTES];
+    int      one_block_only;      /* v0.9.7.3: refuse READ(10) of more than one block */
+    int      reads, read_blocks;
     uint32_t bsize, blocks;
     int      wp;             /* MODE SENSE reports write protected   */
     int      rmb;            /* INQUIRY removable-medium bit         */
@@ -225,6 +227,10 @@ static void sim_exec(void)
         if(lba + n > S.blocks || n * S.bsize > SIM_MAX_BYTES){
             S.status = 1; sim_sense(0x05, 0x21, 0x00); break;   /* LBA OOR */
         }
+        if(S.one_block_only && n > 1){                /* v0.9.7.3 */
+            S.status = 1; sim_sense(0x05, 0x24, 0x00); break;   /* INVALID FIELD IN CDB */
+        }
+        S.reads++; S.read_blocks += n;
         memcpy(S.pending, S.media + lba * S.bsize, n * S.bsize);
         S.pending_len = n * S.bsize;
         break; }
@@ -806,6 +812,42 @@ int main(void)
     ck("one device", msc_probe() == 1, msc_count());
     ck("one again, not two", msc_rescan() == 1, msc_count());
     ck("and again", msc_rescan() == 1, msc_count());
+
+    head("v0.9.7.3: READS AHEAD, A FILE READ END TO END IS A FEW COMMANDS");
+    /* Kyan, 22 Nov: "update over USB holy fucking slow". Every sector
+       was a command of its own -- three transfers and three waits. */
+    stick(512, 64); msc_probe();
+    { int before = S.reads, okall = 1;
+      for(int b = 0; b < 64; b++){
+          if(!msc_read_sector(0, (uint64_t)b, buf) || buf[0] != (uint8_t)(0xA0 + (b & 0x0F)) ||
+             buf[1] != (uint8_t)b) okall = 0;
+      }
+      ck("64 sectors read in order all come back right", okall, 0);
+      ck("in at most 5 READ(10)s, not 64 (8, 16, 32 ... blocks each)",
+         S.reads - before <= 5, S.reads - before); }
+    { int before = S.reads;
+      ck("a sector already read comes from the read-ahead", msc_read_sector(0, 60, buf) && buf[1] == 60, 0);
+      ck("  ... with no command at all", S.reads == before, S.reads - before); }
+    { uint8_t w[512]; memset(w, 0x5A, sizeof w);
+      ck("a write to a block in the read-ahead succeeds", msc_write_sector(0, 61, w), 0);
+      ck("  ... and the next read of it is the new data, not the cached old",
+         msc_read_sector(0, 61, buf) && buf[0] == 0x5A && buf[511] == 0x5A, buf[0]);
+      ck("  ... which is what the stick holds", S.media[61 * 512] == 0x5A, S.media[61 * 512]); }
+    head("a stick that refuses multi-block reads is read a block at a time");
+    stick(512, 32); msc_probe();
+    S.one_block_only = 1;
+    ck("the first read still succeeds (05/24, then one block)", msc_read_sector(0, 5, buf) && buf[1] == 5, buf[1]);
+    { int before = S.reads;
+      ck("and the next ones too", msc_read_sector(0, 6, buf) && buf[1] == 6 && msc_read_sector(0, 7, buf) && buf[1] == 7, 0);
+      ck("  ... as single-block reads from then on", S.reads - before == 2 && S.read_blocks >= 3, S.reads - before); }
+    head("the read-ahead does not outlive a rescan");
+    stick(512, 32); msc_probe();
+    msc_read_sector(0, 2, buf);
+    stick(512, 32);                                 /* a different stick, same index */
+    S.media[2 * 512 + 1] = 0x77;
+    msc_probe();
+    ck("after a rescan, a sector is read from the stick now plugged in",
+       msc_read_sector(0, 2, buf) && buf[1] == 0x77, buf[1]);
 
     printf("\n%d/%d passed\n", total - fails, total);
     return fails ? 1 : 0;

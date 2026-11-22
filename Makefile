@@ -24,7 +24,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           drivers/vga.c drivers/keyboard.c drivers/mouse.c \
           drivers/ata.c drivers/ahci.c drivers/atapi.c drivers/pci.c drivers/pci_bar.c drivers/pci_assign.c drivers/uhci.c drivers/nvme.c drivers/virtio.c \
           drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/xedisp.c drivers/xegmbus.c drivers/xemode.c drivers/edid.c drivers/rtc.c \
-          fs/blkdev.c fs/ramfs.c fs/gpt.c fs/gpt_write.c fs/esp.c fs/fat16fmt.c fs/fat32fmt.c fs/espmake.c fs/uninstall.c fs/migrate.c fs/migrate_plan.c fs/fat12.c fs/fat16.c fs/fat32.c fs/exfat.c fs/vfs.c fs/sysvol.c fs/instsize.c fs/install.c \
+          fs/blkdev.c fs/ramfs.c fs/gpt.c fs/gpt_write.c fs/esp.c fs/fat16fmt.c fs/fat32fmt.c fs/espmake.c fs/uninstall.c fs/migrate.c fs/migrate_plan.c fs/fat12.c fs/fat16.c fs/fat32.c fs/exfat.c fs/vfs.c fs/usbvol.c fs/sysvol.c fs/instsize.c fs/install.c \
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
@@ -718,7 +718,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tkp tests/test_kpoll.c && \
-	  python3 tools/run_suite.py --name test_kpoll --min 159 -- /tmp/hd_tkp
+	  python3 tools/run_suite.py --name test_kpoll --min 165 -- /tmp/hd_tkp
 	@echo "── test_task ──────────────────────────────"
 	@echo "  cooperative tasks, switched for real on real stacks"
 	@# v0.9.6. Built -m32 so kernel/task.c's switch -- eight instructions,
@@ -833,7 +833,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@echo "  USB storage against a stick that executes its commands"
 	@$(TESTCC) -Iinclude -Itests -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tmsc tests/test_msc.c && \
-	  python3 tools/run_suite.py --name test_msc --min 114 -- /tmp/hd_tmsc
+	  python3 tools/run_suite.py --name test_msc --min 125 -- /tmp/hd_tmsc
 	@echo "── test_hub ───────────────────────────────"
 	@echo "  a device behind a hub, and the route string that addresses it"
 	@$(TESTCC) -Iinclude -Itests -Wno-unused-function \

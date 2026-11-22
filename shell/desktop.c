@@ -118,6 +118,9 @@ static void app_bpkg(void);
    block lived inside the tables this registry replaced.) */
 static void app_pong(void);
 static void app_hexviewer(void);
+static char g_hex_next[64];    /* v0.9.7.3: a file Files asked it to show */
+static void fm_open_file(const char *path);
+int desktop_open_app(const char *id);
 static void app_logviewer(void);
 static void app_diskinfo(void);
 static void app_netinfo(void);
@@ -2252,6 +2255,61 @@ static void fm_collect_cb(const char *name, int is_dir, uint32_t size){
     fm_count++;
 }
 
+/* ── v0.9.7.3: WHAT A FILE IS, BY ITS EXTENSION ─────────────────────
+   Kyan, 22 Nov: file name extensions "just like windows or Mac OS Linux
+   .txt .md etc .zip etc". Files said "file" for every one of them and
+   opened every one of them in the text editor -- a 5 MB ISO included.
+   Now the Type column names it, and Enter (or Open) sends it to the app
+   that reads it. */
+typedef struct { const char *ext; const char *kind; char how; } fm_type_t;
+/* how: 'e' editor, 'r' Retro PC, 'h' Hex Viewer, 'm' Music, 'n' nothing yet */
+static const fm_type_t FM_TYPES[] = {
+    {"TXT","Text",'e'},     {"MD","Markdown",'e'},  {"LOG","Log",'e'},
+    {"CFG","Settings",'e'}, {"INI","Settings",'e'}, {"INF","Settings",'e'},
+    {"CSV","Table",'e'},    {"JSON","JSON",'e'},    {"XML","XML",'e'},
+    {"HTM","Web page",'e'}, {"HTML","Web page",'e'},{"CSS","Style sheet",'e'},
+    {"C","C source",'e'},   {"H","C header",'e'},   {"PY","Python",'e'},
+    {"JS","JavaScript",'e'},{"SH","Script",'e'},    {"BSH","Script",'e'},
+    {"BAT","Script",'e'},   {"ASM","Assembly",'e'}, {"S","Assembly",'e'},
+    {"YML","Settings",'e'}, {"YAML","Settings",'e'},{"LST","List",'e'},
+    {"IMG","Disk image",'r'},{"ISO","CD image",'r'},
+    {"MP3","Audio",'m'},    {"WAV","Audio",'m'},
+    {"ELF","Program",'h'},  {"BIN","Binary",'h'},   {"EXE","Program",'h'},
+    {"COM","Program",'h'},  {"SYS","System file",'h'},{"HDD","Hard disk",'h'},
+    {"DAT","Data",'h'},
+    {"ZIP","ZIP archive",'n'},{"Z","Archive",'n'},  {"GZ","Archive",'n'},
+    {"TAR","Archive",'n'},  {"7Z","Archive",'n'},   {"RAR","Archive",'n'},
+    {"BMP","Picture",'n'},  {"PNG","Picture",'n'},  {"JPG","Picture",'n'},
+    {"JPEG","Picture",'n'}, {"GIF","Picture",'n'},  {"PDF","PDF",'n'},
+    {"DOC","Document",'n'}, {"DOCX","Document",'n'},{"MP4","Video",'n'},
+};
+static const fm_type_t *fm_type(const char *name){
+    const char *dot = 0;
+    for(const char *p = name; *p; p++) if(*p == '.') dot = p;
+    if(!dot || !dot[1]) return 0;
+    for(unsigned i = 0; i < sizeof FM_TYPES / sizeof FM_TYPES[0]; i++){
+        const char *a = dot + 1, *b = FM_TYPES[i].ext;
+        while(*a && *b && ((*a >= 'a' && *a <= 'z') ? *a - 32 : *a) == *b){ a++; b++; }
+        if(!*a && !*b) return &FM_TYPES[i];
+    }
+    return 0;
+}
+static const char *fm_kind(const char *name, int is_dir){
+    const fm_type_t *t;
+    if(is_dir) return "Folder";
+    t = fm_type(name);
+    return t ? t->kind : "File";
+}
+static void fm_size_str(uint32_t v, char *out){
+    char n[12];
+    if(v < 1024){ utoa(v, out, 10); strcat(out, " B"); return; }
+    if(v < 1024u * 1024u){ utoa((v + 512) / 1024, out, 10); strcat(out, " KB"); return; }
+    utoa(v / (1024u * 1024u), out, 10);
+    strcat(out, ".");
+    utoa((v % (1024u * 1024u)) * 10u / (1024u * 1024u), n, 10);
+    strcat(out, n); strcat(out, " MB");
+}
+
 static void fm_draw(int sel, int scroll){
     theme_t *th=ui_theme();
     vga_clear(); ui_draw_taskbar("File Manager");
@@ -2270,7 +2328,7 @@ static void fm_draw(int sel, int scroll){
     /* Column headers */
     vga_puts_at("Name",                        5, 4, VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts_at("Type",                        34,4, VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts_at("Size",                        42,4, VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts_at("Size",                        50,4, VGA_LIGHT_CYAN, VGA_BLACK);
 
     /* Show ".." entry if not at root */
     int row_offset = 0;
@@ -2299,10 +2357,17 @@ static void fm_draw(int sel, int scroll){
         for(int j=0;j<27;j++) nm[j]=j<nl?fm_names[idx][j]:' ';
         nm[27]=0;
         vga_puts_at(nm,5,vy,nfg,bg);
-        vga_puts_at(fm_dirs[idx]?"DIR  ":"file ",34,vy,tfg,bg);
+        {   /* v0.9.7.3: what it is, and the USB stick named as one */
+            extern int usbv_path(const char *, const char **);
+            const char *kd = fm_kind(fm_names[idx], fm_dirs[idx]);
+            const char *rr;
+            /* bus-label-ok: names the /USB folder, which is a USB stick by definition (fs/usbvol.c) */
+            if(fm_dirs[idx] && !fm_cwd[0] && usbv_path(fm_names[idx], &rr)) kd = "USB stick";
+            vga_puts_at(kd,34,vy,tfg,bg);
+        }
         if(!fm_dirs[idx]){
-            char sb[12]; utoa(fm_sizes[idx],sb,10); strcat(sb," B");
-            vga_puts_at(sb,42,vy,sfg,bg);
+            char sb[16]; fm_size_str(fm_sizes[idx],sb);
+            vga_puts_at(sb,50,vy,sfg,bg);
         }
     }
 
@@ -2391,7 +2456,7 @@ static int fm_menu(int idx)
     switch(pick){
     case 1:                                             /* Open */
         if(isdir){ strncpy(fm_cwd,full,63); fm_cwd[63]=0; return 1; }
-        app_texteditor_load(full); return 1;
+        fm_open_file(full); return 1;
     case 2:                                             /* Rename */
         strncpy(name,fm_names[idx],sizeof name-1); name[sizeof name-1]=0;
         if(!fm_prompt("New name:",name,sizeof name)) return 0;
@@ -2449,6 +2514,27 @@ static int fm_menu(int idx)
         fm_say("Folder made",0); return 1;
     }
     return 0;
+}
+
+/* v0.9.7.3: Enter on a file opens it in the app for its type */
+static void fm_open_file(const char *path){
+    const fm_type_t *t = fm_type(path);
+    char how = t ? t->how : 0;
+    if(!how){
+        /* no known extension: text if the start of it reads as text */
+        char b[256]; int n = vfs_read(path, b, sizeof b), bin = 0;
+        for(int i = 0; i < n; i++) if(b[i] == 0){ bin = 1; break; }
+        how = bin ? 'h' : 'e';
+    }
+    switch(how){
+    case 'e': app_texteditor_load(path); return;
+    case 'r': { extern void retro_set_next(const char *); retro_set_next(path); desktop_open_app("retro"); return; }
+    case 'h': strncpy(g_hex_next, path, 63); g_hex_next[63] = 0; desktop_open_app("hex"); return;
+    case 'm': toast_info("The Music Player plays from its own list -- open it from Apps"); desktop_open_app("music"); return;
+    default: {
+        char m[72]; strcpy(m, "HavenDOS cannot open "); strcat(m, t->kind); strcat(m, " files yet");
+        toast_info(m); return; }
+    }
 }
 
 static void app_filemanager(void){
@@ -2572,7 +2658,7 @@ reload:
                 } else {
                     strncpy(fullpath,fm_names[sel],63);
                 }
-                app_texteditor_load(fullpath);
+                fm_open_file(fullpath);      /* v0.9.7.3: by its type */
                 goto reload;
             }
             continue;
@@ -4637,14 +4723,19 @@ static void app_hexviewer(void){
     vga_clear(); ui_draw_taskbar("Hex Viewer");
     ui_draw_window(2,2,76,20,"Hex Viewer  -  Enter filename, ESC to cancel");
     vga_puts_at("File: ",5,4,VGA_LIGHT_GREY,VGA_BLACK);
-    char fname[32]=""; int fpos=0;
+    char fname[64]=""; int fpos=0;
+    if(g_hex_next[0]){                       /* v0.9.7.3: opened from Files */
+        strcpy(fname, g_hex_next); g_hex_next[0]=0;
+        vga_puts_at(fname,11,4,VGA_WHITE,VGA_BLACK);
+    } else {
     vga_set_cursor(11,4);
     while(1){
         int c=keyboard_waitchar();
         if(c=='\n'||c=='\r') break;
         if(c==27) return;
         if((c=='\b'||c==127)&&fpos>0){ fpos--; fname[fpos]=0; vga_putchar('\b'); }
-        else if(c>=32&&c<127&&fpos<30){ fname[fpos++]=c; fname[fpos]=0; vga_putchar(c); }
+        else if(c>=32&&c<127&&fpos<60){ fname[fpos++]=c; fname[fpos]=0; vga_putchar(c); }
+    }
     }
     if(!fname[0]) return;
     static char buf[512];

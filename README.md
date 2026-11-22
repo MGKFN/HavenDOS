@@ -8,7 +8,16 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 From 0.9.7, every release below Stable is a GitHub **pre-release**, so the newest is at the top of the releases list, not under "latest" (which stays on 0.9.6.7 until HavenDOS 1 is Stable on 1 January 2027).
 
-## Current version: 0.9.7.1 Beta "Mnemosyne"
+## Current version: 0.9.7.2 Beta "Mnemosyne"
+
+**0.9.7.2. BOOT OS runs inside HavenDOS.** Tested in QEMU only, not yet on a real machine.
+
+- Retro PC has a second emulated PC: a **32-bit 386**, with the timer, interrupt controllers, keyboard, clock and VGA text a 1990s PC had.
+- It does GRUB's job itself: it reads a CD image's own boot menu and loads its Multiboot kernel the way GRUB did.
+- **BOOT OS 0.3.1, 0.5.0 and 0.5.2**, the line that became HavenDOS, are built in (log in as bootos / 1234). Any such `.ISO` boots from `RETRO` on a USB stick.
+- Text mode only for now; graphics modes and the 64-bit K-DOS kernels come later.
+
+[Changelog](changelogs/CHANGELOG-v0.9.7.2.md).
 
 **0.9.7.1. The sign-in screen, and your own images in Retro PC.** Tested in QEMU only, not yet on a real machine.
 
@@ -154,11 +163,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.1.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.2.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.1.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.2.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -182,7 +191,7 @@ sudo apt install gcc-multilib make python3 python3-pip grub-common grub-pc-bin \
 pip install hid-parser
 
 make havendos_pass1.elf && make havendos.elf && make   # the ISO
-sudo make test                                          # 76 suites, 7672 checks
+sudo make test                                          # 77 suites, 7706 checks
 ```
 
 `grub-pc-bin` and `grub-efi-amd64-bin` are both needed: without the first the ISO has no BIOS boot image. The build is two-pass — the kernel embeds a copy of itself for the installer — so build the two kernels before `make`. `make test` runs as root because the exFAT fixture is made with a loop device.
@@ -199,7 +208,7 @@ sudo make test                                          # 76 suites, 7672 checks
 | `fs/` | FAT, exFAT, GPT, the block layer, installer, updater and `migrate` |
 | `net/` | TCP/IP, DNS, HTTP, TLS, RSA, X.509, plists |
 | `shell/` | The shell, the desktop, the window chrome and the apps (Retro PC is `shell/retro.c`) |
-| `emu/` | Retro PC's emulated CPU (`cpu86.c`) and PC (`pcbios.c`) |
+| `emu/` | Retro PC's emulated PCs: the 8086 (`cpu86.c`, `pcbios.c`) and the 386 (`cpu386.c`, `pc386.c`) |
 | `tests/` | Native test suites — `make test` |
 | `tools/` | Build scripts, the checks `make` runs, and the injection harnesses |
 | `harness/` | Scripted QEMU testing |
@@ -211,7 +220,7 @@ sudo make test                                          # 76 suites, 7672 checks
 
 ## How releases are made
 
-Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.1` now, `27100.1000` from HavenDOS 1) with three files:
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.2` now, `27100.1000` from HavenDOS 1) with three files:
 
 | File | For |
 | --- | --- |
@@ -227,7 +236,7 @@ The plan is [THS-RM-1005](docs/roadmap/HavenDOS-Roadmap-RM1005.pdf), every relea
 
 | Release | Target | What |
 | --- | --- | --- |
-| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick |
+| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick. 0.9.7.2, 22 Nov: a 386 in Retro PC, BOOT OS built in |
 | 0.9.8 | ~5 Dec 2026 | Real HTTPS (TLS 1.2 with X25519 and AES-GCM, certificates checked), then signed updates over the internet |
 | 0.9.9 | ~12 Dec 2026 | Hardening; real audio through the speakers (Intel HD Audio); the freeze |
 | **HavenDOS 1, version 27H1 "Brandaris"** | 1 Jan 2027 | OS Build 27100.1000, the first Stable release |

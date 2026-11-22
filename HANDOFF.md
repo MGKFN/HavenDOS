@@ -1,12 +1,12 @@
 # HavenDOS — handoff, 22 November 2026
 
-Current release: **v0.9.7.1** (a GitHub pre-release) (channel Beta, codename "Mnemosyne"),
+Current release: **v0.9.7.2** (a GitHub pre-release) (channel Beta, codename "Mnemosyne"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
 ## FOR A NEW CHAT: READ THIS FIRST
 
-- **The plan is THS-RM-1005 REV D** (`docs/roadmap/HavenDOS-Roadmap-RM1005.pdf`,
+- **The plan is THS-RM-1005 REV E** (`docs/roadmap/HavenDOS-Roadmap-RM1005.pdf`,
   built from `docs/rm1005/`). It lays out every release from here to
   29H2. THS-RM-1004 (`docs/rm1004/`) still holds the numbering standard
   (its sections 1–11).
@@ -51,7 +51,71 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.7.1 (22 Nov) — QEMU-TESTED, NOT ON THE HP YET
+## START HERE: 0.9.7.2 (22 Nov) — A 386 IN RETRO PC, EXCEPTION E-6
+
+Kyan sent five old ISOs and wanted them "within HavenDOS". He chose
+"Now, as 0.9.7.2" for 32-bit, and "Later, after BOOT OS works" for the
+64-bit K-DOS kernels.
+
+**What the five are:**
+- BOOT OS 0.3.1, 0.5.0 and 0.5.2: GRUB plus a Multiboot ELF32. These
+  three run now.
+- `kdos_2.iso`: K-DOS 1.0 Beta, multiboot2, long mode. This needs a
+  64-bit CPU.
+- `KDOS.iso`: a UDF data disc with the source, `kernel.bin` (64-bit,
+  flat) and another data ISO. Nothing on it boots.
+
+**The pieces:**
+- **`emu/cpu386.c`** (`include/emu386.h`):
+  - flat protected mode, ring 0, no paging;
+  - GDT bases are honoured; interrupts go through the IDT (interrupt
+    and trap gates);
+  - exceptions are raised with `c->exc` and delivered with EIP back at
+    the faulting instruction; one that cannot be delivered gives
+    `X86_FAULT`, with `fault_vec` and `fault_why`;
+  - no x87 (D8-DF are consumed);
+  - CPUID says "HavenRetroPC", family 6, TSC/CX8/CMOV, no long mode;
+  - the 64/32 DIV is `udiv64()`, because the kernel has no libgcc;
+  - speed: about 70 MIPS natively (single switch with case ranges, a
+    PF table, inline fetch).
+- **`emu/pc386.c`** (`include/pc386.h`):
+  - the 8259s (edge, ISR/IRR, OCW2/3), the 8254 (ticks from host
+    milliseconds, 838 ns per count), the 8042 (keyboard and PS/2 mouse
+    replies, set-1 scancodes from HavenDOS keys with shift and ctrl),
+    CMOS, VGA text from B8000h with the CRTC cursor, PCI absent, ATA
+    absent;
+  - `pc386_iso_read()` is ISO 9660 path lookup;
+  - `pc386_cfg_menu()` parses `menuentry` and `multiboot[2]` lines;
+  - `pc386_boot_kernel()` handles ELF PT_LOAD or the a.out kludge,
+    builds the Multiboot info at 9000h (cmdline 9800h, mmap 9C00h) and
+    sets `EAX=2BADB002`.
+- **Built in:** `archive/retro/bootos-*.elf` + `.cfg`, listed in
+  `IMAGES.txt` with a 6th column `multiboot:<cfg>`.
+  `tools/make_retro_images.py` puts the cfg into `retro_image_t`
+  (`multiboot`, `cfg`, `cfg_size`).
+- **`shell/retro.c`:**
+  - `run_386()` and `pick_entry()` (GRUB's menu; the default is the
+    first `gfx=text` non-safe entry);
+  - `.ISO` files are listed from the disk and the stick;
+  - `iso_load()` caps a CD image at 48 MB; guest RAM is 16 MB, or 8 MB
+    if the heap can't give 16;
+  - the run loop takes about 20 ms of instructions per frame.
+
+**BOOT OS facts:**
+- Its timer handler reads `int_no` through DS (a bug), so uptime stays
+  0, faithfully.
+- Its boot animation is delay loops: about 1.4 billion instructions,
+  15 s natively, and 283 s in QEMU (nested).
+
+**Not covered:** mode 13h and VESA display; 64-bit long mode.
+
+**Tests:**
+- `test_emu386` 34: it is -O2 without sanitizers and takes about 50 s.
+- `harness/retro386.py` 7/7: about 6 minutes; it builds the ISO with
+  xorriso.
+- `check_machine_reset` exempts `emu/pc386.c` and `emu/pcbios.c`.
+
+## 0.9.7.1 (22 Nov) — QEMU-TESTED, NOT ON THE HP YET
 
 **Kyan's new rule, 22 Nov ("we need to pick up the pace"):** releases go
 out tested in QEMU, each changelog saying **"Not tested on a real

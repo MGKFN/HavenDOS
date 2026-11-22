@@ -94,6 +94,13 @@ GENERATED = {
     "include/font8x8.h", "include/font8x8_ext.h",
 }
 
+# v0.9.7.2: Retro PC's 386 PC. It names these ports because it IS the
+# hardware behind them -- a guest that writes 0xCF9 or 0x604 is asking
+# the emulated PC to reset or power off, and emu/pc386.c answers by
+# stopping the guest. It never writes a real port: there is no io.h in
+# it, and the emulator files cannot reach one.
+EMULATED = {"emu/pc386.c", "emu/pcbios.c"}
+
 # include/machine_asm.h holds the triple fault and the halt loop, which
 # are the two instructions kernel/machine.c cannot reach through io.h.
 # It writes no port, so it is not an exemption from the rule -- it is
@@ -158,7 +165,7 @@ def main():
             if not fn.endswith((".c", ".h", ".S")):
                 continue
             rel = os.path.relpath(os.path.join(root, fn), ".").replace("\\", "/")
-            if rel in (OWNER, OWNER_SIDECAR) or rel in GENERATED:
+            if rel in (OWNER, OWNER_SIDECAR) or rel in GENERATED or rel in EMULATED:
                 continue
             checked += 1
             code = blank_comments(open(os.path.join(root, fn),

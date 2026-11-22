@@ -106,7 +106,10 @@ def main():
         row = next((l for l in lines if "MYDOS.IMG" in l), "")
         check("and says it is on a USB stick", "USB stick" in row, row)
 
-        q.key("down"); time.sleep(0.8)
+        # past the built-in images (one row each, "built in, ..."): since
+        # 0.9.7.2 there are four, K-DOS and three BOOT OS
+        for _ in range(s.count("built in")):
+            q.key("down"); time.sleep(0.8)
         q.key("ret"); time.sleep(4.0)
         s = q.screen()
         check("Enter boots it off the stick: K-DOS's login screen",

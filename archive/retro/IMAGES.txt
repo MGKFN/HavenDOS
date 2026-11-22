@@ -1,10 +1,16 @@
 # archive/retro/IMAGES.txt -- the old builds Retro PC carries.  v0.9.7.
 #
-# One line per image:  id | title | file | sha256 | about
+# One line per image:  id | title | file | sha256 | about [| kind]
 #   id     at most 8 letters and digits: it names the image's hard
 #          disk file on HavenDOS, RETRO/<ID>.HDD, and FAT wants 8.3
 #   sha256 tools/make_retro_images.py refuses to build if the file no
 #          longer hashes to this -- an archive is only worth having if
 #          what is in it is what was put there
+#   kind   floppy (the default): a boot floppy for the 8086 PC
+#          multiboot:<file.cfg>: a 32-bit Multiboot kernel for the 386
+#          PC, with the grub.cfg its ISO carried (v0.9.7.2)
 #
 KDOS11B | K-DOS Beta 1.1b | kdos-beta-1.1b.img | 03e1be43fb0cc995dfc8b1f2e2f751a564cb27ad5217ad645e09a62fbf1afcb0 | The first build that survived. Log in as admin, password 1234.
+BOOTOS31 | BOOT OS 0.3.1 | bootos-0.3.1.elf | 53838a1198b7c789bbcec54184224c06284786494c7d130d4013c12254a3d4f5 | The 32-bit line that became HavenDOS. Log in as bootos, password 1234. | multiboot:bootos-0.3.1.cfg
+BOOTOS50 | BOOT OS 0.5.0 | bootos-0.5.0.elf | 695d824ab83d681e6ff548383df6928c7f648490a0193938dcf22d90fb3f4288 | Its banner still says v0.3.0. Log in as bootos, password 1234. | multiboot:bootos-0.5.0.cfg
+BOOTOS52 | BOOT OS 0.5.2 | bootos-0.5.2.elf | bfc26f3260d3b0621ff7e99d12e2dacda7d9faa329cb3c38935394955d864ab0 | Hashed passwords, the last before the rename. bootos / 1234. | multiboot:bootos-0.5.2.cfg

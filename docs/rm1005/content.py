@@ -29,8 +29,8 @@ META = dict(
     subtitle=("Every release from today to December 2029,<br/>"
               "laid out: what is in it, the work,<br/>"
               "how it is accepted, what it waits on"),
-    part="THS-RM-1005 REV D",
-    date="20 NOV 2026",
+    part="THS-RM-1005 REV E",
+    date="22 NOV 2026",
     author="Kyan Hoekstra / TechHaven Studios",
     baseline="v0.9.7 Beta &ldquo;Mnemosyne&rdquo;, 7654 checks across 75 suites",
     supersedes="THS-RM-1004 sections 12&ndash;22 (its numbering standard stands)",
@@ -226,6 +226,11 @@ dict(title="What changed since RM-1004", body=[
     "0.9.7"],
    ["17 Nov", "Real audio through the speakers: Intel HD Audio (E-5), "
     "moved from 28H1", "0.9.9"],
+   ["22 Nov", "Releases go out tested in QEMU, marked &ldquo;Not tested on "
+    "a real machine&rdquo; until the HP has run them; no 0.9.6.8&ndash;.10",
+    "0.9.7.1 onward"],
+   ["22 Nov", "Retro PC gets a 32-bit 386 that boots the BOOT OS ISOs, "
+    "as exception E-6", "0.9.7.2"],
  ], [11, 63, 26]),
  ("caution", "The fixes-only rule was bent twice in one day. From 0.9.7 it "
              "holds again: a feature asked for during a 0.9.x line goes into "
@@ -274,6 +279,20 @@ dict(title="What changed since RM-1004", body=[
   "December, CH40 from 16 December; <b>Stable stays 1 January.</b> The "
   "Release Preview fortnight is what absorbs it. [[^Risks]] lists HD Audio "
   "and the shorter Preview.</p>"),
+ ("box", "EXCEPTION E-6 &mdash; A 386 FOR RETRO PC, DECIDED 22 NOV 2026",
+  "<p><b>What.</b> Kyan&rsquo;s BOOT OS ISOs (0.3.1, 0.5.0, 0.5.2) are "
+  "32-bit Multiboot kernels started by GRUB, which Retro PC&rsquo;s 8086 "
+  "cannot run. 0.9.7.2 adds a second emulated PC: a 386 in flat protected "
+  "mode with the 8259s, the 8254, the 8042 and VGA text, and a loader that "
+  "does GRUB&rsquo;s job &mdash; the ISO&rsquo;s own " + cmd("grub.cfg") +
+  " as the menu, the kernel loaded as GRUB loads it. The three kernels are "
+  "built in; any such ISO boots from " + cmd("RETRO") + " on a stick.</p>"
+  "<p><b>Its bounds.</b> 32-bit text mode. Graphics modes (mode 13h, VESA) "
+  "and the 64-bit K-DOS kernels are not covered and are decided again "
+  "later; Kyan chose &ldquo;later, after BOOT OS works&rdquo; for 64-bit.</p>"
+  "<p><b>What it costs.</b> About a day, taken now at Kyan&rsquo;s choice "
+  "(&ldquo;Now, as 0.9.7.2&rdquo;). 0.9.8 may slip a few days past 5 "
+  "December; <b>Stable stays 1 January.</b></p>"),
 ]),
 
 # ══════════════════════════════════════════════════════════════════ 4
@@ -776,9 +795,11 @@ dict(title="Document control", body=[
     "in 0.9.7; 0.9.7 to ~24 Nov"],
    ["THS-RM-1005 REV C", "17 Nov 2026", "0.9.6.6; exceptions "
     "E-2 to E-5; 0.9.7 ~26 Nov, 0.9.8 ~5 Dec, freeze ~12 Dec, Stable 1 Jan"],
-   ["<b>THS-RM-1005 REV D</b>", "20 Nov 2026", "0.9.7 &ldquo;Mnemosyne&rdquo; "
+   ["THS-RM-1005 REV D", "20 Nov 2026", "0.9.7 &ldquo;Mnemosyne&rdquo; "
     "released with E-1 to E-4, the first GitHub pre-release; other dates "
     "unchanged"],
+   ["<b>THS-RM-1005 REV E</b>", "22 Nov 2026", "QEMU-tested releases; "
+    "exception E-6, a 386 for Retro PC, in 0.9.7.2"],
  ], [26, 18, 56]),
  ("p", "Built by " + cmd("docs/rm1005/build.py") + " from "
        + cmd("docs/rm1005/content.py") + " in the house style: A5, cream "

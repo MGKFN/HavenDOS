@@ -28,7 +28,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
-          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/migratecmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c shell/uimouse.c shell/chrome.c shell/retro.c emu/cpu86.c emu/pcbios.c
+          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/migratecmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c shell/uimouse.c shell/chrome.c shell/retro.c emu/cpu86.c emu/pcbios.c emu/cpu386.c emu/pc386.c
 
 SRCS_S  = boot/boot.S
 OBJS_C  = $(SRCS_C:.c=.o)
@@ -117,7 +117,7 @@ include/font8x8_ext.h: include/font8x8.h tools/make_font_ext.py
 	python3 tools/make_font_ext.py include/font8x8.h include/font8x8_ext.h
 
 # v0.9.7: the old builds Retro PC carries, checked against their SHA-256
-include/retro_images.h: archive/retro/IMAGES.txt $(wildcard archive/retro/*.img) tools/make_retro_images.py
+include/retro_images.h: archive/retro/IMAGES.txt $(wildcard archive/retro/*.img) $(wildcard archive/retro/*.elf) $(wildcard archive/retro/*.cfg) tools/make_retro_images.py
 	python3 tools/make_retro_images.py include/retro_images.h
 
 havendos_pass1.elf: include/font8x8_ext.h include/retro_images.h include/grub_embed.h include/grub_efi_embed.h $(OBJS_PASS1)
@@ -757,6 +757,13 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_temu tests/test_emu86.c emu/cpu86.c emu/pcbios.c && \
 	  python3 tools/run_suite.py --name test_emu86 --min 86 -- /tmp/hd_temu
+	@echo "── test_emu386 ────────────────────────────"
+	@echo "  Retro PC's 386: its ALU against this CPU, programs, and BOOT OS booted (v0.9.7.2)"
+	@# -O2 and no sanitizers: part 3 boots three kernels through their
+	@# boot animations, about a billion instructions each.
+	@$(TESTCC) -O2 -Iinclude -Wall -Wno-builtin-declaration-mismatch \
+	           -o /tmp/hd_t386 tests/test_emu386.c && \
+	  python3 tools/run_suite.py --name test_emu386 --min 34 -- /tmp/hd_t386
 	@echo "── test_window ────────────────────────────"
 	@echo "  an app's window: title bar, buttons, taskbar"
 	@# v0.9.6.5: chrome_layout() and chrome_hit() out of shell/chrome.c,

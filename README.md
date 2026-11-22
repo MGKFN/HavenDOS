@@ -8,11 +8,24 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 From 0.9.7, every release below Stable is a GitHub **pre-release**, so the newest is at the top of the releases list, not under "latest" (which stays on 0.9.6.7 until HavenDOS 1 is Stable on 1 January 2027).
 
-## Current version: 0.9.7 Beta "Mnemosyne"
+## Current version: 0.9.7.1 Beta "Mnemosyne"
+
+**0.9.7.1. The sign-in screen, and your own images in Retro PC.** Tested in QEMU only, not yet on a real machine.
+
+- The sign-in screen covers the whole screen; on the HP it was drawn over the Start menu.
+- The first letter of a password is no longer lost.
+- Lock from inside an app no longer has a taskbar over it, and the Shell's `lock` is the real sign-in screen.
+- `cls` clears all of the Shell.
+- `cp`, `>>`, `cat`, `wc` and the rest read whole files instead of the first 4 KB, and live-session files can be bigger than 2 KB.
+- **Retro PC finds `.IMG` files in a `RETRO` folder on a USB stick**, and boots them from it.
+
+[Changelog](changelogs/CHANGELOG-v0.9.7.1.md).
+
+**0.9.7. Everything planned for it.**
 
 - **Retro PC.** An emulated PC inside HavenDOS that boots the studio's old builds, starting with **K-DOS Beta 1.1b**, the oldest one that survived (log in as admin / 1234).
   - It is an 80186 with the 386's 16-bit additions, a BIOS, a floppy, and a pretend hard disk kept as a file, so it never touches a real disk.
-  - Your own `.IMG` images go in a `RETRO` folder.
+  - Your own `.IMG` images go in a `RETRO` folder on a USB stick (since 0.9.7.1) or on the HavenDOS disk.
   - The CPU matches a real 8088 on 2.5 million recorded instructions.
 - **The new version numbers in the updater.** Every installed 0.9.x now understands "HavenDOS 1, version 27H1 (OS Build 27100.1000)".
   - Update channels (Beta, Public Beta, Release Preview, Stable): `update` refuses a less stable channel by name, and `update channel` sets which one a system follows.
@@ -141,11 +154,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.1.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.1.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -169,7 +182,7 @@ sudo apt install gcc-multilib make python3 python3-pip grub-common grub-pc-bin \
 pip install hid-parser
 
 make havendos_pass1.elf && make havendos.elf && make   # the ISO
-sudo make test                                          # 75 suites, 7654 checks
+sudo make test                                          # 76 suites, 7672 checks
 ```
 
 `grub-pc-bin` and `grub-efi-amd64-bin` are both needed: without the first the ISO has no BIOS boot image. The build is two-pass — the kernel embeds a copy of itself for the installer — so build the two kernels before `make`. `make test` runs as root because the exFAT fixture is made with a loop device.
@@ -198,7 +211,7 @@ sudo make test                                          # 75 suites, 7654 checks
 
 ## How releases are made
 
-Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7` now, `27100.1000` from HavenDOS 1) with three files:
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.1` now, `27100.1000` from HavenDOS 1) with three files:
 
 | File | For |
 | --- | --- |
@@ -214,7 +227,7 @@ The plan is [THS-RM-1005](docs/roadmap/HavenDOS-Roadmap-RM1005.pdf), every relea
 
 | Release | Target | What |
 | --- | --- | --- |
-| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins |
+| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick |
 | 0.9.8 | ~5 Dec 2026 | Real HTTPS (TLS 1.2 with X25519 and AES-GCM, certificates checked), then signed updates over the internet |
 | 0.9.9 | ~12 Dec 2026 | Hardening; real audio through the speakers (Intel HD Audio); the freeze |
 | **HavenDOS 1, version 27H1 "Brandaris"** | 1 Jan 2027 | OS Build 27100.1000, the first Stable release |

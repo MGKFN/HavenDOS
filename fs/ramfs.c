@@ -8,10 +8,19 @@
 #define MAX_FILES 64
 #define MAX_NAME  48
 #define MAX_DATA  2048
+/* v0.9.7.1: a file in a live session could hold 2 KB, and anything
+   longer was cut there without a word -- `cp` of a floppy image, a log
+   saved with `>`, an editor file. Up to MAX_DATA still lives in the
+   entry; anything bigger is on the heap, up to RAMFS_MAX. */
+#define RAMFS_MAX (8u * 1024u * 1024u)
+extern void *kmalloc(size_t);
+extern void  kfree(void *);
 
 typedef struct {
     char     name[MAX_NAME];
-    char     data[MAX_DATA];
+    char     inl[MAX_DATA];
+    char    *big;         /* the heap copy, when size > MAX_DATA */
+    uint32_t bigcap;
     uint32_t size;
     int      used;
     int      is_dir;
@@ -69,8 +78,19 @@ int ramfs_write(const char *name, const char *data, uint32_t size) {
         strncpy(files[i].owner, ramfs_current_user, 15);
         files[i].admin_only = 0;
     }
-    if (size > MAX_DATA) size = MAX_DATA;
-    memcpy(files[i].data, data, size);
+    if (size > RAMFS_MAX) size = RAMFS_MAX;
+    if (size > MAX_DATA) {
+        if (size > files[i].bigcap) {
+            char *b = (char *)kmalloc(size);
+            if (!b) return -1;                       /* nothing changed */
+            if (files[i].big) kfree(files[i].big);
+            files[i].big = b; files[i].bigcap = size;
+        }
+        memcpy(files[i].big, data, size);
+    } else {
+        if (files[i].big) { kfree(files[i].big); files[i].big = 0; files[i].bigcap = 0; }
+        memcpy(files[i].inl, data, size);
+    }
     files[i].size   = size;
     files[i].is_dir = 0;
     return (int)size;
@@ -80,13 +100,14 @@ int ramfs_read(const char *name, char *buf, uint32_t bufsz) {
     int i = ramfs_find(name); if (i < 0) return -1;
     if (!ramfs_can_access(i)) return -2;
     uint32_t sz = files[i].size < bufsz ? files[i].size : bufsz;
-    memcpy(buf, files[i].data, sz);
+    memcpy(buf, files[i].big ? files[i].big : files[i].inl, sz);
     return (int)sz;
 }
 
 int ramfs_delete(const char *name) {
     int i = ramfs_find(name); if (i < 0) return -1;
     if (!ramfs_can_access(i)) return -2;
+    if (files[i].big) kfree(files[i].big);
     memset(&files[i], 0, sizeof(ramfs_file_t));
     return 0;
 }

@@ -1,7 +1,7 @@
-# HavenDOS — handoff, 17 November 2026
+# HavenDOS — handoff, 22 November 2026
 
-Current release: **v0.9.7** (a GitHub pre-release) (channel Beta, codename "Daedalus"), commit
-5e1cca7 on MGKFN/HavenDOS, published by the Release workflow. Paste this
+Current release: **v0.9.7.1** (a GitHub pre-release) (channel Beta, codename "Mnemosyne"),
+on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
 ## FOR A NEW CHAT: READ THIS FIRST
@@ -51,7 +51,73 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.7 "Mnemosyne" (20 Nov) — EVERYTHING REV C PLANNED
+## START HERE: 0.9.7.1 (22 Nov) — QEMU-TESTED, NOT ON THE HP YET
+
+**Kyan's new rule, 22 Nov ("we need to pick up the pace"):** releases go
+out tested in QEMU, each changelog saying **"Not tested on a real
+machine"** until he has run it on the HP. No 0.9.6.8-10: 0.9.7 is out,
+so the updater would refuse them as older. Keep going 0.9.7.2, .3 ...
+He tests only what QEMU cannot: trackpad, external monitor, the real
+mouse wheel, replugging.
+
+**What his photo showed:** the sign-in screen over the Start menu. Screens
+that run with NO viewport were laid out for 80x25 and painted only that,
+so on 128x48 the old screen stayed around them. Apps are boxed by the
+viewport and cannot leak, so the hunt was over the unboxed screens.
+
+**Fixed:**
+- `shell/login.c`:
+  - `draw_theme_bg()` and the clock use `vga_cols()`/`vga_rows()`;
+  - the dialogs are centred with `lg_box()` (`vga_viewport_centre(80,25)`)
+    and the password box with `pw_px()`/`pw_py()`;
+  - `login_screen()` saves and restores the caller's viewport and calls
+    `chrome_pause()`/`chrome_resume()` (new in `shell/chrome.c`), so the
+    window's taskbar clock stops painting over it and a taskbar click
+    cannot get past the lock;
+  - `read_pw(..., first)` takes the key the main loop had read and
+    discarded, so the password's first character is no longer lost.
+- The Shell's `lock` (`shell/shell_v073.c`) is now `login_screen()`.
+- `clear_anim()` (`cls`) clears the whole console and calls `vga_clear()`.
+- `run_setup_wizard()` runs in a centred 80x25 viewport on a cleared
+  screen.
+- **4 KB limits:**
+  - `sh_read_whole()`/`sh_append()` in `shell/shell.c` are used by `cp`,
+    `>>`, `tee -a`, `cat`, `head`, `tail`, `wc` and `grep`;
+  - `wc` in `shell_v073.c` also reads the whole file;
+  - `fs/ramfs.c` puts a file over 2048 bytes on the heap (max 8 MB).
+- **Retro PC (`shell/retro.c`)** also lists `RETRO/*.IMG` on removable
+  FAT32/exFAT volumes (`usb_scan()`, the same test as
+  `fs/update_src.c`):
+  - an image is read into memory and boots from there; its `.HDD` goes
+    in `RETRO` on the system disk;
+  - all three sources are in one scrolling list, and R scans again;
+  - the bus word comes from `blk_bus_name()`, as `check_bus_label`
+    requires.
+
+**New harnesses:**
+- `redraw_hunt.py` 12/12. It runs at 128x50 and signs in with
+  `Admin@123` using `settle=0.2`.
+- `fixes_0971.py` 7/7.
+- `test_ramfs` 18.
+
+**Checks:** 7672/7672 in 76 suites.
+
+**Harness notes:**
+- `layout_audit.py`'s Start menu walk is STALE: the menu no longer draws
+  a '>' cursor at column 0, so its `walk_to()` never finds All Apps.
+- A line typed at the Shell prompt stops at the screen's edge, so keep
+  harness lines under 80 characters at 80x25.
+- In a live session with a FAT32 stick attached, do file tests in a boot
+  without the stick.
+
+**Still open:**
+- `sort` and `uniq` still read the first 4 KB.
+- Typing past the screen edge at the prompt.
+- ESC on the bare desktop seems to open the Start menu. Check whether
+  that is intended.
+- HP photos: `dmesg | grep I2C` and `dmesg | grep monitor`.
+
+## 0.9.7 "Mnemosyne" (20 Nov) — EVERYTHING REV C PLANNED
 
 Kyan, after 0.9.6.7 booted again: "just gimme the emulator lol, also I
 like it so that u release 0.9.7 with all planned stuff okay". So 0.9.7

@@ -455,6 +455,31 @@ int chrome_hook(int key)
 
 void chrome_init(void){ keyboard_set_chrome_hook(chrome_hook); }
 
+/* v0.9.7.1: a screen that takes the WHOLE display from inside an app --
+   the sign-in screen, from the Shell's `lock` or the Power app's
+   Switch user. Left on, the window's taskbar kept repainting its clock
+   over the sign-in screen's bottom strip, and a click on it could still
+   bring another app forward past the lock. Paused, the hook passes keys
+   straight through and draws nothing; resumed, the window and its box
+   are put back. */
+int chrome_pause(void)
+{
+    ch_task_t *t = me();
+    if(!t || !t->on) return 0;
+    ptr_hide();
+    if(t->grown) shrink(t, 1);
+    t->on = 0;
+    return 1;
+}
+
+void chrome_resume(int was)
+{
+    ch_task_t *t = me();
+    if(!was || !t) return;
+    t->on = 1;
+    apply_layout(t, 0);
+}
+
 /* v0.9.6.6: X arrives as ESC, which is what most apps here want --
    except one whose ESC means something else. The Shell's ESC clears the
    line, so on the HP its X did nothing; it asks this after an ESC: was it

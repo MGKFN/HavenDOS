@@ -393,6 +393,9 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@echo "  one clipboard for every app (v0.9.7, E-2)"
 	@$(TESTCC) -Wall -o /tmp/hd_tclip tests/test_clipboard.c && \
 	  python3 tools/run_suite.py --name test_clipboard --min 11 -- /tmp/hd_tclip
+	@echo "── test_ramfs ─────────────────────────────"
+	@$(TESTCC) -o /tmp/hd_tramfs tests/test_ramfs.c && \
+	  python3 tools/run_suite.py --name test_ramfs --min 18 -- /tmp/hd_tramfs
 	@echo "── test_verinfo ───────────────────────────"
 	@echo "  the version as people see it, and the channels (v0.9.7)"
 	@$(TESTCC) -Wall -o /tmp/hd_tvi tests/test_verinfo.c && \

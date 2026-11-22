@@ -36,3 +36,5 @@ int  chrome_hook(int key);
 void chrome_init(void);
 void chrome_leave_front(void);  /* v0.9.6.6: before another app takes the screen */
 int  chrome_take_close(void);   /* v0.9.6.6: was that ESC the X? */
+int  chrome_pause(void);        /* v0.9.7.1: 1 if a window was paused   */
+void chrome_resume(int was);    /* v0.9.7.1: put it back                */

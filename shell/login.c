@@ -342,12 +342,20 @@ int passwd_user(const char *name, const char *oldpass, const char *newpass){
 static void draw_theme_bg(void){
     theme_t *th = ui_theme();
     int t = ui_current_theme();
+    /* v0.9.7.1: the WHOLE screen. This drew rows 0-24 and columns 0-79
+       and nothing else, so on the HP's 128x48 the Start menu, the
+       taskbar and whatever the Shell had printed stayed visible below
+       and beside the sign-in screen -- Kyan's photo of 22 Nov. A dialog
+       box is centred in an 80x25 viewport by lg_box(); the background
+       is drawn with none. */
+    vga_viewport_clear();
+    int W = vga_cols(), H = vga_rows();
 
     /* Full background with the theme's wallpaper -- the same function the
        desktop draws with, so the two can no longer disagree (they did:
        this screen patterned themes 2, 3, 4 and 6, the desktop all ten). */
-    for(int y=1;y<24;y++){
-        for(int x=0;x<80;x++){
+    for(int y=1;y<H-1;y++){
+        for(int x=0;x<W;x++){
             char c=' ';
             vga_color_t fg=th->desk_bg;
             ui_pattern_at(x,y,&c,&fg);
@@ -357,18 +365,26 @@ static void draw_theme_bg(void){
     (void)t;
 
     /* Top strip: thin status bar */
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
+    for(int x=0;x<W;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
     vga_puts_at(" HavenDOS " HAVENDOS_VER,0,0,th->accent,th->bar_bg);
-    vga_puts_at("TechHaven Studios",32,0,th->bar_fg,th->bar_bg);
+    vga_puts_at("TechHaven Studios",(W-17)/2,0,th->bar_fg,th->bar_bg);
     /* Theme name top-right */
     const char *tn = ui_theme_name(ui_current_theme());
     int tnlen = (int)strlen(tn);
-    vga_puts_at(tn, 79-tnlen, 0, th->accent, th->bar_bg);
+    vga_puts_at(tn, W-1-tnlen, 0, th->accent, th->bar_bg);
 
     /* Bottom strip: hint bar */
-    for(int x=0;x<80;x++) vga_putchar_at(' ',x,24,th->bar_fg,th->bar_bg);
-    vga_puts_at(" Enter=Select  Up/Down=Switch  ESC=Back",0,24,th->bar_fg,th->bar_bg);
+    for(int x=0;x<W;x++) vga_putchar_at(' ',x,H-1,th->bar_fg,th->bar_bg);
+    vga_puts_at(" Enter=Select  Up/Down=Switch  ESC=Back",0,H-1,th->bar_fg,th->bar_bg);
 }
+
+/* v0.9.7.1: the account dialogs were laid out for 80x25 at absolute
+   positions. lg_box() gives them an 80x25 box in the middle of the
+   screen -- the same viewport an app gets -- and draw_theme_bg() takes
+   it away again before it paints. */
+static void lg_box(void){ vga_viewport_centre(80, 25); }
+static int pw_px(void){ int x = (vga_cols() - 32) / 2; return x < 0 ? 0 : x; }
+static int pw_py(void){ int y = (vga_rows() - 7) / 2;  return y < 7 ? 7 : y; }
 
 /* ================================================================
    CLOCK — centred, large-ish, drawn near top of screen
@@ -398,7 +414,7 @@ static void draw_clock(void){
     ds[6]=0;
 
     /* Draw time large (doubled-width via spacing) */
-    int tx = (80 - 9) / 2;   /* centre "HH : MM" with spaces */
+    int tx = (vga_cols() - 9) / 2;   /* centre "HH : MM" with spaces */
     char wide[12];
     wide[0]=ts[0]; wide[1]=' '; wide[2]=ts[1]; wide[3]=' ';
     wide[4]=ts[2]; wide[5]=' ';
@@ -407,7 +423,7 @@ static void draw_clock(void){
     vga_puts_at(wide, tx, 3, th->desk_fg, th->desk_bg);
 
     /* Date below */
-    int dx = (80-(int)strlen(ds))/2;
+    int dx = (vga_cols()-(int)strlen(ds))/2;
     vga_puts_at(ds, dx, 5, th->desk_fg, th->desk_bg);
 }
 
@@ -540,8 +556,8 @@ static void draw_tiles(int sel, int mouse_hover){
 static void draw_pw_panel(int user_idx, int attempts){
     theme_t *th = ui_theme();
 
-    /* Panel: 32 wide, 7 tall, centred */
-    int px=24, py=9, pw=32, ph=7;
+    /* Panel: 32 wide, 7 tall, centred -- on the screen it is on (v0.9.7.1) */
+    int px=pw_px(), py=pw_py(), pw=32, ph=7;
     ui_draw_window(px,py,pw,ph,"Sign in");
 
     /* Username */
@@ -573,7 +589,13 @@ static void draw_pw_panel(int user_idx, int attempts){
 }
 
 /* Read password into buf at centred position */
-static void read_pw(char *buf, int max, int px, int py){
+/* v0.9.7.1: `first` is the key that was already read when the panel
+   came up. The loop below the panel used to read one key, throw it
+   away -- `(void)c` -- and only then start this function, so the FIRST
+   character of every password typed straight after choosing a user
+   was lost and "Wrong password" followed. Found in QEMU by a harness
+   typing Admin@123 and getting eight stars. -1 means none. */
+static void read_pw(char *buf, int max, int px, int py, int first){
     int pos=0; buf[0]=0;
     int fx=px+12, fy=py+4;
     vga_set_cursor(fx,fy);
@@ -583,7 +605,8 @@ static void read_pw(char *buf, int max, int px, int py){
         uint8_t ch2,cm2,cs2; rtc_get_time(&ch2,&cm2,&cs2);
         if(cs2!=last_s){ last_s=cs2; draw_clock(); vga_set_cursor(fx+pos,fy); }
 
-        int c=keyboard_getchar();
+        int c=first; first=-1;
+        if(c==-1) c=keyboard_getchar();
         if(c==-1){ sleep_ms(20); continue; }
         if(c=='\n'||c=='\r') break;
         if((c=='\b'||c==127)&&pos>0){
@@ -643,6 +666,7 @@ static void first_boot_creator(void){
         /* Theme bg */
         draw_theme_bg();
         draw_clock();
+        lg_box();
 
         ui_draw_window(20,7,40,14,"Welcome to HavenDOS");
         vga_puts_at("How would you like to start?",26,9,VGA_LIGHT_GREY,VGA_BLACK);
@@ -692,7 +716,7 @@ static void first_boot_creator(void){
             char nu[16]="",np[16]="",np2[16]="";
             const char *err=0;
             while(1){
-                draw_theme_bg(); draw_clock();
+                draw_theme_bg(); draw_clock(); lg_box();
                 ui_draw_window(22,7,36,14,"Create Account");
                 vga_puts_at("Username:",25,10,VGA_LIGHT_GREY,VGA_BLACK);
                 vga_puts_at("Password:",25,12,VGA_LIGHT_GREY,VGA_BLACK);
@@ -732,7 +756,7 @@ static void first_boot_creator(void){
                 shell_set_home(users[logged_in_idx].name);
                 login_done=1;
 
-                draw_theme_bg(); draw_clock();
+                draw_theme_bg(); draw_clock(); lg_box();
                 ui_draw_window(27,10,26,5,"Account Created");
                 vga_puts_at("Welcome,",30,12,VGA_LIGHT_GREY,VGA_BLACK);
                 vga_puts_at(nu,39,12,ui_theme()->accent,VGA_BLACK);
@@ -759,6 +783,7 @@ static void welcome_line(int y, const char *msg, vga_color_t col){
 }
 
 void login_welcome(const char *username, int first_boot){
+    vga_viewport_clear();   /* v0.9.7.1: the whole screen, not a dialog's box */
     vga_set_color(VGA_WHITE,VGA_BLACK);
     vga_clear();
 
@@ -783,7 +808,7 @@ void login_welcome(const char *username, int first_boot){
     welcome_line(6, home_hint, VGA_DARK_GREY);
 
     /* Divider */
-    for(int x=20;x<60;x++) vga_putchar_at(' ',x,7,VGA_DARK_GREY,VGA_BLACK);
+    for(int x=(vga_cols()-40)/2;x<(vga_cols()+40)/2;x++) vga_putchar_at(' ',x,7,VGA_DARK_GREY,VGA_BLACK);
     sleep_ms(400);
 
     /* Hardware / init lines */
@@ -848,9 +873,22 @@ void login_screen(void){
     strncpy(before, current_username(), sizeof before - 1);
     before[sizeof before - 1] = 0;
 
+    /* v0.9.7.1: the login screen is the whole screen. Whatever box the
+       caller was drawing in (the Power app's, say) is put back after. */
+    extern int  chrome_pause(void);
+    extern void chrome_resume(int);
+    int paused = chrome_pause();      /* no window taskbar over this screen */
+    int vpa = vga_viewport_active(), vx=0, vy=0, vw=0, vh=0;
+    if(vpa) vga_viewport_get(&vx, &vy, &vw, &vh);
+    vga_viewport_clear();
+
     task_pin_front();
     login_screen_inner();
     task_unpin_front();
+
+    vga_viewport_clear();
+    if(vpa) vga_viewport_set(vx, vy, vw, vh);
+    chrome_resume(paused);
 
     if(task_ready() && before[0] && strcmp(before, current_username())){
         int closed = 0;
@@ -889,8 +927,9 @@ static void login_screen_inner(void){
         if(aidx>=0){
             if(timeout>0){
                 /* Show brief countdown on a dark screen */
-                for(int y=0;y<25;y++) for(int x=0;x<80;x++)
-                    vga_putchar_at(' ',x,y,VGA_BLACK,VGA_BLACK);
+                vga_viewport_clear();
+                vga_set_color(VGA_WHITE,VGA_BLACK); vga_clear();
+                lg_box();
                 vga_puts_at("HavenDOS " HAVENDOS_VER,32,10,VGA_DARK_GREY,VGA_BLACK);
                 char umsg[48]="Auto-login as: ";
                 strcat(umsg,au);
@@ -1004,11 +1043,10 @@ static void login_screen_inner(void){
                 draw_pw_panel(ui,0);
             }
         } else {
-            (void)c;
             int ui=vis_users[user_sel];
             draw_pw_panel(ui,attempts);
             upass[0]=0;
-            read_pw(upass,15,24,9);
+            read_pw(upass,15,pw_px(),pw_py(),c);
 
             if(!upass[0]){
                 pw_mode=0; attempts=0;
@@ -1032,10 +1070,11 @@ static void login_screen_inner(void){
             audit(users[ui].name,"login FAILED");
             attempts++;
             if(attempts>=3){
-                for(int x=0;x<80;x++)
-                    vga_putchar_at(' ',x,12,VGA_WHITE,VGA_RED);
+                int W=vga_cols(), my=vga_rows()/2;
+                for(int x=0;x<W;x++)
+                    vga_putchar_at(' ',x,my,VGA_WHITE,VGA_RED);
                 vga_puts_at("  Too many failed attempts. Rebooting in 3s...  ",
-                            16,12,VGA_WHITE,VGA_RED);
+                            (W-48)/2,my,VGA_WHITE,VGA_RED);
                 sleep_ms(3000);
                 machine_reset();
             }

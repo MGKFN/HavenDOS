@@ -234,63 +234,35 @@ void cmd_todo_v3(const char *subcmd, const char *arg) {
 extern void screensaver_run_matrix(void);
 
 void cmd_lock_v3(void) {
-    /* v0.9.6: Alt+Tab reaches this screen like any other keyboard read.
-       Pinned, nothing can be brought forward past it. include/task.h. */
-    extern void task_pin_front(void);
-    extern void task_unpin_front(void);
-    task_pin_front();
-    vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts("Screen locked. Press any key and enter password to unlock.\n");
-    sleep_ms(500);
+    /* v0.9.7.1: the Shell's `lock` is the Start menu's Lock -- the one
+       sign-in screen, the whole display, the same rules for apps left
+       open (shell/login.c). This had its own 80x25 black screen, a
+       second password check and a recursive retry; on the HP it sat in
+       the top-left corner of 128x48 with the Shell still around it. */
+    extern void login_screen(void);
+    extern void toast_clear(void);
+    login_screen();
+    vga_set_color(VGA_WHITE, VGA_BLACK);
     vga_clear();
-    /* Show lock screen */
-    for (int y = 0; y < 25; y++) {
-        for (int x = 0; x < 80; x++) {
-            vga_putchar_at(' ', x, y, VGA_BLACK, VGA_BLACK);
-        }
-    }
-    vga_puts_at("HAVENDOS - SCREEN LOCKED", 28, 11, VGA_LIGHT_CYAN, VGA_BLACK);
-    vga_puts_at(current_username(), 37, 12, VGA_WHITE, VGA_BLACK);
-    vga_puts_at("Press any key...", 32, 14, VGA_DARK_GREY, VGA_BLACK);
-    keyboard_waitchar();
-    /* Password prompt */
-    vga_puts_at("Password: ", 35, 16, VGA_WHITE, VGA_BLACK);
-    vga_set_cursor(45, 16);
-    char pw[32]; int pi = 0;
-    while (1) {
-        int c = -1;
-        while (c == -1) c = keyboard_getchar();
-        if (c == '\n' || c == '\r') { pw[pi]=0; break; }
-        if ((c=='\b'||c==127)&&pi>0) { pi--; vga_putchar('\b'); }
-        else if (c>=32&&c<127&&pi<31) { pw[pi++]=(char)c; vga_putchar('*'); }
-    }
-    /* Verify via exec_cmd_public — "lock_verify <user> <pw>" */
-    /* Simple approach: use the existing login verify helper from shell */
-    extern int shell_verify_password(const char *user, const char *pw);
-    int ok = shell_verify_password(current_username(), pw);
-    if (ok) {
-        vga_clear();
-        vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-        vga_puts("Unlocked.\n");
-        vga_set_color(VGA_WHITE, VGA_BLACK);
-    } else {
-        vga_clear();
-        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
-        vga_puts("Wrong password. Locked for 3s.\n");
-        vga_set_color(VGA_WHITE, VGA_BLACK);
-        sleep_ms(3000);
-        cmd_lock_v3();
-    }
-    task_unpin_front();
+    toast_clear();
 }
 
 /* ── WC standalone ────────────────────────────────────────────── */
 void cmd_wc_v3(const char *path) {
     if (!path||!path[0]) { vga_puts("Usage: wc <file>\n"); return; }
     char fp[64]; make_path(fp, path);
-    static char buf[4096];
-    int r = vfs_read(fp, buf, 4095);
-    if (r < 0) { vga_printf("wc: %s: not found\n", fp); return; }
+    /* v0.9.7.1: the whole file. A 4 KB buffer counted the first 4 KB
+       and printed that as the answer for any file longer. */
+    extern void *kmalloc(size_t); extern void kfree(void *);
+    uint32_t cap = 65536; char *buf = 0; int r = -1;
+    for (;;) {
+        buf = (char *)kmalloc(cap + 1);
+        if (!buf) { vga_puts("wc: not enough memory\n"); return; }
+        r = vfs_read(fp, buf, cap);
+        if (r < 0) { kfree(buf); vga_printf("wc: %s: not found\n", fp); return; }
+        if ((uint32_t)r < cap || cap >= 16u*1024u*1024u) break;
+        kfree(buf); cap *= 2;
+    }
     buf[r] = 0;
     int lines=0, words=0, chars=r;
     int in_word=0;
@@ -302,6 +274,7 @@ void cmd_wc_v3(const char *path) {
     vga_set_color(VGA_LIGHT_CYAN, VGA_BLACK);
     vga_printf("  %6d lines  %6d words  %6d chars  %s\n", lines, words, chars, path);
     vga_set_color(VGA_WHITE, VGA_BLACK);
+    kfree(buf);
 }
 
 /* ── ZIP (RLE compression) ────────────────────────────────────── */

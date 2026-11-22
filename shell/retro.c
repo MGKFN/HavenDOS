@@ -8,7 +8,8 @@
    this file is the window around them.
 
      Apps > Retro PC      a list: the images built in (archive/retro),
-                          then any *.IMG in RETRO on the HavenDOS disk
+                          then any *.IMG in RETRO on the HavenDOS disk,
+                          then any *.IMG in RETRO on a USB stick (0.9.7.1)
      retro                the same list
      retro <file>         boots that file straight away
 
@@ -43,6 +44,10 @@
 #include "pcbios.h"
 #include "retro_images.h"
 #include "klog.h"
+#include "fat32vol.h"
+#include "fat32.h"
+#include "exfat.h"
+#include "blkdev.h"
 
 extern int      keyboard_getchar(void);
 extern int      keyboard_waitchar(void);
@@ -85,6 +90,80 @@ static void disk_cb(const char *name, int is_dir, uint32_t size){
     strncpy(g_disk[g_ndisk], name, 12); g_disk[g_ndisk][12] = 0;
     g_disk_size[g_ndisk] = size;
     g_ndisk++;
+}
+
+/* ── v0.9.7.1: what is on a USB stick ─────────────────────────────────
+   Kyan, 22 Nov: "how do i add my own imgs???" -- and 0.9.7 had no
+   answer he could use. RETRO on the HavenDOS disk was the only place
+   looked, and on the HP nothing could put a file there: `cp` stopped
+   at 4 KB and Files cannot see a stick. A stick is where a file from
+   Windows arrives, so a stick is looked at too: a RETRO folder on any
+   FAT32 or exFAT volume of a REMOVABLE disk, the test fs/update_src.c
+   uses for an update stick. The image is read into memory to boot;
+   its hard disk is a .HDD on the HavenDOS disk, in RETRO, because a
+   stick is mounted read-only here. */
+#define USB_MAX 16
+typedef struct {
+    char        name[13];
+    uint32_t    size;
+    fat32_vol_t vol;
+    int         exfat;
+} usb_img_t;
+static usb_img_t g_usb[USB_MAX];
+static int       g_nusb;
+static fat32_vol_t g_cur_vol;
+static int         g_cur_exfat;
+
+static void usb_cb(const char *name, int is_dir, uint32_t size){
+    if(is_dir || g_nusb >= USB_MAX || !ends_img(name)) return;
+    usb_img_t *u = &g_usb[g_nusb++];
+    strncpy(u->name, name, 12); u->name[12] = 0;
+    u->size = size; u->vol = g_cur_vol; u->exfat = g_cur_exfat;
+}
+
+static void usb_scan(void){
+    fat32_vol_t v[FAT32_MAX_VOLS];
+    int n;
+    g_nusb = 0;
+    n = fat32_scan_volumes(v, FAT32_MAX_VOLS);
+    for(int i = 0; i < n && g_nusb < USB_MAX; i++){
+        if(!blk_removable(v[i].disk)) continue;
+        if(!fat32_vol_mount_ro(&v[i])) continue;
+        g_cur_vol = v[i]; g_cur_exfat = 0;
+        if(fat32_is_dir("/RETRO")) fat32_list_dir("/RETRO", usb_cb);
+        fat32_vol_release();
+    }
+    n = exfat_scan_volumes(v, FAT32_MAX_VOLS);
+    for(int i = 0; i < n && g_nusb < USB_MAX; i++){
+        exfat_dir_t d; exfat_dirent_t e;
+        if(!blk_removable(v[i].disk)) continue;
+        if(!exfat_vol_mount_ro(&v[i])) continue;
+        g_cur_vol = v[i]; g_cur_exfat = 1;
+        if(exfat_opendir("/RETRO", &d) == EXFAT_OK)
+            while(exfat_readdir(&d, &e) == 1 && g_nusb < USB_MAX)
+                if(!e.is_dir && e.size <= 0xFFFFFFFFull && strlen(e.name) <= 12)
+                    usb_cb(e.name, 0, (uint32_t)e.size);
+        exfat_unmount();
+    }
+    klog(KLOG_INFO, "retro: %d image(s) in RETRO on USB sticks", g_nusb);
+}
+
+/* Read one, whole, into buf. Bytes read, or <= 0. */
+static int usb_read(const usb_img_t *u, uint8_t *buf, uint32_t max){
+    char path[24];
+    int got = -1;
+    strcpy(path, "/RETRO/"); strcat(path, u->name);
+    if(u->size > max) return -2;
+    if(u->exfat){
+        if(!exfat_vol_mount_ro(&u->vol)) return -1;
+        got = exfat_read(path, 0, buf, u->size);
+        exfat_unmount();
+    } else {
+        if(!fat32_vol_mount_ro(&u->vol)) return -1;
+        got = fat32_read(path, (char *)buf, max);
+        fat32_vol_release();
+    }
+    return got;
 }
 
 /* ── the host side of the PC ──────────────────────────────────────── */
@@ -262,10 +341,23 @@ out:
     kfree(p); kfree(hd); kfree(fd); kfree(mem);
 }
 
+/* its disk: FOO.IMG -> <dir>FOO.HDD */
+static void hd_name(char *out, const char *dir, const char *path){
+    int n = (int)strlen(path), dot = -1, start = 0;
+    for(int i = 0; i < n; i++){ if(path[i] == '.') dot = i; if(path[i] == '/') start = i + 1; }
+    if(!dir) start = 0;                    /* beside it: keep the folder */
+    int end = dot > start ? dot : n;
+    if(end - start > 60) end = start + 60;
+    strcpy(out, dir ? dir : "");
+    int o = (int)strlen(out);
+    memcpy(out + o, path + start, (size_t)(end - start));
+    out[o + end - start] = 0;
+    strcat(out, ".HDD");
+}
+
 /* an image off the HavenDOS disk */
 static void run_file(const char *path){
     char hdpath[72];
-    int n = (int)strlen(path), dot = -1;
     uint8_t *buf = (uint8_t *)kmalloc(FD_MAX);
     int got;
     if(!buf){ toast_info("Retro PC needs about 3 MB of memory, and the heap has less free"); return; }
@@ -275,42 +367,88 @@ static void run_file(const char *path){
         toast_info("Retro PC could not read that file");
         return;
     }
-    /* its disk beside it: FOO.IMG -> FOO.HDD */
-    for(int i = 0; i < n; i++) if(path[i] == '.') dot = i;
-    if(n > 64) n = 64;
-    memcpy(hdpath, path, (size_t)(dot > 0 ? dot : n));
-    hdpath[dot > 0 ? dot : n] = 0;
-    strcat(hdpath, ".HDD");
+    hd_name(hdpath, 0, path);
     run_image(path, buf, (uint32_t)got, hdpath);
     kfree(buf);
 }
 
+/* an image off a USB stick; its disk in RETRO on the HavenDOS disk */
+static void run_usb(const usb_img_t *u){
+    char hdpath[72], title[32];
+    uint8_t *buf = (uint8_t *)kmalloc(FD_MAX);
+    int got;
+    if(!buf){ toast_info("Retro PC needs about 3 MB of memory, and the heap has less free"); return; }
+    got = usb_read(u, buf, FD_MAX);
+    if(got <= 0){
+        kfree(buf);
+        toast_info(got == -2 ? "That image is bigger than a 2.88 MB floppy"
+                             : "Retro PC could not read that file off the stick -- is it still plugged in?");
+        return;
+    }
+    hd_name(hdpath, RETRO_DIR "/", u->name);
+    strcpy(title, "stick: "); strcat(title, u->name);
+    run_image(title, buf, (uint32_t)got, hdpath);
+    kfree(buf);
+}
+
 /* ── the list ─────────────────────────────────────────────────────── */
+/* v0.9.7.1: one list of all three sources, scrolling, so a stick with a
+   dozen images on it cannot push the rows into the text below. */
+#define LIST_Y   7
+#define LIST_H  10
+
+static const char *entry_text(int i, char *buf){
+    if(i < RETRO_NIMAGES) return retro_images[i].title;
+    i -= RETRO_NIMAGES;
+    if(i < g_ndisk){ strcpy(buf, g_disk[i]); return buf; }
+    i -= g_ndisk;
+    strcpy(buf, g_usb[i].name); return buf;
+}
+static const char *entry_where(int i){
+    if(i < RETRO_NIMAGES) return "built in";
+    if(i < RETRO_NIMAGES + g_ndisk) return "HavenDOS disk";
+    {   /* the bus's own word, from fs/blkdev.c: "USB stick" */
+        static char w[24];
+        strncpy(w, blk_bus_name(g_usb[i - RETRO_NIMAGES - g_ndisk].vol.disk), 15); w[15] = 0;
+        strcat(w, " stick");
+        return w;
+    }
+}
+
+static void rescan(void){
+    g_ndisk = 0;
+    vfs_list_dir(RETRO_DIR, disk_cb);
+    usb_scan();
+}
+
 void app_retro(void){
-    int sel = 0;
+    int sel = 0, top = 0;
     if(g_next[0]){
         char path[64];
         strcpy(path, g_next); g_next[0] = 0;
         run_file(path);
         return;
     }
-    g_ndisk = 0;
-    vfs_list_dir(RETRO_DIR, disk_cb);
+    rescan();
 
     for(;;){
-        int n = RETRO_NIMAGES + g_ndisk;
-        vga_color_t sf, sb; ui_sel_colors(&sf, &sb);
+        int n = RETRO_NIMAGES + g_ndisk + g_nusb;
+        char tb[40];
+        if(sel >= n) sel = n - 1;
+        if(sel < top) top = sel;
+        if(sel >= top + LIST_H) top = sel - LIST_H + 1;
         vga_begin_frame();
-        ui_kit_begin("Retro PC", "Up/Down choose   Enter boot   F4 leaves a running PC   Q quit");
+        ui_kit_begin("Retro PC", "Up/Down choose   Enter boot   R look again   F4 leaves a running PC   Q quit");
         put(4, 3, "The old builds, on an emulated PC: an 80186 with the 386's 16-bit", VGA_LIGHT_GREY, VGA_BLACK);
         put(4, 4, "additions, a BIOS, a floppy and a pretend hard disk of its own.", VGA_LIGHT_GREY, VGA_BLACK);
-        ui_kit_heading(4, 6, "Built in");
-        for(int i = 0; i < RETRO_NIMAGES; i++)
-            ui_kit_row(6, 7 + i, 40, sel == i, retro_images[i].title);
-        ui_kit_heading(4, 9 + RETRO_NIMAGES, "On this disk, in RETRO");
-        if(!g_ndisk) put(6, 10 + RETRO_NIMAGES, "none -- put a .IMG file in RETRO to see it here", VGA_DARK_GREY, VGA_BLACK);
-        for(int i = 0; i < g_ndisk; i++)
-            ui_kit_row(6, 10 + RETRO_NIMAGES + i, 40, sel == RETRO_NIMAGES + i, g_disk[i]);
+        ui_kit_heading(4, 6, "Images");
+        for(int r = 0; r < LIST_H && top + r < n; r++){
+            int i = top + r;
+            ui_kit_row(6, LIST_Y + r, 40, sel == i, entry_text(i, tb));
+            put(48, LIST_Y + r, entry_where(i), sel == i ? VGA_WHITE : VGA_DARK_GREY, VGA_BLACK);
+        }
+        if(top > 0)          put(46, LIST_Y, "^", VGA_DARK_GREY, VGA_BLACK);
+        if(top + LIST_H < n) put(46, LIST_Y + LIST_H - 1, "v", VGA_DARK_GREY, VGA_BLACK);
 
         if(sel < RETRO_NIMAGES){
             char hdp[32];
@@ -318,13 +456,19 @@ void app_retro(void){
             put(4, 19, retro_images[sel].about, VGA_WHITE, VGA_BLACK);
             put(4, 20, hdp, VGA_DARK_GREY, VGA_BLACK);
             put(4 + (int)strlen(hdp), 20, ".HDD -- a file, never a real disk", VGA_DARK_GREY, VGA_BLACK);
-        } else {
+        } else if(sel < RETRO_NIMAGES + g_ndisk){
             put(4, 19, "An image from the HavenDOS disk. Its hard disk is a .HDD file beside it.", VGA_WHITE, VGA_BLACK);
+        } else {
+            put(4, 19, "An image from a USB stick, read into memory to boot. Its hard disk is a", VGA_WHITE, VGA_BLACK);
+            put(4, 20, ".HDD file in RETRO on the HavenDOS disk; nothing is written to the stick.", VGA_WHITE, VGA_BLACK);
         }
+        put(4, 22, "Your own: put .IMG files in a folder called RETRO on a USB stick, plug it", VGA_DARK_GREY, VGA_BLACK);
+        put(4, 23, "in and press R. Boot floppies of up to 2.88 MB, 16-bit, text mode.", VGA_DARK_GREY, VGA_BLACK);
         vga_end_frame();
 
         int k = keyboard_waitchar();
         if(k == 'q' || k == 'Q' || k == 27) return;
+        if(k == 'r' || k == 'R'){ rescan(); continue; }
         if(k == KEY_UP && sel > 0) sel--;
         if(k == KEY_DOWN && sel < n - 1) sel++;
         if(k == '\n' || k == '\r'){
@@ -332,10 +476,12 @@ void app_retro(void){
                 char hdpath[24];
                 strcpy(hdpath, RETRO_DIR "/"); strcat(hdpath, retro_images[sel].id); strcat(hdpath, ".HDD");
                 run_image(retro_images[sel].title, retro_images[sel].data, retro_images[sel].size, hdpath);
-            } else {
+            } else if(sel < RETRO_NIMAGES + g_ndisk){
                 char path[32];
                 strcpy(path, RETRO_DIR "/"); strcat(path, g_disk[sel - RETRO_NIMAGES]);
                 run_file(path);
+            } else {
+                run_usb(&g_usb[sel - RETRO_NIMAGES - g_ndisk]);
             }
         }
     }

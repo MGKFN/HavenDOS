@@ -402,7 +402,23 @@ static void screen_summary(const char *uname, int is_admin, int theme_sel){
 }
 
 /* ── Main entry ──────────────────────────────────────────────── */
+static void run_setup_inner(void);
+/* v0.9.7.1: setup is laid out for 80x25 at absolute positions. On the
+   HP's 128x48 that put it in the top-left corner with the boot log
+   still on screen around it. It now runs in an 80x25 box in the
+   middle of a cleared screen -- the viewport every app gets. */
 void run_setup_wizard(void){
+    vga_viewport_clear();
+    vga_set_color(VGA_WHITE,VGA_BLACK);
+    vga_clear();
+    vga_viewport_centre(80, 25);
+    run_setup_inner();
+    vga_viewport_clear();
+    vga_set_color(VGA_WHITE,VGA_BLACK);
+    vga_clear();
+}
+
+static void run_setup_inner(void){
     /* v0.7.11: legal first.  These used to appear mid-install, before the user
        had chosen anything and while a target drive was already selected -
        declining there meant abandoning a half-configured install.  Here the

@@ -44,6 +44,15 @@ void vga_set_cursor(int x,int y){ (void)x;(void)y; }
    account logic now links against these too. */
 int  vga_cols(void){ return 80; }
 int  vga_rows(void){ return 25; }
+/* v0.9.7.1: the login screen saves the caller's viewport and pauses
+   a window's chrome around itself */
+void vga_viewport_clear(void){}
+int  vga_viewport_active(void){ return 0; }
+void vga_viewport_get(int *x,int *y,int *w,int *h){ *x=*y=0; *w=80; *h=25; }
+int  vga_viewport_set(int x,int y,int w,int h){ (void)x;(void)y;(void)w;(void)h; return 1; }
+int  vga_viewport_centre(int w,int h){ (void)w;(void)h; return 1; }
+int  chrome_pause(void){ return 0; }
+void chrome_resume(int was){ (void)was; }
 
 int  keyboard_getchar(void){ return -1; }
 int  keyboard_waitchar(void){ return 27; }

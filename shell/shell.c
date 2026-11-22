@@ -1098,20 +1098,63 @@ static void do_diff(const char *f1, const char *f2){
 }
 
 /* ================================================================
+   v0.9.7.1: A WHOLE FILE, AND AN APPEND THAT KEEPS IT
+   `cp`, `>>` and `tee -a` each read a file into a 4 KB buffer on the
+   stack. `cp` then wrote only what fitted, and `>>` and `tee -a`
+   behaved worse at the edge: past 4 KB, `>>` overwrote the file with
+   just the new text and `tee -a` silently did nothing. All three use
+   these now -- the whole file, from the heap, up to 16 MB.
+   ================================================================ */
+extern void *kmalloc(size_t);
+extern void  kfree(void *);
+#define SH_FILE_MAX (16u*1024u*1024u)
+
+/* The whole file, kmalloc'd with `extra` spare bytes after it. NULL
+   with *len = -1 if it is not there, -2 if out of memory, -3 if over
+   SH_FILE_MAX. */
+static char *sh_read_whole(const char *path, uint32_t extra, int *len){
+    uint32_t cap = 65536;
+    for(;;){
+        char *b = (char *)kmalloc(cap + extra);
+        if(!b){ *len = -2; return 0; }
+        int n = vfs_read(path, b, cap);
+        if(n < 0){ kfree(b); *len = -1; return 0; }
+        if((uint32_t)n < cap){ *len = n; return b; }
+        kfree(b);
+        if(cap >= SH_FILE_MAX){ *len = -3; return 0; }
+        cap *= 2;
+    }
+}
+
+static void sh_read_why(const char *path, int why){
+    if(why == -1)      vga_printf("Not found: %s\n", path);
+    else if(why == -2) vga_printf("%s: not enough memory to read it\n", path);
+    else               vga_printf("%s: over 16 MB, not read\n", path);
+}
+
+/* Append, keeping what is there. 1 on success. */
+static int sh_append(const char *path, const char *data, int dlen){
+    int er;
+    char *b = sh_read_whole(path, (uint32_t)dlen, &er);
+    if(!b){
+        if(er == -1) return vfs_write(path, data, (uint32_t)dlen) == dlen;
+        vga_set_color(VGA_LIGHT_RED, VGA_BLACK);
+        vga_printf("%s: too big to append to here\n", path);
+        vga_set_color(VGA_WHITE, VGA_BLACK);
+        return 0;
+    }
+    memcpy(b + er, data, (size_t)dlen);
+    int w = vfs_write(path, b, (uint32_t)(er + dlen));
+    kfree(b);
+    return w == er + dlen;
+}
+
+/* ================================================================
    TEE
    ================================================================ */
 static void do_tee(const char *fname, const char *data, int dlen, int append){
-    if(append){
-        char existing[4096]; int er=vfs_read(fname,existing,4095);
-        if(er>0){
-            if(er+dlen<4095){
-                memcpy(existing+er,data,dlen);
-                vfs_write(fname,existing,er+dlen);
-            }
-        } else vfs_write(fname,data,dlen);
-    } else {
-        vfs_write(fname,data,dlen);
-    }
+    if(append) sh_append(fname, data, dlen);
+    else       vfs_write(fname,data,dlen);
     for(int i=0;i<dlen;i++) vga_putchar(data[i]);
 }
 
@@ -2064,11 +2107,7 @@ static void run_pipeline(char *line){
     /* Handle redirect of final pipe output */
     if(redir_fname[0]){
         if(redir_append){
-            char existing[4096];int er=vfs_read(redir_fname,existing,4095);
-            if(er>0&&er+pipe_buf_len<4095){
-                memcpy(existing+er,pipe_buf,pipe_buf_len);
-                vfs_write(redir_fname,existing,er+pipe_buf_len);
-            } else vfs_write(redir_fname,pipe_buf,pipe_buf_len);
+            sh_append(redir_fname,pipe_buf,pipe_buf_len);
         } else {
             vfs_write(redir_fname,pipe_buf,pipe_buf_len);
         }
@@ -2537,10 +2576,11 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"cat")||!strcmp(cmd,"type")){
         if(!arg1[0]){vga_puts("Usage: cat <file>\n");return;}
         char fp[64]; make_path(fp,arg1);
-        char buf[4096];int r=vfs_read(fp,buf,4095);
-        if(r<0){vga_printf("Not found: %s\n",fp);return;}
+        int r; char *buf=sh_read_whole(fp,1,&r);   /* v0.9.7.1: the whole file */
+        if(!buf){sh_read_why(fp,r);return;}
         buf[r]=0;
         out_str(buf); if(!pipe_mode) vga_putchar('\n');
+        kfree(buf);
     }
 
     else if(!strcmp(cmd,"touch")){
@@ -2556,9 +2596,10 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
         else if(arg2[0]){int t=atoi(arg2);if(t>0)n=t;}
         if(!fname||!fname[0]){vga_puts("Usage: head [-n] <file>\n");return;}
         char fp[64]; make_path(fp,fname);
-        char buf[4096];int r=vfs_read(fp,buf,4095);
-        if(r<0){vga_printf("Not found: %s\n",fp);return;}
+        int r; char *buf=sh_read_whole(fp,1,&r);   /* v0.9.7.1: the whole file */
+        if(!buf){sh_read_why(fp,r);return;}
         buf[r]=0; print_lines_out(buf,r,n,0);
+        kfree(buf);
     }
 
     else if(!strcmp(cmd,"tail")){
@@ -2567,17 +2608,19 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
         else if(arg2[0]){int t=atoi(arg2);if(t>0)n=t;}
         if(!fname||!fname[0]){vga_puts("Usage: tail [-n] <file>\n");return;}
         char fp[64]; make_path(fp,fname);
-        char buf[4096];int r=vfs_read(fp,buf,4095);
-        if(r<0){vga_printf("Not found: %s\n",fp);return;}
+        int r; char *buf=sh_read_whole(fp,1,&r);   /* v0.9.7.1: the whole file */
+        if(!buf){sh_read_why(fp,r);return;}
         buf[r]=0; print_lines_out(buf,r,n,1);
+        kfree(buf);
     }
 
     else if(!strcmp(cmd,"wc")){
         if(!arg1[0]){vga_puts("Usage: wc <file>\n");return;}
         char fp[64]; make_path(fp,arg1);
-        char buf[4096];int r=vfs_read(fp,buf,4095);
-        if(r<0){vga_printf("Not found: %s\n",fp);return;}
+        int r; char *buf=sh_read_whole(fp,1,&r);   /* v0.9.7.1: the whole file */
+        if(!buf){sh_read_why(fp,r);return;}
         int l,w,c; buf_wc(buf,r,&l,&w,&c);
+        kfree(buf);
         if(pipe_mode){
             out_str(fp);out_char(' ');
             out_int(l);out_char(' ');out_int(w);out_char(' ');out_int(c);out_char('\n');
@@ -2628,8 +2671,8 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
         const int plen_cached=(int)strlen(arg1);
         if(!arg1[0]||!arg2[0]){vga_puts("Usage: grep <pattern> <file>\n");return;}
         char fp[64]; make_path(fp,arg2);
-        char gbuf[4096];int gr=vfs_read(fp,gbuf,4095);
-        if(gr<0){vga_printf("Not found: %s\n",fp);return;}
+        int gr; char *gbuf=sh_read_whole(fp,1,&gr);   /* v0.9.7.1: the whole file */
+        if(!gbuf){sh_read_why(fp,gr);return;}
         gbuf[gr]=0;
         char *ln=gbuf;int found=0,lnum=1;
         while(*ln){
@@ -2653,6 +2696,7 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
             ln=end+(*end?1:0); lnum++;
         }
         if(!found&&!pipe_mode) vga_printf("No matches for '%s'\n",arg1);
+        kfree(gbuf);
     }
 
     else if(!strcmp(cmd,"write")){
@@ -2717,9 +2761,27 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"cp")||!strcmp(cmd,"copy")){
         if(!arg1[0]||!arg2[0]){vga_puts("Usage: cp <src> <dst>\n");return;}
         char fp1[64],fp2[64]; make_path(fp1,arg1); make_path(fp2,arg2);
-        char cbuf[4096];int cr=vfs_read(fp1,cbuf,4095);
-        if(cr<0){vga_printf("Not found: %s\n",fp1);return;}
-        cbuf[cr]=0;vfs_write(fp2,cbuf,cr);
+        /* v0.9.7.1: any size up to 16 MB. This copied into a 4 KB buffer
+           on the stack and wrote what fitted, so `cp` of a floppy image
+           made a 4095-byte file and said "Copied". The buffer now grows
+           until the file fits in it, and a write that comes up short
+           is reported, not announced as a copy. */
+        int cr;
+        char *cb=sh_read_whole(fp1,0,&cr);
+        if(!cb){
+            if(cr==-1) vga_printf("Not found: %s\n",fp1);
+            else if(cr==-2) vga_puts("cp: not enough memory for a file that big\n");
+            else vga_puts("cp: files over 16 MB are not copied\n");
+            return;
+        }
+        int cw=vfs_write(fp2,cb,(uint32_t)cr);
+        kfree(cb);
+        if(cw!=cr){
+            vga_set_color(VGA_LIGHT_RED,VGA_BLACK);
+            vga_printf("cp: wrote %d of %d bytes to %s -- disk full or read-only?\n",cw<0?0:cw,cr,fp2);
+            vga_set_color(VGA_WHITE,VGA_BLACK);
+            return;
+        }
         vga_printf("Copied %s -> %s (%d bytes)\n",fp1,fp2,cr);
     }
 
@@ -3257,9 +3319,9 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
                 vga_printf("%s = %d\n",expr,result);
         } else {
             vga_clear(); toast_clear();
-            for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_CYAN);
+            for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_CYAN);
             vga_puts_at(" HavenDOS Calculator  |  type expression, 'q' to quit ",
-                        13,0,VGA_BLACK,VGA_CYAN);
+                        (vga_cols()-55)/2,0,VGA_BLACK,VGA_CYAN);
             vga_puts_at("Supports: + - * / % ^ ( )",2,2,VGA_DARK_GREY,VGA_BLACK);
             vga_puts_at("Example:  3 + 4 * (2 - 1)",2,3,VGA_DARK_GREY,VGA_BLACK);
             vga_set_color(VGA_WHITE,VGA_BLACK);
@@ -3273,10 +3335,10 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
                 if(cbuf[0]=='q'&&!cbuf[1]) break;
                 int r=do_calc(cbuf);
                 vga_printf("  = %d\n",r);
-                cy+=2; if(cy>=23){cy=5; vga_clear(); toast_clear();
-                    for(int x=0;x<80;x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_CYAN);
+                cy+=2; if(cy>=vga_rows()-2){cy=5; vga_clear(); toast_clear();
+                    for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,0,VGA_BLACK,VGA_CYAN);
                     vga_puts_at(" HavenDOS Calculator  |  type expression, 'q' to quit ",
-                                13,0,VGA_BLACK,VGA_CYAN);
+                                (vga_cols()-55)/2,0,VGA_BLACK,VGA_CYAN);
                 }
             }
             vga_clear(); toast_clear();
@@ -3855,17 +3917,24 @@ void shell_run_script(const char *filename){
 /* ================================================================
    CLEAR ANIMATION
    ================================================================ */
+/* v0.9.7.1: the whole console. This wiped 80 columns of 25 rows and
+   left the cursor where it was, so on the HP's 128x48 `cls` cleared a
+   box in the top-left and the next prompt came out at the bottom,
+   under everything that was meant to be gone. */
 void clear_anim(void){
     toast_clear();
-    int mid=12;
+    int W=vga_cols(), H=vga_rows();
+    int mid=H/2;
     for(int i=0;i<=mid;i++){
         int top=mid-i, bot=mid+i;
-        for(int x=0;x<80;x++){
+        for(int x=0;x<W;x++){
             if(top>=0) vga_putchar_at(' ',x,top,VGA_BLACK,VGA_BLACK);
-            if(bot<25) vga_putchar_at(' ',x,bot,VGA_BLACK,VGA_BLACK);
+            if(bot<H) vga_putchar_at(' ',x,bot,VGA_BLACK,VGA_BLACK);
         }
-        sleep_ms(18);
+        sleep_ms(H>25 ? 9 : 18);
     }
+    vga_set_color(VGA_WHITE,VGA_BLACK);
+    vga_clear();
 }
 
 /* ================================================================

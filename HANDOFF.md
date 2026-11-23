@@ -1,6 +1,6 @@
-# HavenDOS — handoff, 22 November 2026
+# HavenDOS — handoff, 23 November 2026
 
-Current release: **v0.9.7.2** (a GitHub pre-release) (channel Beta, codename "Mnemosyne"),
+Current release: **v0.9.7.5** (a GitHub pre-release) (channel Beta, codename "Mnemosyne"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -50,6 +50,61 @@ file into a new chat, with the bundle zip, to pick up where this left off.
 - **Careful:** `tests/test_chrome.c` is the desktop bars' 58-check suite.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
+
+## START HERE: 0.9.7.5 (23 Nov) — RETRO PC ON WINDOWS AND LINUX
+
+Kyan chose "1 and 2" after 0.9.7.4: (1) Retro PC as a standalone program
+for Windows and Linux, then (2) HavenDOS inside HavenDOS. This is (1).
+He was testing 0.9.7.4's USB replug on the HP while it was built; his
+answer decides whether 0.9.7.6 is a USB fix first.
+
+**`retropc/`** (built by `make retropc`, not part of `all`):
+- `retropc.c` -- the program: shell/retro.c's list, run_floppy/run_386
+  and GRUB menu, drawing 80x25 cells into a 640x400 RGB picture. Notices
+  go to the window title and stderr, never over the guest's screen.
+  `--boot <ID>`, `<file>`, `--mem <MB>`, `--version`.
+- `font.c` -- include/font8x16.h plus CP437 B0-DF made at start-up:
+  box lines from an arms table (`g_arms`, U/D/L/R single/double) and
+  `stop_at()`'s corner rules; shades and half blocks; the vga.c 8x8
+  symbols doubled. The kernel's font leaves all of B0-DF blank.
+- Hosts: `host_win32.c` (GDI, StretchDIBits, WM_CHAR + VK table, Alt+Enter
+  full screen, drag-and-drop, GetOpenFileName, AttachConsole; also the
+  Windows plat_* functions), `host_x11.c` (Xlib, software nearest scale,
+  zenity for O), `host_null.c` (scripted keys, 16 ms virtual frames,
+  `--speed` M instructions per frame, prints the screen at exit).
+  `plat_posix.c`: data dir = beside /proc/self/exe, else ~/RetroPC.
+- The RETRO folder is beside the program. HDD files: `RETRO/<ID>.HDD`
+  for built-ins, `<name>.HDD` beside a file -- same format as HavenDOS.
+- Build: `-iquote include`, never `-I`: include/string.h is the
+  kernel's and shadows libc's.
+- RetroPC.exe: mingw-w64 `-static -mwindows`; `make` refuses it if it
+  imports a DLL outside kernel32/user32/gdi32/shell32/comdlg32/winmm/
+  msvcrt. Icon and VERSIONINFO from `tools/make_retropc_res.py` (no PIL).
+- `tools/make_retropc_dist.py` -> `dist/RetroPC-<ver>-windows.zip` and
+  `-linux-x86_64.tar.gz`; refuses a stale build. make_release_bundle.py
+  now REQUIRES both (bundle `retropc/`). release.yml installs
+  `gcc-mingw-w64-x86-64 libx11-dev`, runs `make retropc` and uploads
+  both as assets.
+
+**Shared emulator changes (also in the kernel):**
+- `emu/pc386.c`: F1-F10/F11/F12 sent without E0 (was E0 3B for F1).
+- `emu/pc386.c`: `attr[0x10] = 0x0C` at init, the BIOS's mode register,
+  so a guest that clears bit 3 (16 backgrounds) can be told apart.
+  Retro PC standalone honours it; the kernel's retro.c still drops blink.
+
+**Tests:** `test_retropc` (new, 46: `tests/test_retropc.py` drives
+`retropc-headless`; K-DOS cases also under ASAN; needs xorriso for the
+ISO case), `test_emu386` 36 (+2, the F-key bytes). Linux window checked
+on Xvfb with xdotool. **RetroPC.exe never ran:** Wine 9.0 crashes with
+"free(): invalid pointer" before loading anything on this build machine.
+
+**Script gotchas:** in `--keys`, `\t` is Tab (it was a bare 't' at first,
+which looked like BOOT OS ignoring keys). A script ending in `{W..}`
+waits that long before closing. BOOT OS 0.3.1 desktop -> shell is Tab.
+
+**Next:** (2) HavenDOS inside HavenDOS -- needs mode 13h/VESA in pc386
+and a disk (ATA) for the 386. Then 64-bit K-DOS, FAT16 long names,
+FAT16 sticks, real .zip, 0.9.8 HTTPS.
 
 ## START HERE: 0.9.7.4 (23 Nov) — USB AFTER REPEATED REPLUGS
 

@@ -382,7 +382,15 @@ void pc386_key(pc386_t *p, int key){
     if(key >= 0x100){
         sc = key & 0xFF;
         if(sc >= 0x80) return;
-        kq(p, 0xE0); kq(p, (uint8_t)sc); kq(p, 0xE0); kq(p, (uint8_t)(sc | 0x80));
+        /* v0.9.7.5: the function keys are not extended keys. F1-F10
+           (3B-44) and F11/F12 (57, 58) come without the E0 prefix on a
+           real keyboard; with it, a kernel that reads E0 as "the next
+           code is a cursor key" saw F1 as nothing at all. */
+        if((sc >= 0x3B && sc <= 0x44) || sc == 0x57 || sc == 0x58){
+            kq(p, (uint8_t)sc); kq(p, (uint8_t)(sc | 0x80));
+        } else {
+            kq(p, 0xE0); kq(p, (uint8_t)sc); kq(p, 0xE0); kq(p, (uint8_t)(sc | 0x80));
+        }
         kbc_feed(p);
         return;
     }
@@ -410,6 +418,11 @@ int pc386_init(pc386_t *p, uint8_t *mem, uint32_t mem_size, const pc386_host_t *
     p->pic[0].base = 0x08; p->pic[1].base = 0x70;
     p->pic[0].imr = 0xFF; p->pic[1].imr = 0xFF;
     p->kbc_ccb = 0x45;                                   /* kbd IRQ on, translation on */
+    /* v0.9.7.5: the attribute controller's mode register as a VGA BIOS
+       leaves it for mode 3 -- bit 3 set, so attribute bit 7 blinks. A
+       kernel that clears it for 16 background colours can be told
+       apart from one that never touched it, which reads back 0x0C. */
+    p->attr[0x10] = 0x0C;
     p->pit_last_ms = host->now_ms(hctx);
     /* the BIOS left a blank 80x25 screen and its cursor at the top */
     for(uint32_t i = 0; i < 80u * 25u; i++){ mem[0xB8000 + i * 2] = ' '; mem[0xB8000 + i * 2 + 1] = 0x07; }

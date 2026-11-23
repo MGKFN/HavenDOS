@@ -8,7 +8,16 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 From 0.9.7, every release below Stable is a GitHub **pre-release**, so the newest is at the top of the releases list, not under "latest" (which stays on 0.9.6.7 until HavenDOS 1 is Stable on 1 January 2027).
 
-## Current version: 0.9.7.4 Beta "Mnemosyne"
+## Current version: 0.9.7.5 Beta "Mnemosyne"
+
+**0.9.7.5. Retro PC on Windows and Linux.** Tested on the build machine and in QEMU, not yet on a real machine.
+
+- **Retro PC is a program of its own** as well as an app inside HavenDOS: `RetroPC.exe` for Windows (one file, nothing to install) and `retropc` for Linux, from the release's two new downloads.
+- The same emulators and the same built-in images: K-DOS Beta 1.1b and BOOT OS 0.3.1, 0.5.0 and 0.5.2. Your own `.IMG` and `.ISO` files go in the `RETRO` folder beside it, or open them with O, or drop them on the window.
+- Its hard disks are the same `.HDD` files HavenDOS keeps, so they can be copied either way.
+- F1 to F12 now reach the 386's old builds as a real keyboard sends them.
+
+[Changelog](changelogs/CHANGELOG-v0.9.7.5.md).
 
 **0.9.7.4. USB comes back every time.** Tested in QEMU only, not yet on a real machine.
 
@@ -180,11 +189,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.4.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.5.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.4.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.5.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -226,6 +235,7 @@ sudo make test                                          # 77 suites, 7740 checks
 | `net/` | TCP/IP, DNS, HTTP, TLS, RSA, X.509, plists |
 | `shell/` | The shell, the desktop, the window chrome and the apps (Retro PC is `shell/retro.c`) |
 | `emu/` | Retro PC's emulated PCs: the 8086 (`cpu86.c`, `pcbios.c`) and the 386 (`cpu386.c`, `pc386.c`) |
+| `retropc/` | Retro PC as a program for Windows and Linux, around the same emulators (`make retropc`) |
 | `tests/` | Native test suites — `make test` |
 | `tools/` | Build scripts, the checks `make` runs, and the injection harnesses |
 | `harness/` | Scripted QEMU testing |
@@ -237,13 +247,15 @@ sudo make test                                          # 77 suites, 7740 checks
 
 ## How releases are made
 
-Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.4` now, `27100.1000` from HavenDOS 1) with three files:
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.5` now, `27100.1000` from HavenDOS 1) with five files:
 
 | File | For |
 | --- | --- |
 | `HavenDOS-<version>.iso` | Booting and installing |
 | `HavenDOS-<version>-bundle.zip` | Updating an installed system, plus the hardware test docs |
 | `HavenDOS-<version>-source.zip` | Building it yourself |
+| `RetroPC-<version>-windows.zip` | Retro PC on Windows: one `RetroPC.exe` |
+| `RetroPC-<version>-linux-x86_64.tar.gz` | Retro PC on Linux: `retropc` and `retropc-headless` |
 
 A release whose tests fail is not published. Releases below Stable are published as pre-releases; the tag, ISO name and pre-release flag come from `tools/release_names.py`.
 
@@ -253,7 +265,7 @@ The plan is [THS-RM-1005](docs/roadmap/HavenDOS-Roadmap-RM1005.pdf), every relea
 
 | Release | Target | What |
 | --- | --- | --- |
-| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick. 0.9.7.2, 22 Nov: a 386 in Retro PC, BOOT OS built in. 0.9.7.3, 22 Nov: /USB everywhere, faster sticks, file types, replugging. 0.9.7.4, 23 Nov: USB after repeated replugs |
+| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick. 0.9.7.2, 22 Nov: a 386 in Retro PC, BOOT OS built in. 0.9.7.3, 22 Nov: /USB everywhere, faster sticks, file types, replugging. 0.9.7.4, 23 Nov: USB after repeated replugs. 0.9.7.5, 23 Nov: Retro PC on Windows and Linux |
 | 0.9.8 | ~5 Dec 2026 | Real HTTPS (TLS 1.2 with X25519 and AES-GCM, certificates checked), then signed updates over the internet |
 | 0.9.9 | ~12 Dec 2026 | Hardening; real audio through the speakers (Intel HD Audio); the freeze |
 | **HavenDOS 1, version 27H1 "Brandaris"** | 1 Jan 2027 | OS Build 27100.1000, the first Stable release |

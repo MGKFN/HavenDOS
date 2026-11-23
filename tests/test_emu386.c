@@ -384,6 +384,23 @@ static void part3(void){
         n = pc386_iso_menu(junk, sizeof junk, e, 2, &why);
         ck("not an ISO: refused, and says it is not a CD image", n == -1 && why && strstr(why, "not a CD"), n);
     }
+
+    /* v0.9.7.5: what the keyboard sends. A function key is not an
+       extended key: F1 is 3B BB, with no E0, on every PC keyboard. Up
+       is E0 48 E0 C8. pc386_key() once put E0 in front of all of them. */
+    {
+        uint8_t got[8]; int n;
+        pc386_init(&pc, mem, sizeof mem, &g_h386, 0);
+        pc.kbc_ccb = 0;                                  /* no IRQ: read the queue */
+        pc386_key(&pc, 0x13B);
+        n = 0; got[n++] = pc.ob; while(pc.kq_head != pc.kq_tail && n < 8){ got[n++] = pc.keyq[pc.kq_head]; pc.kq_head = (pc.kq_head + 1) % 64; }
+        ck("F1 reaches the 8042 as 3B BB, without E0", n == 2 && got[0] == 0x3B && got[1] == 0xBB, got[0]);
+        pc386_init(&pc, mem, sizeof mem, &g_h386, 0);
+        pc.kbc_ccb = 0;
+        pc386_key(&pc, 0x148);
+        n = 0; got[n++] = pc.ob; while(pc.kq_head != pc.kq_tail && n < 8){ got[n++] = pc.keyq[pc.kq_head]; pc.kq_head = (pc.kq_head + 1) % 64; }
+        ck("Up reaches it as E0 48 E0 C8", n == 4 && got[0] == 0xE0 && got[1] == 0x48 && got[2] == 0xE0 && got[3] == 0xC8, got[0]);
+    }
 }
 
 int main(int argc, char **argv){

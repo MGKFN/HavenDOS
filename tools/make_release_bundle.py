@@ -147,6 +147,7 @@ a fresh conversation.
 | `HavenDOS-{ver}.iso` | bootable disc, BIOS and UEFI |
 | `HavenDOS-{ver}-source.zip` | the tree, minus build products |
 | `update/` | updating an installed machine in place |
+| `retropc/` | Retro PC as a program: `RetroPC-{ver}-windows.zip` (one .exe) and `-linux-x86_64.tar.gz` |
 | `docs/` | the hardware test plans -- the parts only the laptop can answer -- and the newest roadmap (THS-RM PDF) |
 
 ## Updating a machine that already runs HavenDOS
@@ -322,6 +323,16 @@ def main():
         rms.sort(key=lambda f: re.match(r".*-RM(\d{4})\.pdf$", f).group(1))
         if rms:
             shutil.copy2(os.path.join(rdir, rms[-1]), os.path.join(stage, "docs"))
+
+    # v0.9.7.5: Retro PC as a program of its own. Required, not "if it
+    # is there": `make retropc` is a build step like the ISO, and a
+    # bundle that quietly lacks it is a bundle that looks complete.
+    os.makedirs(os.path.join(stage, "retropc"))
+    for f in ("RetroPC-%s-windows.zip" % ver, "RetroPC-%s-linux-x86_64.tar.gz" % ver):
+        p = os.path.join(ROOT, "dist", f)
+        if not os.path.exists(p):
+            fail("missing dist/%s -- run `make retropc`" % f)
+        shutil.copy2(p, os.path.join(stage, "retropc", f))
 
     upd_readme = os.path.join(ROOT, "rescue", "README-UPDATE.md")
     if os.path.exists(upd_readme):

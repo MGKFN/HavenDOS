@@ -75,7 +75,8 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             gcc-multilib make python3 python3-pip \
             grub-common grub-pc-bin grub-efi-amd64-bin xorriso mtools \
-            dosfstools exfatprogs exfat-fuse fuse3 gdisk openssl zip unzip
+            dosfstools exfatprogs exfat-fuse fuse3 gdisk openssl zip unzip \
+            gcc-mingw-w64-x86-64 libx11-dev
           sudo pip3 install --break-system-packages -q hid-parser
 
       # Built and tested as root: the exFAT fixture needs losetup and a FUSE
@@ -88,6 +89,9 @@ jobs:
           sudo make havendos_pass1.elf -j"$(nproc)"
           sudo make havendos.elf -j"$(nproc)"
           sudo make all
+          # v0.9.7.5: Retro PC as a program -- RetroPC.exe (mingw-w64,
+          # static) and the Linux build, packaged for the release
+          sudo make retropc
 
       - name: Test
         if: steps.v.outputs.exists == '0' || github.event_name == 'workflow_dispatch'
@@ -118,12 +122,15 @@ jobs:
             echo "| \`$iso\` | Booting or installing -- BIOS and UEFI, Secure Boot off |"
             echo "| \`HavenDOS-$ver-bundle.zip\` | Updating an installed system: the kernel, \`update.inf\` and the Windows/Linux staging scripts, plus the ISO, handoff and hardware-test docs |"
             echo "| \`HavenDOS-$ver-source.zip\` | Building it yourself -- \`make && make test\` |"
+            echo "| \`RetroPC-$ver-windows.zip\` | Retro PC on Windows: one \`RetroPC.exe\`, nothing to install |"
+            echo "| \`RetroPC-$ver-linux-x86_64.tar.gz\` | Retro PC on Linux: \`retropc\` (X11) and \`retropc-headless\` |"
             echo ""
             echo "---"
             echo ""
             cat "changelogs/CHANGELOG-v$ver.md"
           } > "$notes"
-          files=("$iso" "$stage/HavenDOS-$ver-source.zip" "dist/HavenDOS-$ver-bundle.zip")
+          files=("$iso" "$stage/HavenDOS-$ver-source.zip" "dist/HavenDOS-$ver-bundle.zip" \
+                 "dist/RetroPC-$ver-windows.zip" "dist/RetroPC-$ver-linux-x86_64.tar.gz")
           for f in "${files[@]}"; do [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }; done
           preflag=(); [ "$pre" = "true" ] && preflag=(--prerelease)
           if gh release view "$tag" >/dev/null 2>&1; then

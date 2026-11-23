@@ -161,6 +161,7 @@ version-sync: include/version.h \
 	@# missing and never touches an isodir that is already there.
 	python3 tools/make_isodir.py isodir
 	python3 tools/make_version.py --check
+	python3 tools/sync_emu.py --check
 	python3 tools/check_efi_embed.py havendos.elf
 	python3 tools/check_screen_width.py
 	python3 tools/check_boot_log.py
@@ -764,15 +765,6 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -O2 -Iinclude -Wall -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_t386 tests/test_emu386.c && \
 	  python3 tools/run_suite.py --name test_emu386 --min 36 -- /tmp/hd_t386
-	@echo "── test_retropc ───────────────────────────"
-	@echo "  Retro PC as a program: K-DOS and BOOT OS through retropc/, files, the font (v0.9.7.5)"
-	@# the headless host: the program the Windows and Linux windows run,
-	@# typed into by a script on a virtual clock. -O2 for the 386 boots,
-	@# and the K-DOS cases again under ASAN.
-	@gcc $(RP_CF) -o /tmp/hd_trp $(RP_SRC) retropc/host_null.c retropc/plat_posix.c && \
-	 gcc -O1 -g -fsanitize=address,undefined $(filter-out -O2,$(RP_CF)) -o /tmp/hd_trp_asan \
-	     $(RP_SRC) retropc/host_null.c retropc/plat_posix.c && \
-	  python3 tools/run_suite.py --name test_retropc --min 46 -- python3 tests/test_retropc.py /tmp/hd_trp /tmp/hd_trp_asan
 	@echo "── test_window ────────────────────────────"
 	@echo "  an app's window: title bar, buttons, taskbar"
 	@# v0.9.6.5: chrome_layout() and chrome_hit() out of shell/chrome.c,
@@ -862,46 +854,6 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -o /tmp/hd_tmach tests/test_machine.c && \
 	  python3 tools/run_suite.py --name test_machine --min 46 -- /tmp/hd_tmach
 
-# ── Retro PC as a program of its own (v0.9.7.5) ─────────────────────────────
-# retropc/ around the kernel's own emulators, compiled unchanged. Not part of
-# `all`: the Windows build needs mingw-w64 and the Linux one libX11 headers,
-# and a kernel build must not need either. `make test` builds only the
-# headless one, which needs nothing but gcc.
-#   make retropc   dist/retropc/{RetroPC.exe,retropc,retropc-headless} and
-#                  dist/RetroPC-<ver>-windows.zip, -linux-x86_64.tar.gz
-# -iquote, not -I: include/ has the kernel's own string.h, and with -I it
-# would stand in for the C library's.
-RP_SRC  = retropc/retropc.c retropc/font.c emu/cpu86.c emu/pcbios.c emu/cpu386.c emu/pc386.c
-RP_HDRS = retropc/retropc.h include/emu86.h include/emu386.h include/pcbios.h include/pc386.h \
-          include/keys.h include/types.h include/version.h include/font8x16.h include/retro_images.h
-RP_CF   = -O2 -Wall -Wextra -Wno-format-truncation -Wno-builtin-declaration-mismatch \
-          -iquote include -iquote retropc
-MINGW   = x86_64-w64-mingw32
-
-dist/retropc/retropc-headless: $(RP_SRC) $(RP_HDRS) retropc/host_null.c retropc/plat_posix.c
-	@mkdir -p dist/retropc
-	gcc $(RP_CF) -o $@ $(RP_SRC) retropc/host_null.c retropc/plat_posix.c
-
-dist/retropc/retropc: $(RP_SRC) $(RP_HDRS) retropc/host_x11.c retropc/plat_posix.c
-	@mkdir -p dist/retropc
-	gcc $(RP_CF) -o $@ $(RP_SRC) retropc/host_x11.c retropc/plat_posix.c -lX11
-
-dist/retropc/RetroPC.exe: $(RP_SRC) $(RP_HDRS) retropc/host_win32.c tools/make_retropc_res.py
-	@mkdir -p dist/retropc/res
-	python3 tools/make_retropc_res.py dist/retropc/res
-	$(MINGW)-windres dist/retropc/res/retropc.rc -O coff -o dist/retropc/res/retropc.res.o
-	$(MINGW)-gcc $(RP_CF) -mwindows -static -o $@ $(RP_SRC) retropc/host_win32.c \
-	    dist/retropc/res/retropc.res.o -lcomdlg32 -lwinmm
-	@# only Windows' own DLLs: a program Kyan has to install a runtime for
-	@# is a program he cannot use
-	@$(MINGW)-objdump -p $@ | awk '/DLL Name/ {print tolower($$3)}' | sort | \
-	    grep -vxE 'kernel32.dll|user32.dll|gdi32.dll|shell32.dll|comdlg32.dll|winmm.dll|msvcrt.dll' \
-	    && { echo "RetroPC.exe imports a DLL Windows does not ship"; rm -f $@; exit 1; } || true
-
-retropc: dist/retropc/retropc-headless dist/retropc/retropc dist/retropc/RetroPC.exe retropc/README.txt tools/make_retropc_dist.py
-	python3 tools/make_retropc_dist.py
-
-.PHONY: retropc
 
 clean:
 	rm -f tests/appreg.inc $(OBJS) $(OBJS_PASS1) $(OBJS:.o=.d) $(OBJS_PASS1:.o=.d) \
@@ -917,7 +869,6 @@ clean:
 	      tests/esp.img.scratch tests/esp.img.scratch.fsck \
 	      tests/esp_full.img.scratch tests/esp_full.img.scratch.fsck \
 	      include/grub_efi_embed.h tests/f16fmt.img tests/f16fmt.img.out
-	rm -rf dist/retropc
 
 .PHONY: all clean test
 

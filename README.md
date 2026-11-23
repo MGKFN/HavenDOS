@@ -12,7 +12,7 @@ From 0.9.7, every release below Stable is a GitHub **pre-release**, so the newes
 
 **0.9.7.5. Retro PC on Windows and Linux.** Tested on the build machine and in QEMU, not yet on a real machine.
 
-- **Retro PC is a program of its own** as well as an app inside HavenDOS: `RetroPC.exe` for Windows (one file, nothing to install) and `retropc` for Linux, from the release's two new downloads.
+- **Retro PC is a program of its own** as well as an app inside HavenDOS: `RetroPC.exe` for Windows (one file, nothing to install) and `retropc` for Linux. Since 0.9.7.5 it has its own repo and releases: [MGKFN/RetroPC](https://github.com/MGKFN/RetroPC).
 - The same emulators and the same built-in images: K-DOS Beta 1.1b and BOOT OS 0.3.1, 0.5.0 and 0.5.2. Your own `.IMG` and `.ISO` files go in the `RETRO` folder beside it, or open them with O, or drop them on the window.
 - Its hard disks are the same `.HDD` files HavenDOS keeps, so they can be copied either way.
 - F1 to F12 now reach the 386's old builds as a real keyboard sends them.
@@ -235,7 +235,7 @@ sudo make test                                          # 77 suites, 7740 checks
 | `net/` | TCP/IP, DNS, HTTP, TLS, RSA, X.509, plists |
 | `shell/` | The shell, the desktop, the window chrome and the apps (Retro PC is `shell/retro.c`) |
 | `emu/` | Retro PC's emulated PCs: the 8086 (`cpu86.c`, `pcbios.c`) and the 386 (`cpu386.c`, `pc386.c`) |
-| `retropc/` | Retro PC as a program for Windows and Linux, around the same emulators (`make retropc`) |
+| | Retro PC as a program for Windows and Linux lives in its own repo, [MGKFN/RetroPC](https://github.com/MGKFN/RetroPC). `emu/` comes from there (`tools/sync_emu.py`; `emu/FROM-RETROPC.txt` says which version) |
 | `tests/` | Native test suites — `make test` |
 | `tools/` | Build scripts, the checks `make` runs, and the injection harnesses |
 | `harness/` | Scripted QEMU testing |
@@ -247,15 +247,13 @@ sudo make test                                          # 77 suites, 7740 checks
 
 ## How releases are made
 
-Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.5` now, `27100.1000` from HavenDOS 1) with five files:
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.5` now, `27100.1000` from HavenDOS 1) with three files:
 
 | File | For |
 | --- | --- |
 | `HavenDOS-<version>.iso` | Booting and installing |
 | `HavenDOS-<version>-bundle.zip` | Updating an installed system, plus the hardware test docs |
 | `HavenDOS-<version>-source.zip` | Building it yourself |
-| `RetroPC-<version>-windows.zip` | Retro PC on Windows: one `RetroPC.exe` |
-| `RetroPC-<version>-linux-x86_64.tar.gz` | Retro PC on Linux: `retropc` and `retropc-headless` |
 
 A release whose tests fail is not published. Releases below Stable are published as pre-releases; the tag, ISO name and pre-release flag come from `tools/release_names.py`.
 

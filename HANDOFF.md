@@ -51,6 +51,34 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
+## AFTER 0.9.7.5 (23 Nov) — RETRO PC HAS ITS OWN REPO
+
+Kyan, right after 0.9.7.5: "make it as its own repo also add 64 bit 32
+bit and all other stuff... i would like to also use ISOS like windows".
+He chose: public **MGKFN/RetroPC**; old to new, step by step; and "the
+RetroPC repo is the source" of the emulators.
+
+- **github.com/MGKFN/RetroPC**, release **v0.1.0** (pre-release) =
+  what 0.9.7.5 shipped, with its own version (`src/version.h`), its own
+  release workflow (RetroPC.exe, Linux tar, source), `make test` (the
+  freestanding check, test_emu86, test_emu386, test_retropc) and
+  ROADMAP.md: one PC with a real BIOS (0.2), IDE/ATAPI + El Torito (0.3),
+  VGA/VBE + mouse (0.4, which is also HavenDOS inside HavenDOS), a 486
+  (0.5), a Pentium (0.6), a Windows XP install CD (1.0), 64-bit (1.x),
+  WHPX/KVM for Windows 10/11 (2.0).
+- **HavenDOS no longer builds the program.** `retropc/`,
+  test_retropc and the RetroPC release assets are gone from this repo
+  again (workflow and bundle script are as they were at 0.9.7.4).
+- **`emu/` comes from RetroPC:** `python3 tools/sync_emu.py
+  <RetroPC checkout>` copies emu/*.c and the four emu headers and writes
+  `emu/FROM-RETROPC.txt` (version, commit, SHA-256s). `make` runs
+  `sync_emu.py --check` in version-sync and refuses a local edit: fix
+  the emulators in RetroPC, then sync. RetroPC's
+  `tools/check_freestanding.py` refuses anything the kernel cannot link
+  (allowed outside symbols: memcpy, memset, memmove, memcmp).
+- The next HavenDOS release's changelog must say which RetroPC version
+  its emu/ is (FROM-RETROPC.txt), and that the RetroPC downloads moved.
+
 ## START HERE: 0.9.7.5 (23 Nov) — RETRO PC ON WINDOWS AND LINUX
 
 Kyan chose "1 and 2" after 0.9.7.4: (1) Retro PC as a standalone program

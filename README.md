@@ -226,7 +226,7 @@ sudo apt install gcc-multilib make python3 python3-pip grub-common grub-pc-bin \
 pip install hid-parser
 
 make havendos_pass1.elf && make havendos.elf && make   # the ISO
-sudo make test                                          # 77 suites, 7740 checks
+sudo make test                                          # 77 suites, 7755 checks
 ```
 
 `grub-pc-bin` and `grub-efi-amd64-bin` are both needed: without the first the ISO has no BIOS boot image. The build is two-pass — the kernel embeds a copy of itself for the installer — so build the two kernels before `make`. `make test` runs as root because the exFAT fixture is made with a loop device.

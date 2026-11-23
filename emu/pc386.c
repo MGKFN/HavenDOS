@@ -46,11 +46,17 @@ int pc386_iso_read(const uint8_t *iso, uint32_t size, const char *path, const ui
         while(path[wl] && path[wl] != '/') wl++;
         for(uint32_t off = 0; off < len; ){
             const uint8_t *r;
-            uint32_t at = lba * 2048u + off;
+            /* 0.1.1: in 64 bits, and the WHOLE record inside the image.
+               This trusted the name length at r[32]: a damaged or
+               hostile .ISO could give a name longer than its record
+               and read past the end of the image (found by fuzzing).
+               And lba * 2048 wrapped in 32 bits for a large lba. */
+            uint64_t at = (uint64_t)lba * 2048u + off;
             if(at + 34 > size) return -1;
             r = iso + at;
             if(r[0] == 0){ off = (off / 2048u + 1u) * 2048u; continue; }   /* to the next sector */
-            if(r[0] >= 34 && name_is(r + 33, r[32], path, wl)){
+            if(at + r[0] > size) return -1;
+            if(r[0] >= 34 && 33u + r[32] <= r[0] && name_is(r + 33, r[32], path, wl)){
                 lba = le32(r + 2); len = le32(r + 10);
                 found = 1;
                 break;
@@ -450,29 +456,47 @@ int pc386_boot_kernel(pc386_t *p, const uint8_t *k, int klen, const pc386_entry_
         if(rd32le(k + i) == 0x1BADB002u && rd32le(k + i) + rd32le(k + i + 4) + rd32le(k + i + 8) == 0){ hdr = i; break; }
     if(hdr < 0){ say(p, "no Multiboot header in ", e->path); return -1; }
 
+    /* 0.1.1: every size below is the kernel file's word, and the file
+       is whatever was on the user's CD. Each sum is done in 64 bits and
+       each range checked against the file and against memory BEFORE
+       anything is copied (found by fuzzing): before, a program header
+       whose file size was bigger than its memory size made the memset
+       below clear (msz - fsz) wrapped to nearly 4 GB, and offsets near
+       2^32 wrapped past the bounds checks. */
     if(klen >= 52 && k[0] == 0x7F && k[1] == 'E' && k[2] == 'L' && k[3] == 'F' && !(rd32le(k + hdr + 4) & 0x10000u)){
-        uint32_t phoff, phnum, phsz;
+        uint64_t phoff, phnum, phsz;
         if(k[4] != 1 || le16(k + 18) != 3){ say(p, "not a 32-bit x86 kernel: ", e->path); return -1; }
         p->entry = rd32le(k + 24);
         phoff = rd32le(k + 28); phsz = le16(k + 42); phnum = le16(k + 44);
-        for(uint32_t i = 0; i < phnum; i++){
-            const uint8_t *ph = k + phoff + i * phsz;
-            uint32_t off, pa, fsz, msz;
-            if(phoff + (i + 1) * phsz > (uint32_t)klen) break;
+        if(phsz < 32){ say(p, "the kernel's program headers are damaged: ", e->path); return -1; }
+        for(uint64_t i = 0; i < phnum; i++){
+            const uint8_t *ph;
+            uint64_t off, pa, fsz, msz;
+            if(phoff + (i + 1) * phsz > (uint64_t)klen) break;
+            ph = k + phoff + i * phsz;
             if(rd32le(ph) != 1) continue;                /* PT_LOAD */
             off = rd32le(ph + 4); pa = rd32le(ph + 12); fsz = rd32le(ph + 16); msz = rd32le(ph + 20);
-            if(pa + msz > p->mem_size || pa + msz < pa || off + fsz > (uint32_t)klen){
+            if(fsz > msz || off + fsz > (uint64_t)klen){
+                say(p, "the kernel's program headers are damaged: ", e->path); return -1;
+            }
+            if(pa + msz > p->mem_size){
                 say(p, "the kernel does not fit in Retro PC's memory", 0); return -1;
             }
-            memcpy(p->mem + pa, k + off, fsz);
-            memset(p->mem + pa + fsz, 0, msz - fsz);
+            memcpy(p->mem + pa, k + off, (size_t)fsz);
+            memset(p->mem + pa + fsz, 0, (size_t)(msz - fsz));
         }
     } else if(rd32le(k + hdr + 4) & 0x10000u){          /* the a.out kludge: addresses in the header */
-        uint32_t ha = rd32le(k + hdr + 12), la = rd32le(k + hdr + 16), le_ = rd32le(k + hdr + 20),
-                 be = rd32le(k + hdr + 24), off = (uint32_t)hdr - (ha - la), ln = le_ ? le_ - la : (uint32_t)klen - off;
-        if(be > p->mem_size || la + ln > p->mem_size || off + ln > (uint32_t)klen){ say(p, "the kernel does not fit in Retro PC's memory", 0); return -1; }
-        memcpy(p->mem + la, k + off, ln);
-        if(be > la + ln) memset(p->mem + la + ln, 0, be - la - ln);
+        int64_t off;
+        uint64_t ha, la, le_, be, ln;
+        if(hdr + 32 > klen){ say(p, "the Multiboot header is cut short in ", e->path); return -1; }
+        ha = rd32le(k + hdr + 12); la = rd32le(k + hdr + 16); le_ = rd32le(k + hdr + 20); be = rd32le(k + hdr + 24);
+        off = (int64_t)hdr - ((int64_t)ha - (int64_t)la);
+        if(off < 0 || off > klen || (le_ && le_ < la)){ say(p, "the Multiboot header's addresses are damaged: ", e->path); return -1; }
+        ln = le_ ? le_ - la : (uint64_t)klen - (uint64_t)off;
+        if((uint64_t)off + ln > (uint64_t)klen){ say(p, "the Multiboot header's addresses are damaged: ", e->path); return -1; }
+        if(be > p->mem_size || la + ln > p->mem_size){ say(p, "the kernel does not fit in Retro PC's memory", 0); return -1; }
+        memcpy(p->mem + la, k + off, (size_t)ln);
+        if(be > la + ln) memset(p->mem + la + ln, 0, (size_t)(be - la - ln));
         p->entry = rd32le(k + hdr + 28);
     } else { say(p, "the kernel is neither ELF nor a Multiboot image: ", e->path); return -1; }
 

@@ -181,7 +181,8 @@ static uint32_t inl(uint16_t p){ rec(A_RD,p,0); return 0xFFFFFFFFu; }
 static int irqs_registered;
 void irq_register(int n, void (*fn)(void)){ (void)n; (void)fn; irqs_registered++; }
 void klog(int level, const char *fmt, ...){ (void)level; (void)fmt; }
-uint32_t get_ticks(void){ return 0; }
+static uint32_t sim_ticks;             /* v0.9.7.7: the clock moves when a check moves it */
+uint32_t get_ticks(void){ return sim_ticks; }
 void usb_hid_poll(void){ }
 /* v0.8.8.11: drivers/mouse.c pumps both polled pointer buses. */
 void i2c_hid_poll(void){ }
@@ -565,6 +566,36 @@ int main(void)
        inside kernel_poll(), and recursing there would make `kpoll`'s
        "already polling" counter climb for something that is not a
        bug. */
+    /* ── v0.9.7.7: A STRAY MOUSE BYTE MUST NOT EAT A KEY PRESS ─────────
+       keyboard.c routes a byte to the mouse whenever the mouse is
+       mid-packet (for UTM's mice, which lose the AUX bit). One stray
+       aux byte with bit 3 set started a packet that never finished, and
+       the next key's make and break were taken as its bytes 2 and 3:
+       Retro PC lost an Enter, one run in three, in QEMU. */
+    head("v0.9.7.7: a half mouse packet does not swallow the next key");
+    {
+        int c;
+        while(keyboard_getchar() != -1) ;         /* nothing left over */
+        mouse_feed(0xFA);                          /* a stray ACK: bit 3 set */
+        sim_ticks += 60;                           /* 600 ms later ...        */
+        qpush(0x1C); qpush(0x9C);                  /* ... Enter, make and break */
+        c = keyboard_getchar();
+        ck("Enter after a stray mouse byte 600 ms earlier arrives as Enter (0.9.7.6: lost)",
+           c == '\n', c);
+        ck("  ... and the mouse is no longer mid-packet", !mouse_mid_packet(), 0);
+
+        /* UTM's case, which the rule is for, still holds: a packet's
+           bytes 2 and 3 arriving without the AUX bit, at once, are the
+           mouse's -- not keys */
+        while(keyboard_getchar() != -1) ;
+        mouse_feed(0x08);                          /* byte 1, sync bit */
+        qpush(0x12); qpush(0x34);                  /* bytes 2 and 3, no AUX bit */
+        c = keyboard_getchar();
+        ck("bytes 2 and 3 of a packet without the AUX bit still go to the mouse",
+           c == -1 && !mouse_mid_packet(), c);
+        sim_ticks += 1;
+    }
+
     head("...but the predicate does not, on purpose");
     {
         long before = kpollguard_poll_count();

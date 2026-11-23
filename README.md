@@ -8,9 +8,18 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 **The 0.9.7 line is Stable from 0.9.7.6**, so the newest release is the one under "Latest" on the releases page. 0.9.7 to 0.9.7.5 were Beta pre-releases. A system on the Beta channel updates to Stable without asking; `update channel beta` keeps a system on Betas.
 
-## Current version: 0.9.7.6 Stable "Mnemosyne"
+## Current version: 0.9.7.7 Stable "Mnemosyne"
 
-**0.9.7.6. The 0.9.7 line is Stable, and USB devices come back after a replug.** Tested on the build machine and in QEMU, not yet on a real machine.
+**0.9.7.7. A bug sweep.** Tested on the build machine and in QEMU, not yet on a real machine.
+
+- **A lost key press, fixed.** A stray byte from the PS/2 mouse could make HavenDOS give the next key press to the mouse, so a program waiting for Enter seemed frozen until another key was pressed. A half-finished mouse packet now expires after 50 ms.
+- **Retro PC 0.1.1.** A damaged `.ISO` or kernel in the `RETRO` folder could crash the system. The CD reader and the kernel loader now check every size before they copy anything.
+- **Fuzzed and found sound:** the FAT32 and exFAT drivers, GPT, EDID, DHCP, DNS, IPv4, HID descriptors and DER/PEM, with millions of damaged inputs each, and every QEMU harness rerun.
+
+[Changelog](changelogs/CHANGELOG-v0.9.7.7.md).
+
+
+**0.9.7.6. The 0.9.7 line is Stable, and USB devices come back after a replug.**
 
 - **Stable.** 0.9.7.6 is a full GitHub release, not a pre-release, and the early-access warnings are gone. A Beta system takes it as an update.
 - **USB after a replug.** A device that is slow to answer after the bus is reset is tried again, both during the walk and after it, rather than staying gone until the next plug. If it still does not answer, the log names the port.
@@ -198,11 +207,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.6.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.7.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.6.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.7.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -256,7 +265,7 @@ sudo make test                                          # 77 suites, 7755 checks
 
 ## How releases are made
 
-Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.6` now, `27100.1000` from HavenDOS 1) with three files:
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.7` now, `27100.1000` from HavenDOS 1) with three files:
 
 | File | For |
 | --- | --- |
@@ -272,7 +281,7 @@ The plan is [THS-RM-1005](docs/roadmap/HavenDOS-Roadmap-RM1005.pdf), every relea
 
 | Release | Target | What |
 | --- | --- | --- |
-| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick. 0.9.7.2, 22 Nov: a 386 in Retro PC, BOOT OS built in. 0.9.7.3, 22 Nov: /USB everywhere, faster sticks, file types, replugging. 0.9.7.4, 23 Nov: USB after repeated replugs. 0.9.7.5, 23 Nov: Retro PC on Windows and Linux. **0.9.7.6, 23 Nov: Stable**; USB devices retried after a replug |
+| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick. 0.9.7.2, 22 Nov: a 386 in Retro PC, BOOT OS built in. 0.9.7.3, 22 Nov: /USB everywhere, faster sticks, file types, replugging. 0.9.7.4, 23 Nov: USB after repeated replugs. 0.9.7.5, 23 Nov: Retro PC on Windows and Linux. **0.9.7.6, 23 Nov: Stable**; USB devices retried after a replug. 0.9.7.7, 23 Nov: a bug sweep; a lost key press fixed |
 | 0.9.8 | ~5 Dec 2026 | Real HTTPS (TLS 1.2 with X25519 and AES-GCM, certificates checked), then signed updates over the internet |
 | 0.9.9 | ~12 Dec 2026 | Hardening; real audio through the speakers (Intel HD Audio); the freeze |
 | **HavenDOS 1, version 27H1 "Brandaris"** | 1 Jan 2027 | OS Build 27100.1000, the first release of HavenDOS 1 (Stable, as the 0.9.7 line already is) |

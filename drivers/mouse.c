@@ -213,7 +213,27 @@ void mouse_feed_i2c(int dx, int dy, int buttons)
 }
 
 /* ── mouse_feed ──────────────────────────────────────────────── */
+/* ── v0.9.7.7: A HALF PACKET EXPIRES ─────────────────────────────────
+ * drivers/keyboard.c sends a byte to the mouse whenever the mouse is
+ * mid-packet, whatever the controller's AUX bit says -- for UTM, whose
+ * external mice lose that bit on packet bytes 2 and 3 (see the note
+ * there). But nothing ever ended a packet that did not finish. One
+ * stray aux byte with bit 3 set -- an ACK (0xFA), a byte dropped out of
+ * a packet -- left mouse_cycle at 1 for good, and the next TWO bytes
+ * from the KEYBOARD were eaten as the rest of it: one key press, make
+ * and break, gone. Found by 0.9.7.7's harness sweep, as an Enter that
+ * Retro PC never received, one run in three; the CPU was idle in
+ * keyboard_waitchar() the whole time.
+ *
+ * A packet's three bytes leave the mouse back to back, a few ms apart,
+ * so a packet still unfinished 50 ms after its last byte never will
+ * be. It is dropped, and the byte goes where the controller says. */
+#define MOUSE_PACKET_TICKS 5u            /* 50 ms; get_ticks() is 10 ms */
+extern uint32_t get_ticks(void);
+static uint32_t g_mouse_last;
+
 void mouse_feed(uint8_t data){
+    g_mouse_last = get_ticks();
     switch(mouse_cycle){
         case 0:
             if(!(data&0x08)){
@@ -438,7 +458,11 @@ int  mouse_is_ready(void)              { return ps2_ready
    v0.8.8. */
 int  mouse_ps2_ready(void)             { return ps2_ready; }
 int  mouse_usb_count(void)             { return usb_pointers; }
-int  mouse_mid_packet(void)            { return mouse_cycle>0; }
+int  mouse_mid_packet(void){
+    if(mouse_cycle > 0 && get_ticks() - g_mouse_last > MOUSE_PACKET_TICKS)
+        mouse_cycle = 0;                 /* v0.9.7.7: a half packet expires */
+    return mouse_cycle > 0;
+}
 /* Pumped for the same reason mouse_get() is: a caller that only ever
    asks "was there a click" is a caller that never reads the keyboard,
    and shell/chat.c is one. */

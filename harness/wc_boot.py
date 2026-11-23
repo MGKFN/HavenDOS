@@ -95,7 +95,10 @@ def run(label, **kw):
                          # in 0.8.9.5 exactly as here
         scr = q.screen()
         ck("and the shell still answers afterwards",
-           "0.8.9" in scr, "\n".join(scr.splitlines()[-8:]))
+           # was "0.8.9" in scr: true only of the release it was written
+           # for. Found in 0.9.7.7's sweep, failing on a shell that had
+           # answered.
+           "HavenDOS v" in scr.split("ver")[-1], "\n".join(scr.splitlines()[-8:]))
         q.type("i2chid\n")
         time.sleep(1.5)
         scr = q.screen()

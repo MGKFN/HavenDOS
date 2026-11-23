@@ -215,14 +215,19 @@ def main():
             x = line.index("Notifications")
             check("the drawer is anchored to the right edge, not floating "
                   "mid-desktop",
-                  x >= cols - 30,
+                  x >= cols - 40,          # 0.9.7.6: the drawer is 34 columns wide
                   "'Notifications' starts at column %d of %d. The bell that "
                   "opens it is painted at column %d, so the drawer opened "
                   "%d columns away from its own control."
                   % (x, cols, cols - 25, (cols - 25) - x))
             # And it should reach down to the taskbar rather than
             # stopping at the literal row 23.
-            close_r, _ = row_of(s, "Any key=Close")
+            # its footer: "Any key=Close" until the 0.9.5 rebuild, "any
+            # key closes" since -- the harness kept looking for the old
+            # one and reported the row as -1 (found in 0.9.7.7's sweep)
+            close_r, _ = row_of(s, "any key closes")
+            if close_r < 0:
+                close_r, _ = row_of(s, "Any key=Close")
             check("the drawer reaches the taskbar instead of stopping at "
                   "row 23",
                   close_r >= rows - 4,

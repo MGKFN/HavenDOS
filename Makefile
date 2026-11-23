@@ -527,7 +527,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tkbd tests/test_kbdinit.c && \
-	  python3 tools/run_suite.py --name test_kbdinit --min 49 -- /tmp/hd_tkbd
+	  python3 tools/run_suite.py --name test_kbdinit --min 52 -- /tmp/hd_tkbd
 	@echo "── test_theme ─────────────────────────────"
 	@echo "  previewing a theme is not choosing one"
 	@# shell/ui.c is COMPILED here, not copied: the stubs are only the

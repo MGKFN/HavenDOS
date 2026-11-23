@@ -68,14 +68,15 @@ HARNESS = r"""
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stddef.h>
 #define _FILE_OFFSET_BITS 64
 
-void *memset(void *d, int c, uint32_t n){
+void *memset(void *d, int c, size_t n){   /* size_t, as include/string.h declares it (0.9.7.7) */
     unsigned char *p=(unsigned char*)d; while(n--) *p++=(unsigned char)c; return d; }
-void *memcpy(void *d, const void *s, uint32_t n){
+void *memcpy(void *d, const void *s, size_t n){
     unsigned char *a=(unsigned char*)d; const unsigned char *b=(const unsigned char*)s;
     while(n--) *a++=*b++; return d; }
-int memcmp(const void *a, const void *b, uint32_t n){
+int memcmp(const void *a, const void *b, size_t n){
     const unsigned char *x=a,*y=b; while(n--){ if(*x!=*y) return (int)*x-(int)*y; x++; y++; } return 0; }
 
 #include "../fs/gpt.c"

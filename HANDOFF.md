@@ -1,6 +1,6 @@
 # HavenDOS — handoff, 23 November 2026
 
-Current release: **v0.9.7.6** (Stable, a full GitHub release) (codename "Mnemosyne"),
+Current release: **v0.9.7.7** (Stable, a full GitHub release) (codename "Mnemosyne"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -51,7 +51,29 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.7.6 (23 Nov) — STABLE, AND USB RETRIES
+## START HERE: 0.9.7.7 (23 Nov) — A BUG SWEEP
+
+Kyan: "we need to fix unknown bugs ... just go on fixing, we can't start
+0.9.8 soon enough". No bug list, so the sweep looked itself:
+- gcc -fanalyzer + cppcheck over all kernel sources: only false positives.
+- Mutation fuzzing under ASAN/UBSan (homemade fuzzer, no libFuzzer here;
+  repair CRCs/checksums after mutating or nothing gets parsed): FAT32,
+  exFAT, GPT, EDID, DHCP/DNS/IPv4, HID, DER/PEM, random 386/8086 code.
+  Only bugs: Retro PC's ISO reader and kernel loader -> RetroPC 0.1.1
+  (d2a89e6), synced into emu/ with tools/sync_emu.py.
+- Every QEMU harness, ONE AT A TIME (running two, or alongside make,
+  gives false timing failures). Found the real one: drivers/mouse.c.
+  kbc_drain routes a byte to the mouse while mouse_mid_packet(); a stray
+  aux byte with bit 3 set (0xFA ACK) left mouse_cycle=1 forever and ate
+  the next key's make+break. A half packet now expires after 50 ms
+  (MOUSE_PACKET_TICKS 5). That was retro386's intermittent freeze too
+  (EIP sampled in keyboard_waitchar/kbc_drain).
+- Harnesses fixed: desktop_layout (drawer footer text), wc_boot (version
+  string), gptwrite_real (stubs take size_t). capture/freshdisk are 0.8.0
+  helpers, not tests -- left alone.
+make test: 77 suites, 7758 checks.
+
+## 0.9.7.6 (23 Nov) — STABLE, AND USB RETRIES
 
 Kyan, 23 Nov ~12:00, on 0.9.7.5 on the HP: "only one USB works after
 the unplugs, plugging back in works, it still has too many bugs", then

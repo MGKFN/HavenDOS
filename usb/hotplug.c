@@ -273,6 +273,15 @@ void usb_hotplug_baseline(void)
     for(int c = 0; c < nhc && c < USB_MAX_HC; c++){
         const usb_hc_t *h = usb_hc(c);
         if(!h || !h->ops) continue;
+        /* v0.9.7.4: clear the change bits the walk itself set (a USB 2
+           device can drop and come back while its port is reset), so
+           only a change after this point reads as a replug. On the HP
+           0.9.7.3 took those for replugs and walked again and again. */
+        if(h->ops->port_ack_change){
+            int n = h->ops->port_count ? h->ops->port_count((usb_hc_t *)h) : 0;
+            for(int p = 0; p < n && p < HP_MAX_PORTS; p++)
+                h->ops->port_ack_change((usb_hc_t *)h, p);
+        }
         g_seen[c] = ports_of(h, 0);
         g_have[c] = 1;
     }

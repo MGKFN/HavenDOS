@@ -51,7 +51,38 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.7.3 (22 Nov) — /USB, FASTER STICKS, FILE TYPES, REPLUG
+## START HERE: 0.9.7.4 (23 Nov) — USB AFTER REPEATED REPLUGS
+
+Kyan on 0.9.7.3 on the HP: "unplugging and replugging works once after
+that nothing all usb stuff gone". Two causes, both fixed, both in tests.
+
+1. **Slot leak on a failed attach** (`usb/xhci_hc.c`). `x_attach_common`
+   returned after Enable Slot without Disable Slot when Address Device
+   was refused or the descriptor read failed. Those devices never reach
+   the core table, so `x_detach` never saw them. 8 slots on the HP
+   (webcam + Bluetooth + mouse + stick = 4 per walk). Fix:
+   `slot_give_back()` on every failure path; new optional op
+   `release_all` (`x_release_all`), called from `release_all()` in
+   `usb/core.c` after every detach. It gives back any slot still
+   marked, and if Enable Slot failed in the last walk (`slots_suspect`)
+   it disables all slots. Both cases log a warn line, so `dmesg | grep
+   xHCI` on the HP says whether this was it.
+2. **The walk's own CSC** (`usb/hotplug.c`). A USB 2 device can drop
+   and reconnect during `port_reset`, which sets CSC again after it was
+   acked. 0.9.7.3 then read that as a replug every second. New optional
+   op `port_ack_change`; `usb_hotplug_baseline()` acks every port
+   before it reads the bitmap.
+
+Tests: test_xhci 358 (+14). With the old code those checks reproduce the
+HP exactly: the device is lost after a few tries and all 8 slots are held
+by nothing. test_kpoll 168 (+3). `replug_0973.py` 11/11, now with ten
+extra mouse replugs.
+
+**Still open:** trackpad photos (Kyan: "ill give soon"); Retro PC as a
+standalone Windows/Linux program, then HavenDOS inside HavenDOS. Kyan
+chose both, in that order; start once the HP USB is confirmed.
+
+## 0.9.7.3 (22 Nov) — /USB, FASTER STICKS, FILE TYPES, REPLUG
 
 Kyan after 0.9.7.2: "update over USB holy fucking slow", "the abbility
 to save smth to usb", "general file name extensions". He chose

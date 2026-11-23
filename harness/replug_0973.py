@@ -116,6 +116,18 @@ def main():
         check("pulled and straight back: /USB still lists it", usb_lists(q))
         moves(q, "and the mouse still works after all of that")
 
+        # v0.9.7.4. Kyan on the HP: "works once after that nothing all usb
+        # stuff gone". More replugs than the controller has slots (8),
+        # alternating slow and quick, spaced past the storm window.
+        for i in range(10):
+            old, new = "m%d" % (3 + i), "m%d" % (4 + i)
+            q.cmd_qmp("device_del", id=old)
+            time.sleep(0.15 if i % 2 else 3)
+            q.cmd_qmp("device_add", driver="usb-mouse", bus="xhci.0", id=new)
+            time.sleep(6)
+        moves(q, "TEN MORE REPLUGS (more than the 8 slots): the mouse still moves")
+        check("...and the stick is still /USB", usb_lists(q))
+
         q.cmd_qmp("device_add", driver="usb-kbd", bus="xhci.0", id="k1"); time.sleep(5)
         q.cmd_qmp("device_del", id="k1"); time.sleep(4)
         q.cmd_qmp("device_add", driver="usb-kbd", bus="xhci.0", id="k2"); time.sleep(5)

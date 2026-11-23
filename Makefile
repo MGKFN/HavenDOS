@@ -488,7 +488,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_txhci tests/test_xhci.c drivers/pci_bar.c \
 	           && \
-	  python3 tools/run_suite.py --name test_xhci --min 344 -- /tmp/hd_txhci
+	  python3 tools/run_suite.py --name test_xhci --min 358 -- /tmp/hd_txhci
 	@echo "── test_update ────────────────────────────"
 	@echo "  where an update comes from, and whether it is what it claims to be"
 	@# fs/gpt.c is linked rather than included: it declares memcpy and
@@ -718,7 +718,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tkp tests/test_kpoll.c && \
-	  python3 tools/run_suite.py --name test_kpoll --min 165 -- /tmp/hd_tkp
+	  python3 tools/run_suite.py --name test_kpoll --min 168 -- /tmp/hd_tkp
 	@echo "── test_task ──────────────────────────────"
 	@echo "  cooperative tasks, switched for real on real stacks"
 	@# v0.9.6. Built -m32 so kernel/task.c's switch -- eight instructions,

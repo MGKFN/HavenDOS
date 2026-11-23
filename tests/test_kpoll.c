@@ -703,7 +703,8 @@ void usbmux_close(void){ note('x'); closes++; }
 static int sim_enum_result = 3;   /* v0.8.9.6: a walk can find nothing */
 /* v0.9.7.3: the change bits a real walk acknowledges (port_reset) */
 static uint32_t sim_changed[2];
-int  usb_enumerate(void){ note('e'); enumerates++; sim_changed[0] = sim_changed[1] = 0; return sim_enum_result; }
+static uint32_t sim_walk_sets;    /* v0.9.7.4: change bits the walk's own port resets leave set */
+int  usb_enumerate(void){ note('e'); enumerates++; sim_changed[0] = sim_walk_sets; sim_changed[1] = 0; return sim_enum_result; }
 /* v0.9.7.3: which root ports had a device that enumerated */
 static usb_dev_t sim_devs[4];
 static int       sim_ndev;
@@ -752,6 +753,14 @@ static const usb_hc_ops_t CSC_OPS = {
     .port_count     = sim_port_count,
     .port_connected = sim_port_connected,
     .port_changed   = sim_port_changed,
+};
+/* v0.9.7.4: and one that can acknowledge the bit, as xHCI does */
+static void sim_port_ack(struct usb_hc *h, int p){ sim_changed[h->index] &= ~(1u << p); }
+static const usb_hc_ops_t ACK_OPS = {
+    .port_count      = sim_port_count,
+    .port_connected  = sim_port_connected,
+    .port_changed    = sim_port_changed,
+    .port_ack_change = sim_port_ack,
 };
 /* A controller that cannot report its ports at all -- a back-end
    without the optional ops.  It must contribute nothing rather than
@@ -1000,7 +1009,32 @@ static void clients_main(void)
         ticks(100); kernel_poll();
         ck("a back-end without port_changed is never asked", changed_reads == before, changed_reads - before);
     }
-    sim_ndev = 0; sim_changed[0] = 0;
+    head("v0.9.7.4: a walk that sets the change bit itself is not a replug");
+    /* On the HP a USB 2 device can drop and reconnect while the walk
+       resets its port, which sets the bit again after the walk cleared
+       it. 0.9.7.3 read that as a replug and walked again, every second. */
+    sim_hc[0].ops = &ACK_OPS; sim_nhc = 1;
+    sim_ports[0] = 0x3; sim_ndev = 2; sim_walk_sets = 0x1;
+    for(int i = 0; i < 70; i++){ ticks(100); kernel_poll(); }
+    usb_hotplug_baseline();
+    e = enumerates;
+    sim_changed[0] = 0x1;                  /* a real replug */
+    ticks(100); kernel_poll();
+    ck("a real replug walks the bus once", enumerates - e == 1, enumerates - e);
+    for(int i = 0; i < 10; i++){ ticks(100); kernel_poll(); }
+    ck("  ... and the bit the walk left set does not walk it again",
+       enumerates - e == 1, enumerates - e);
+    {
+        sim_hc[0].ops = &CSC_OPS;              /* 0.9.7.3: nothing acknowledges */
+        for(int i = 0; i < 70; i++){ ticks(100); kernel_poll(); }
+        long before = enumerates;
+        sim_changed[0] = 0x1;
+        for(int i = 0; i < 4; i++){ ticks(100); kernel_poll(); }
+        ck("without the acknowledgement it would walk every second (0.9.7.3's loop)",
+           enumerates - before >= 3, enumerates - before);
+    }
+    sim_walk_sets = 0; sim_ndev = 0; sim_changed[0] = 0;
+    sim_hc[0].ops = &SIM_OPS;
 
     head("hot-plug: a NIC that arrives gets the DHCP sequence reset");
     /* The retry sequence has to have MOVED first.  The first version

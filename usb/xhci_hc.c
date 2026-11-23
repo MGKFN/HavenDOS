@@ -307,6 +307,7 @@ typedef struct {
     uint8_t  evt_cycle;
     /* slot -> our index, and the endpoint ring cursors */
     uint8_t  slot_used[XHCI_MAX_SLOTS + 1];
+    uint8_t  slots_suspect;   /* v0.9.7.4: Enable Slot refused last walk */
     uint32_t ep_idx  [XHCI_MAX_SLOTS + 1][XHCI_EP_RINGS];
     uint8_t  ep_cycle[XHCI_MAX_SLOTS + 1][XHCI_EP_RINGS];
     /* v0.8.7.4: has this endpoint's last failure been logged. Cleared
@@ -650,6 +651,8 @@ static int cmd_run(xhci_t *x, int hcno, uint32_t lo, uint32_t hi,
     if (cc != CC_SUCCESS) return USB_ECMD;
     return USB_OK;
 }
+
+static void slot_give_back(xhci_t *x, int hcno, int slot);   /* v0.9.7.4 */
 
 /* Walk the extended capability list for one ID. Returns its byte offset
    from the capability base, or 0 if it is not there.
@@ -1182,7 +1185,7 @@ static int x_attach_common(usb_hc_t *h, int rootport, uint32_t route,
 
     g_attach_why = "ENABLE_SLOT was refused by the command ring";
     r = cmd_run(x, hcno, 0, 0, 0, TRB_TYPE(TRB_ENABLE_SLOT), &param);
-    if (r != USB_OK) return r;
+    if (r != USB_OK) { x->slots_suspect = 1; return r; }
     /* The slot id is in the top byte of the command completion's control
        field. Until 0.8.7.5 this was read back off the event ring entry
        behind the cursor, which was only ever right because evt_wait()
@@ -1191,12 +1194,19 @@ static int x_attach_common(usb_hc_t *h, int rootport, uint32_t route,
        is the one place the answer is certainly still correct. */
     slot = (int)((x->cmd_control >> 24) & 0xFFu);
     g_attach_why = "ENABLE_SLOT returned a slot id out of range";
-    if (slot <= 0 || slot > x->maxslots) return USB_ECMD;
+    if (slot <= 0 || slot > x->maxslots) {
+        /* It is enabled on the controller all the same. Disabled here
+           without touching the arrays, which do not reach it. */
+        if (slot > 0)
+            cmd_run(x, hcno, 0, 0, 0,
+                    TRB_TYPE(TRB_DISABLE_SLOT) | ((uint32_t)slot << 24), 0);
+        return USB_ECMD;
+    }
     x->slot_used[slot] = 1;
 
     ri = ring_alloc(x, hcno, slot, 1);        /* DCI 1 is ep0 -- trap 5 */
     g_attach_why = "no endpoint ring left for this slot";
-    if (ri < 0) return USB_ENOMEM;
+    if (ri < 0) { slot_give_back(x, hcno, slot); return USB_ENOMEM; }
 
     /* Input context: add flags for the slot context and ep0. */
     memset(g_inctx[hcno], 0, sizeof g_inctx[hcno]);
@@ -1245,7 +1255,9 @@ static int x_attach_common(usb_hc_t *h, int rootport, uint32_t route,
     if (r != USB_OK) {
         g_attach_why = "ADDRESS_DEVICE was refused -- the slot context "
                        "was built but the controller would not take it";
-        x->slot_used[slot] = 0;
+        /* v0.9.7.4: the slot is still ENABLED on the controller. Only
+           clearing slot_used[] leaked it there, one per failure. */
+        slot_give_back(x, hcno, slot);
         return r;
     }
 
@@ -1271,6 +1283,7 @@ static int x_attach_common(usb_hc_t *h, int rootport, uint32_t route,
                answer the first eight bytes of its own descriptor. */
             g_attach_why = "the device did not return the first 8 bytes "
                            "of its device descriptor";
+            slot_give_back(x, hcno, slot);              /* v0.9.7.4 */
             return (r < 0) ? r : USB_EXFER;
         }
         {
@@ -1296,6 +1309,7 @@ static int x_attach_common(usb_hc_t *h, int rootport, uint32_t route,
         if (r < 18) {
             g_attach_why = "the device returned its first 8 bytes and "
                            "then not the full 18-byte descriptor";
+            slot_give_back(x, hcno, slot);              /* v0.9.7.4 */
             return (r < 0) ? r : USB_EXFER;
         }
 
@@ -1416,21 +1430,9 @@ static int x_attach_path(usb_hc_t *h, int rootport, uint32_t route,
  * a slot this kernel cannot use either way, and leaving our bookkeeping
  * set would make it unusable for ever rather than until the next init.
  */
-static void x_detach(usb_hc_t *h, const usb_dev_t *d)
+static void slot_give_back(xhci_t *x, int hcno, int slot)
 {
-    int      hcno = h->index;
-    xhci_t  *x = &g_x[hcno];
-    int      slot = (int)d->slot;
-    int      i;
-
-    if (!x->valid) return;
-    /* The bound is for the ARRAY, not for the command: slot_used[]
-       below refuses any slot this side does not hold, and no path marks
-       one past maxslots. It is here so a slot number that arrived from
-       a device table cannot index off the end of the arrays. */
-    if (slot <= 0 || slot > x->maxslots) return;
-    if (!x->slot_used[slot]) return;
-
+    int i;
     cmd_run(x, hcno, 0, 0, 0,
             TRB_TYPE(TRB_DISABLE_SLOT) | ((uint32_t)slot << 24), 0);
 
@@ -1454,6 +1456,77 @@ static void x_detach(usb_hc_t *h, const usb_dev_t *d)
        The first version of this function cleared it, and as two 32-bit
        words rather than the one 64-bit entry the array actually holds:
        it would have written over the NEXT slot's pointer as well. */
+}
+
+static void x_detach(usb_hc_t *h, const usb_dev_t *d)
+{
+    int      hcno = h->index;
+    xhci_t  *x = &g_x[hcno];
+    int      slot = (int)d->slot;
+
+    if (!x->valid) return;
+    /* The bound is for the ARRAY, not for the command: slot_used[]
+       below refuses any slot this side does not hold, and no path marks
+       one past maxslots. It is here so a slot number that arrived from
+       a device table cannot index off the end of the arrays. */
+    if (slot <= 0 || slot > x->maxslots) return;
+    if (!x->slot_used[slot]) return;
+    slot_give_back(x, hcno, slot);
+}
+
+/* ── v0.9.7.4: every slot back before a walk ─────────────────────────
+ * Kyan, 23 Nov, on 0.9.7.3: "unplugging and replugging works once
+ * after that nothing all usb stuff gone".
+ *
+ * x_detach() gives back the slot of every device in the core's table.
+ * A device that got a slot and then FAILED its attach never reached
+ * that table: the descriptor read that timed out, the Address Device
+ * that was refused. Those returned with the slot still enabled on the
+ * controller -- and, after a descriptor failure, still marked here --
+ * and nothing ever gave it back. A replug is exactly when a device is
+ * half there: contacts bounce, the walk catches it mid-connect, the
+ * read fails. The HP has 8 slots and 3 or 4 devices; two bad replugs
+ * and Enable Slot refuses everything, which is "all usb stuff gone".
+ *
+ * x_attach_common() now gives the slot back on every failure. This is
+ * the second line: it runs after the core has detached everything, so
+ * any slot still marked is one nobody owns. And if Enable Slot was
+ * refused during the last walk, the controller may hold slots this side
+ * never knew about (a command that timed out after the controller had
+ * done it), so every slot is disabled -- the ones it does not hold just
+ * answer "slot not enabled". */
+static void x_release_all(usb_hc_t *h)
+{
+    int      hcno = h->index;
+    xhci_t  *x = &g_x[hcno];
+    int      slot, leaked = 0;
+
+    if (!x->valid) return;
+    for (slot = 1; slot <= x->maxslots; slot++) {
+        if (x->slot_used[slot]) { leaked++; slot_give_back(x, hcno, slot); }
+        else if (x->slots_suspect) slot_give_back(x, hcno, slot);
+    }
+    if (leaked)
+        klog(KLOG_WARN, "xHCI: %d slot%s held by no device -- given back",
+             leaked, leaked == 1 ? " was" : "s were");
+    if (x->slots_suspect)
+        klog(KLOG_WARN, "xHCI: Enable Slot was refused last walk -- "
+                        "every slot disabled before this one");
+    x->slots_suspect = 0;
+}
+
+/* v0.9.7.4: acknowledge a port's connect change, so only a change that
+   happens AFTER a walk counts as a replug. A walk resets ports, and a
+   USB 2 device can drop and reconnect while it is reset, which sets the
+   bit again after port_reset() cleared it. Left set, the next poll would
+   take that for a replug and walk again, and again: the storm hold
+   catches it, but every walk tears the mouse down first. */
+static void x_port_ack_change(usb_hc_t *h, int port)
+{
+    xhci_t *x = &g_x[h->index];
+    if (!x->valid || port < 0 || port >= x->maxports) return;
+    if (mmio_read32(x->op, XOP_PORTSC(port)) & PORTSC_CSC)
+        portsc_write(x, port, PORTSC_CSC);
 }
 
 /* ── transfers ─────────────────────────────────────────────────────── */
@@ -1957,6 +2030,8 @@ static const usb_hc_ops_t XHCI_OPS = {
     .port_count     = x_port_count,
     .port_connected = x_port_connected,
     .port_changed   = x_port_changed,
+    .port_ack_change= x_port_ack_change,
+    .release_all    = x_release_all,
     .attach         = x_attach,
     .attach_path    = x_attach_path,
     .detach         = x_detach,

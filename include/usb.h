@@ -219,6 +219,11 @@ typedef struct {
        last enumeration acknowledged it? A READ of the latched change
        bit (xHCI PORTSC.CSC) -- never cleared here. */
     int  (*port_changed)(struct usb_hc *, int port);
+    /* v0.9.7.4, optional: clear that change bit, after a walk */
+    void (*port_ack_change)(struct usb_hc *, int port);
+    /* v0.9.7.4, optional: every device has been detached; give back
+       anything the controller still holds before a fresh walk */
+    void (*release_all)(struct usb_hc *);
 
     /* Reset the port, give the device an address, and leave its default
        pipe usable. Fills the addressing and device-descriptor fields of

@@ -748,6 +748,10 @@ static void release_all(void)
         if (h->ops->detach) h->ops->detach(h, d);
         d->valid = 0;
     }
+    /* v0.9.7.4: and whatever a failed attach left behind */
+    for (i = 0; i < g_nhc; i++)
+        if (g_hc[i].ops && g_hc[i].ops->release_all)
+            g_hc[i].ops->release_all(&g_hc[i]);
 }
 
 static int usb_enumerate_inner(void)

@@ -120,6 +120,8 @@ static int sim_eps_configured(int slot)
 static int g_addr_without_a0;    /* Address Device with no slot context */
 static int g_fail_next_cmd;      /* force one command to be refused     */
 static int g_fail_cmd_type;      /* ...or the next one of a given type  */
+static int g_desc_fail;          /* v0.9.7.4: stall this many device-descriptor reads */
+static int g_desc18_fail;        /* ...or only the full 18-byte ones */
 static int g_ep0_mps_wrong;      /* host talked at the wrong ep0 size   */
 
 /* ── the simulated DEVICE on port 0: a boot-protocol keyboard ──────── */
@@ -395,6 +397,8 @@ static int device_control(uint8_t rtype, uint8_t req, uint16_t value,
     *out_len = 0;
     if((rtype & 0x80u) && req == 6){                 /* GET_DESCRIPTOR  */
         const uint8_t *src = 0; int n = 0;
+        if((value >> 8) == 1 && g_desc_fail > 0){ g_desc_fail--; return 6; }
+        if((value >> 8) == 1 && len >= 18 && g_desc18_fail > 0){ g_desc18_fail--; return 6; }
         if((value >> 8) == 1){
             src = g_ss ? DEV_DESC_SS : DEV_DESC; n = 18;
             if(g_ss && g_ss_mps_byte){
@@ -1015,6 +1019,7 @@ static void sim_reset(int ctxsz, int nscratch, int connect_port0)
     g_set_if_alt = g_set_if_num = -1;
     g_set_ifs = g_set_if_stall = g_set_if_recip_bad = 0;
     g_fail_next_cmd = g_ep0_mps_wrong = g_fail_cmd_type = 0;
+    g_desc_fail = g_desc18_fail = 0;
     g_pci_enabled_busmaster = 0;
 
     memset(&g_pci, 0, sizeof g_pci);
@@ -2692,6 +2697,83 @@ int main(void)
             ck("...on a ring the driver re-allocated for it",
                g_x[0].ep_dci[s2][0] == 1, g_x[0].ep_dci[s2][0]);
         }
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       A FAILED ATTACH GIVES ITS SLOT BACK -- v0.9.7.4
+       ════════════════════════════════════════════════════════════════
+       Kyan on the HP: "unplugging and replugging works once after that
+       nothing all usb stuff gone". The test above walks a device that
+       always answers. A replug is a device that half answers: the walk
+       catches it while its contacts settle and its descriptor read
+       fails. That slot never reached the core's table, so no detach
+       ever gave it back, and 8 slots go in a few replugs. */
+    head("v0.9.7.4: a device that fails its descriptor read keeps no slot");
+    sim_reset(32, 2, 1);
+    {
+        int i, lost = 0;
+        usb_init();
+        for(i = 0; i < SIM_SLOTS * 3; i++){
+            g_desc_fail = 1;                   /* caught mid-replug ...   */
+            usb_enumerate();
+            if(usb_enumerate() != 1) lost++;   /* ... settled a second on */
+        }
+        ck("24 failed attaches later the device still enumerates", lost == 0, lost);
+        ck("the controller never ran out of slots", g_enable_failed == 0, g_enable_failed);
+        ck("one slot in use, not twenty-five", slots_in_use() == 1, slots_in_use());
+        ck("no Disable Slot for a slot the controller did not hold",
+           g_disable_unowned == 0, g_disable_unowned);
+    }
+
+    head("v0.9.7.4: the second 8 bytes failing gives the slot back too");
+    sim_reset(32, 2, 1);
+    {
+        int i, lost = 0;
+        usb_init();
+        for(i = 0; i < SIM_SLOTS * 3; i++){
+            g_desc18_fail = 1;                 /* 8 bytes come back, 18 do not */
+            usb_enumerate();
+            if(usb_enumerate() != 1) lost++;
+        }
+        ck("it still enumerates every time it is allowed to", lost == 0, lost);
+        ck("one slot in use", slots_in_use() == 1, slots_in_use());
+    }
+
+    head("v0.9.7.4: a refused Address Device disables the slot it enabled");
+    sim_reset(32, 2, 1);
+    {
+        int i, lost = 0;
+        usb_init();
+        for(i = 0; i < SIM_SLOTS * 3; i++){
+            g_fail_cmd_type = 11;
+            usb_enumerate();
+            if(usb_enumerate() != 1) lost++;
+        }
+        ck("it comes back after every refusal", lost == 0, lost);
+        ck("the controller never ran out", g_enable_failed == 0, g_enable_failed);
+        ck("one slot in use", slots_in_use() == 1, slots_in_use());
+    }
+
+    head("v0.9.7.4: slots the controller kept are swept before the next walk");
+    sim_reset(32, 2, 1);
+    {
+        int s, n;
+        usb_init();
+        /* Slots the controller holds and this side never knew about:
+           a command that timed out after the controller had done it. */
+        for(s = 2; s <= SIM_SLOTS; s++) g_slot_taken[s] = 1;
+        g_fail_cmd_type = 9;                  /* and Enable Slot refuses once */
+        n = usb_enumerate();
+        ck("Enable Slot refused: the walk finds nothing", n == 0, n);
+        ck("...and seven slots are held where nobody can see them",
+           slots_in_use() == 7, slots_in_use());
+        n = usb_enumerate();
+        ck("THE NEXT WALK SWEEPS THEM AND FINDS THE DEVICE", n == 1, n);
+        ck("one slot in use after the sweep", slots_in_use() == 1, slots_in_use());
+        g_enable_failed = 0;
+        for(s = 0; s < 8; s++) usb_enumerate();
+        ck("and it stays found", usb_device_count() == 1 && g_enable_failed == 0,
+           usb_device_count());
     }
 
     head("a device that never got a slot is not disabled");

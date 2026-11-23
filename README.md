@@ -6,7 +6,7 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 [**Download**](https://github.com/MGKFN/HavenDOS/releases) · [Report a bug](https://github.com/MGKFN/HavenDOS/issues)
 
-From 0.9.7, every release below Stable is a GitHub **pre-release**, so the newest is at the top of the releases list, not under "latest" (which stays on 0.9.6.7 until HavenDOS 1 is Stable on 1 January 2027).
+**The 0.9.7 line is Stable from 0.9.7.6**, so the newest release is the one under "Latest" on the releases page. 0.9.7 to 0.9.7.5 were Beta pre-releases. A system on the Beta channel updates to Stable without asking; `update channel beta` keeps a system on Betas.
 
 ## Current version: 0.9.7.6 Stable "Mnemosyne"
 
@@ -18,7 +18,7 @@ From 0.9.7, every release below Stable is a GitHub **pre-release**, so the newes
 [Changelog](changelogs/CHANGELOG-v0.9.7.6.md).
 
 
-**0.9.7.5 (Beta). Retro PC on Windows and Linux.** Tested on the build machine and in QEMU, not yet on a real machine.
+**0.9.7.5 (Beta). Retro PC on Windows and Linux.** `RetroPC.exe` confirmed working on Windows.
 
 - **Retro PC is a program of its own** as well as an app inside HavenDOS: `RetroPC.exe` for Windows (one file, nothing to install) and `retropc` for Linux. Since 0.9.7.5 it has its own repo and releases: [MGKFN/RetroPC](https://github.com/MGKFN/RetroPC).
 - The same emulators and the same built-in images: K-DOS Beta 1.1b and BOOT OS 0.3.1, 0.5.0 and 0.5.2. Your own `.IMG` and `.ISO` files go in the `RETRO` folder beside it, or open them with O, or drop them on the window.
@@ -180,6 +180,7 @@ Tested on an HP laptop with an Intel Alder Lake CPU, NVMe SSD and xHCI USB, and 
 | UEFI boot, install beside Windows 11 on NVMe | Working |
 | Built-in keyboard | Working |
 | USB mouse | Working; plugged back in, works again since 0.9.6.6; the wheel on real mice since 0.9.7 |
+| Unplugging and plugging back in | On 0.9.7.5 one device sometimes stayed gone until the next replug. 0.9.7.6 tries a slow device again; to be confirmed on the HP |
 | USB sticks (FAT16/FAT32; exFAT read-only) | Working |
 | `update` from a USB stick | Working |
 | iPhone USB tethering | **Working** since 0.8.9.9: DHCP, DNS, ping, HTTP |
@@ -263,7 +264,7 @@ Every release is built by [GitHub Actions](.github/workflows/release.yml) from t
 | `HavenDOS-<version>-bundle.zip` | Updating an installed system, plus the hardware test docs |
 | `HavenDOS-<version>-source.zip` | Building it yourself |
 
-A release whose tests fail is not published. Releases below Stable are published as pre-releases; the tag, ISO name and pre-release flag come from `tools/release_names.py`.
+A release whose tests fail is not published. A Stable release is a full GitHub release and becomes "Latest"; anything below Stable is a pre-release. The tag, ISO name and pre-release flag come from `tools/release_names.py`.
 
 ## Where it's going
 
@@ -271,10 +272,10 @@ The plan is [THS-RM-1005](docs/roadmap/HavenDOS-Roadmap-RM1005.pdf), every relea
 
 | Release | Target | What |
 | --- | --- | --- |
-| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick. 0.9.7.2, 22 Nov: a 386 in Retro PC, BOOT OS built in. 0.9.7.3, 22 Nov: /USB everywhere, faster sticks, file types, replugging. 0.9.7.4, 23 Nov: USB after repeated replugs. 0.9.7.5, 23 Nov: Retro PC on Windows and Linux |
+| 0.9.7 | **20 Nov 2026, released** | The new version numbers in the updater; Retro PC; the editor's clipboard; Files' right-click menu; taskbar pins. 0.9.7.1, 22 Nov: the sign-in screen, images from a USB stick. 0.9.7.2, 22 Nov: a 386 in Retro PC, BOOT OS built in. 0.9.7.3, 22 Nov: /USB everywhere, faster sticks, file types, replugging. 0.9.7.4, 23 Nov: USB after repeated replugs. 0.9.7.5, 23 Nov: Retro PC on Windows and Linux. **0.9.7.6, 23 Nov: Stable**; USB devices retried after a replug |
 | 0.9.8 | ~5 Dec 2026 | Real HTTPS (TLS 1.2 with X25519 and AES-GCM, certificates checked), then signed updates over the internet |
 | 0.9.9 | ~12 Dec 2026 | Hardening; real audio through the speakers (Intel HD Audio); the freeze |
-| **HavenDOS 1, version 27H1 "Brandaris"** | 1 Jan 2027 | OS Build 27100.1000, the first Stable release |
+| **HavenDOS 1, version 27H1 "Brandaris"** | 1 Jan 2027 | OS Build 27100.1000, the first release of HavenDOS 1 (Stable, as the 0.9.7 line already is) |
 | 27H2 "Lange Jaap" | Dec 2027 | The web: a browser, a package store, email |
 | 28H1 "Westhoofd" | Jun 2028 | Daily use on the HP: ACPI, audio, battery, sleep |
 | 28H2 "Eierland" | Dec 2028 | Wi-Fi |

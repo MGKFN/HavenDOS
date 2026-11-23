@@ -719,7 +719,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tkp tests/test_kpoll.c && \
-	  python3 tools/run_suite.py --name test_kpoll --min 168 -- /tmp/hd_tkp
+	  python3 tools/run_suite.py --name test_kpoll --min 177 -- /tmp/hd_tkp
 	@echo "── test_task ──────────────────────────────"
 	@echo "  cooperative tasks, switched for real on real stacks"
 	@# v0.9.6. Built -m32 so kernel/task.c's switch -- eight instructions,
@@ -840,7 +840,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -Iinclude -Itests -Wno-unused-function \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_thub tests/test_hub.c && \
-	  python3 tools/run_suite.py --name test_hub --min 99 -- /tmp/hd_thub
+	  python3 tools/run_suite.py --name test_hub --min 103 -- /tmp/hd_thub
 	@echo "── test_machine ───────────────────────────"
 	@echo "  reset and power off, against a machine that refuses to die"
 	@# kernel/machine.c is INCLUDED by the suite, not linked: the two

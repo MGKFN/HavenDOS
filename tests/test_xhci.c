@@ -120,6 +120,7 @@ static int sim_eps_configured(int slot)
 static int g_addr_without_a0;    /* Address Device with no slot context */
 static int g_fail_next_cmd;      /* force one command to be refused     */
 static int g_fail_cmd_type;      /* ...or the next one of a given type  */
+static int g_fail_cmd_more;      /* v0.9.7.6: ...and this many after it */
 static int g_desc_fail;          /* v0.9.7.4: stall this many device-descriptor reads */
 static int g_desc18_fail;        /* ...or only the full 18-byte ones */
 static int g_ep0_mps_wrong;      /* host talked at the wrong ep0 size   */
@@ -622,8 +623,11 @@ static void run_cmd_ring(void)
 
         if(g_fail_next_cmd || (g_fail_cmd_type &&
                                (int)TY(c) == g_fail_cmd_type)){
+            /* v0.9.7.6: the core retries an attach, so "refused" has
+               to be able to mean every try, not only the first */
+            if(g_fail_cmd_more > 0){ g_fail_cmd_more--; if(g_fail_next_cmd) g_fail_cmd_type = (int)TY(c); }
+            else g_fail_cmd_type = 0;
             g_fail_next_cmd = 0;
-            g_fail_cmd_type = 0;
             /* A refused command still names its slot, as hardware does --
                the completion code is what says it failed. */
             post_event(t, 0, (5u << 24),            /* TRB Error */
@@ -1018,7 +1022,7 @@ static void sim_reset(int ctxsz, int nscratch, int connect_port0)
     g_multicfg = 0;
     g_set_if_alt = g_set_if_num = -1;
     g_set_ifs = g_set_if_stall = g_set_if_recip_bad = 0;
-    g_fail_next_cmd = g_ep0_mps_wrong = g_fail_cmd_type = 0;
+    g_fail_next_cmd = g_ep0_mps_wrong = g_fail_cmd_type = g_fail_cmd_more = 0;
     g_desc_fail = g_desc18_fail = 0;
     g_pci_enabled_busmaster = 0;
 
@@ -2010,8 +2014,10 @@ int main(void)
         int n;
         sim_reset(32, 2, 1);
         g_fail_next_cmd = 1;        /* the first command is Enable Slot */
+        g_fail_cmd_more = 2;        /* v0.9.7.6: and the two retries' too */
         n = usb_init();
         ck("no device was invented out of a refused command", n == 0, n);
+        g_fail_cmd_more = 0; g_fail_cmd_type = 0;
     }
 
     head("a REFUSED Configure Endpoint is not reported as a configured "
@@ -2764,9 +2770,13 @@ int main(void)
         for(s = 2; s <= SIM_SLOTS; s++) g_slot_taken[s] = 1;
         g_fail_cmd_type = 9;                  /* and Enable Slot refuses once */
         n = usb_enumerate();
-        ck("Enable Slot refused: the walk finds nothing", n == 0, n);
-        ck("...and seven slots are held where nobody can see them",
-           slots_in_use() == 7, slots_in_use());
+        /* v0.9.7.6: the attach is tried again 100 ms later, inside the
+           same walk, and the second Enable Slot is not refused -- so the
+           walk finds the device instead of nothing. The seven held slots
+           are still there until the next walk sweeps them. */
+        ck("Enable Slot refused once: the walk's second try finds the device", n == 1, n);
+        ck("...and seven slots are still held where nobody can see them",
+           slots_in_use() == 8, slots_in_use());
         n = usb_enumerate();
         ck("THE NEXT WALK SWEEPS THEM AND FINDS THE DEVICE", n == 1, n);
         ck("one slot in use after the sweep", slots_in_use() == 1, slots_in_use());

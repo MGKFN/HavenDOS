@@ -19,6 +19,7 @@
    usb/xhci_hc.c. Declared here rather than in a header
    because it is one function and one caller. */
 extern const char *xhci_attach_why(void);
+extern void sleep_ms(uint32_t ms);
 #include "../include/klog.h"
 
 /* ════════════════════════════════════════════════════════════════════
@@ -754,6 +755,51 @@ static void release_all(void)
             g_hc[i].ops->release_all(&g_hc[i]);
 }
 
+/* ── v0.9.7.6: A DEVICE THAT IS NOT READY YET GETS TWO MORE TRIES ────
+ * Kyan, 23 Nov, on 0.9.7.5: "only one USB works after the unplugs,
+ * plugging back in works".
+ *
+ * Every hot-plug walks the whole bus and resets every port, the ones
+ * nobody touched included. A device that is slow to come back from
+ * its reset -- a wireless receiver, a stick that was still settling
+ * from being pushed in -- did not answer in time, was written off at
+ * once with "no answer", and stayed gone until the next plug event
+ * walked the bus again. Which is exactly "the other one works, and
+ * plugging it in again fixes it".
+ *
+ * So a connected port whose attach fails is tried again, 100 ms and
+ * then 250 ms later -- the USB spec gives a device 100 ms to debounce
+ * after it connects, and a reset can cost it that again. A port that
+ * empties in the meantime is left alone. attach() gives its slot back
+ * on every failure (v0.9.7.4), so a retry does not cost one. */
+#define ATTACH_TRIES 3
+static const uint32_t g_attach_wait[ATTACH_TRIES - 1] = { 100, 250 };
+
+static int attach_with_retries(usb_hc_t *h, int c, int p, usb_dev_t *d)
+{
+    int r = USB_ENODEV, t;
+    for (t = 0; t < ATTACH_TRIES; t++) {
+        if (t) {
+            sleep_ms(g_attach_wait[t - 1]);
+            if (h->ops->port_connected && !h->ops->port_connected(h, p))
+                return r;                      /* it was unplugged: done */
+            memset(d, 0, sizeof *d);
+            d->hc   = (uint8_t)c;
+            d->port = (uint8_t)p;
+        }
+        r = h->ops->attach(h, p, d);
+        if (r == USB_OK) {
+            if (t)
+                klog(KLOG_OK, "USB %s hc%u port %u: answered on try %d of %d",
+                     usb_hc_name(h), (uint32_t)c, (uint32_t)p, t + 1, ATTACH_TRIES);
+            return r;
+        }
+    }
+    klog(KLOG_WARN, "USB %s hc%u port %u: %d tries, no answer",
+         usb_hc_name(h), (uint32_t)c, (uint32_t)p, ATTACH_TRIES);
+    return r;
+}
+
 static int usb_enumerate_inner(void)
 {
     int c, p;
@@ -781,7 +827,7 @@ static int usb_enumerate_inner(void)
             d.hc   = (uint8_t)c;
             d.port = (uint8_t)p;
 
-            r = h->ops->attach(h, p, &d);
+            r = attach_with_retries(h, c, p, &d);
             if (r != USB_OK) {
                 /* THE CODE ALONE IS NOT AN ANSWER. -4 can mean the
                    controller is invalid, the command ring refused

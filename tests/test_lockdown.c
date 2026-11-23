@@ -622,6 +622,9 @@ static const usb_hc_ops_t LD_OPS = {
    once. This suite stubs the controller, so the stub says so rather
    than linking to an empty string. */
 const char *xhci_attach_why(void){ return "(xHCI stubbed in this suite)"; }
+/* v0.9.7.6: usb/core.c waits between attach tries; nothing here is
+   slow to answer, so the wait is nothing */
+void sleep_ms(uint32_t ms){ (void)ms; }
 
 #include "../usb/core.c"
 #include "../usb/usbmux.c"

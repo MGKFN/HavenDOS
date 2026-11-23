@@ -153,6 +153,13 @@ static void fill(usb_dev_t *out, int i)
 
 extern uint8_t usb_core_next_address(void);
 
+/* v0.9.7.6: a root device that does not answer its first N attaches --
+   one caught by the walk's own reset, not ready yet. And one that is
+   unplugged while it is being retried. */
+static int g_root_fail_left;
+static int g_unplug_on_fail = -1;
+static int g_root_tries;
+
 static int hc_attach(usb_hc_t *h, int port, usb_dev_t *out)
 {
     int i;
@@ -161,6 +168,12 @@ static int hc_attach(usb_hc_t *h, int port, usb_dev_t *out)
         if(SIM[i].present && SIM[i].parent == -1 && SIM[i].rootport == port)
             break;
     if(i == g_nsim) return USB_ENODEV;
+    g_root_tries++;
+    if(g_root_fail_left > 0){
+        g_root_fail_left--;
+        if(g_unplug_on_fail == i) SIM[i].present = 0;
+        return USB_ETIMEOUT;
+    }
     g_root_attaches++;
     fill(out, i);
     out->addr = usb_core_next_address();
@@ -397,6 +410,7 @@ static void sim_clear(void)
     g_nsim = g_natt = 0;
     g_port_resets = g_port_powers = g_clear_conn = g_clear_reset = 0;
     g_root_attaches = 0;
+    g_root_fail_left = 0; g_unplug_on_fail = -1; g_root_tries = 0;
     g_no_attach_path = 0;
     g_ms_since_clear = 1000;        /* nothing has been reset yet */
     g_too_early = 0;
@@ -454,6 +468,36 @@ int main(void)
 {
     printf("Finding a device behind a hub, and addressing it\n");
     printf("==============================================\n");
+
+    /* v0.9.7.6. Kyan on 0.9.7.5: "only one USB works after the
+       unplugs, plugging back in works". A walk resets every port, and
+       a device slow to come back was written off on its first try. */
+    head("v0.9.7.6: a root device that is not ready gets two more tries");
+    sim_clear();
+    { int i = g_nsim++;
+      SIM[i].present=1; SIM[i].parent=-1; SIM[i].rootport=1;
+      SIM[i].speed=USB_SPEED_FULL; SIM[i].vendor=0x3554; SIM[i].product=0xFC04; }
+    g_root_fail_left = 2;
+    go(&OPS_WITH_PATH);
+    ck("it answers on the third try and is in the table",
+       usb_device_count() == 1 && g_root_tries == 3, g_root_tries);
+    ck("  ... after waiting 100 ms and then 250 ms", g_ms_since_clear >= 1000 + 350, (long)g_ms_since_clear);
+    sim_clear();
+    { int i = g_nsim++;
+      SIM[i].present=1; SIM[i].parent=-1; SIM[i].rootport=1;
+      SIM[i].speed=USB_SPEED_FULL; SIM[i].vendor=0x3554; SIM[i].product=0xFC04; }
+    g_root_fail_left = 5;
+    go(&OPS_WITH_PATH);
+    ck("one that never answers: three tries, then left out",
+       usb_device_count() == 0 && g_root_tries == 3, g_root_tries);
+    sim_clear();
+    { int i = g_nsim++;
+      SIM[i].present=1; SIM[i].parent=-1; SIM[i].rootport=1;
+      SIM[i].speed=USB_SPEED_FULL; SIM[i].vendor=0x3554; SIM[i].product=0xFC04; }
+    g_root_fail_left = 5; g_unplug_on_fail = 0;
+    go(&OPS_WITH_PATH);
+    ck("one unplugged after its first try is not tried again",
+       usb_device_count() == 0 && g_root_tries == 1, g_root_tries);
 
     head("a root port with a stick on it still works");
     sim_clear();

@@ -8,9 +8,17 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 From 0.9.7, every release below Stable is a GitHub **pre-release**, so the newest is at the top of the releases list, not under "latest" (which stays on 0.9.6.7 until HavenDOS 1 is Stable on 1 January 2027).
 
-## Current version: 0.9.7.5 Beta "Mnemosyne"
+## Current version: 0.9.7.6 Stable "Mnemosyne"
 
-**0.9.7.5. Retro PC on Windows and Linux.** Tested on the build machine and in QEMU, not yet on a real machine.
+**0.9.7.6. The 0.9.7 line is Stable, and USB devices come back after a replug.** Tested on the build machine and in QEMU, not yet on a real machine.
+
+- **Stable.** 0.9.7.6 is a full GitHub release, not a pre-release, and the early-access warnings are gone. A Beta system takes it as an update.
+- **USB after a replug.** A device that is slow to answer after the bus is reset is tried again, both during the walk and after it, rather than staying gone until the next plug. If it still does not answer, the log names the port.
+
+[Changelog](changelogs/CHANGELOG-v0.9.7.6.md).
+
+
+**0.9.7.5 (Beta). Retro PC on Windows and Linux.** Tested on the build machine and in QEMU, not yet on a real machine.
 
 - **Retro PC is a program of its own** as well as an app inside HavenDOS: `RetroPC.exe` for Windows (one file, nothing to install) and `retropc` for Linux. Since 0.9.7.5 it has its own repo and releases: [MGKFN/RetroPC](https://github.com/MGKFN/RetroPC).
 - The same emulators and the same built-in images: K-DOS Beta 1.1b and BOOT OS 0.3.1, 0.5.0 and 0.5.2. Your own `.IMG` and `.ISO` files go in the `RETRO` folder beside it, or open them with O, or drop them on the window.
@@ -189,11 +197,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.5.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.7.6.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.5.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.7.6.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -247,7 +255,7 @@ sudo make test                                          # 77 suites, 7740 checks
 
 ## How releases are made
 
-Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.5` now, `27100.1000` from HavenDOS 1) with three files:
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.7.6` now, `27100.1000` from HavenDOS 1) with three files:
 
 | File | For |
 | --- | --- |

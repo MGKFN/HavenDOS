@@ -199,6 +199,26 @@ static int      g_hold_said;
 static int      g_retry_owed;
 static uint32_t g_retries;
 
+/* ── v0.9.7.6: AND A WALK THAT FINDS SOME, BUT NOT ALL ───────────────
+ * Kyan, 23 Nov, on 0.9.7.5: "only one USB works after the unplugs,
+ * plugging back in works".
+ *
+ * The retry above only ever fired when the walk found NOTHING. A walk
+ * that found the stick and lost the keyboard -- the keyboard caught by
+ * the reset and slower to come back than the walk was to give up on it
+ * -- found one device, which is not zero, so nothing tried again and
+ * the keyboard stayed dead until the next plug event walked the bus.
+ *
+ * Now it is per port: after any walk, an OCCUPIED root port with no
+ * device in the table owes a retry. Two of them, one second and then
+ * two seconds later, and then a sentence naming the port. A plug event
+ * gives a fresh pair; a retry does not, so a device that is genuinely
+ * dead costs two extra walks per plug event and is not hammered. */
+#define HP_RETRIES 2
+static const uint32_t g_retry_gap[HP_RETRIES] = { 100u, 200u };   /* ticks */
+static int      g_retry_left;
+static uint32_t g_retry_at;
+
 uint32_t usb_hotplug_holds(void)  { return g_holds; }
 uint32_t usb_hotplug_retries(void){ return g_retries; }
 
@@ -344,10 +364,12 @@ static void usb_hotplug_work(void)
 
         if(!changed){
             if(!g_retry_owed) return;
+            if((int32_t)(now - g_retry_at) < 0) return;
             g_retry_owed = 0;
             g_retries++;
-            klog(KLOG_WARN, "usb: ports are occupied but nothing "
-                            "enumerated -- trying once more");
+            klog(KLOG_WARN, "usb: a port is occupied and nothing on it "
+                            "answered -- walking the bus again (%d of %d)",
+                 HP_RETRIES - g_retry_left, HP_RETRIES);
         } else {
             if((int32_t)(now - g_hold_until) < 0) return;  /* held */
             if(storm_now(now)){
@@ -383,14 +405,28 @@ static void usb_hotplug_work(void)
        could rescan twice. */
     usb_hotplug_baseline();
 
-    /* Nothing enumerated, while the settled bitmap says something is
-       plugged in: owe exactly one retry -- see g_retry_owed. A retry
-       that itself finds nothing does not owe another. */
-    if(g_last.devices == 0 && !g_retry_owed){
-        int occupied = 0;
-        for(int c = 0; c < nhc && c < USB_MAX_HC; c++)
-            if(g_have[c] && g_seen[c]) occupied = 1;
-        if(occupied && changed) g_retry_owed = 1;
+    /* An occupied root port with nothing in the table: owe a retry,
+       while the plug event's pair lasts -- see v0.9.7.6 above. */
+    if(changed) g_retry_left = HP_RETRIES;
+    {
+        int missing = 0;
+        for(int c = 0; c < nhc && c < USB_MAX_HC; c++){
+            if(!g_have[c]) continue;
+            for(int p = 0; p < HP_MAX_PORTS; p++)
+                if(((g_seen[c] >> p) & 1u) && !port_had_device(c, p)){
+                    missing = 1;
+                    if(!g_retry_left)
+                        klog(KLOG_WARN, "usb: %s port %u: something is plugged in "
+                             "and does not answer -- unplug it and plug it back in",
+                             usb_hc_name(usb_hc(c)), (uint32_t)p);
+                }
+        }
+        g_retry_owed = 0;
+        if(missing && g_retry_left > 0){
+            g_retry_at = kpoll_ticks() + g_retry_gap[HP_RETRIES - g_retry_left];
+            g_retry_left--;
+            g_retry_owed = 1;
+        }
     }
 
     /* A NIC that has just arrived needs an address, and the compile-
@@ -408,7 +444,7 @@ void usb_kpoll_register(void)
 {
     /* A fresh client starts with no storm behind it. */
     g_rescan_n = 0; g_hold_until = 0; g_hold_len = 0; g_hold_said = 0;
-    g_retry_owed = 0;
+    g_retry_owed = 0; g_retry_left = 0;
     usb_hotplug_baseline();
     kpoll_register("usb ports", 1000, usb_hotplug_work);
 }

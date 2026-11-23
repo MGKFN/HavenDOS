@@ -704,10 +704,29 @@ static int sim_enum_result = 3;   /* v0.8.9.6: a walk can find nothing */
 /* v0.9.7.3: the change bits a real walk acknowledges (port_reset) */
 static uint32_t sim_changed[2];
 static uint32_t sim_walk_sets;    /* v0.9.7.4: change bits the walk's own port resets leave set */
-int  usb_enumerate(void){ note('e'); enumerates++; sim_changed[0] = sim_walk_sets; sim_changed[1] = 0; return sim_enum_result; }
 /* v0.9.7.3: which root ports had a device that enumerated */
-static usb_dev_t sim_devs[4];
+static usb_dev_t sim_devs[16];
 static int       sim_ndev;
+static uint32_t  sim_ports[2];
+static int       sim_nhc = 1;
+/* v0.9.7.6: a walk fills the table, as the real one does: one device
+   per occupied root port, except the ports in sim_dead, whose devices
+   do not answer. A walk that finds nothing (sim_enum_result 0) fills
+   nothing. */
+static uint32_t  sim_dead[2];
+int  usb_enumerate(void){
+    note('e'); enumerates++; sim_changed[0] = sim_walk_sets; sim_changed[1] = 0;
+    sim_ndev = 0;
+    if(sim_enum_result > 0)
+        for(int c = 0; c < sim_nhc && c < 2; c++)
+            for(int p = 0; p < 4; p++)
+                if(((sim_ports[c] & ~sim_dead[c]) >> p) & 1u){
+                    memset(&sim_devs[sim_ndev], 0, sizeof sim_devs[0]);
+                    sim_devs[sim_ndev].hc = (uint8_t)c; sim_devs[sim_ndev].port = (uint8_t)p;
+                    sim_devs[sim_ndev].parent = -1; sim_ndev++;
+                }
+    return sim_enum_result;
+}
 int              usb_device_count(void){ return sim_ndev; }
 const usb_dev_t *usb_device(int i){ return (i >= 0 && i < sim_ndev) ? &sim_devs[i] : 0; }
 int  usb_hub_count(void){ return 0; }
@@ -724,10 +743,8 @@ int  usb_hid_wanted(void){ return sim_hid_wanted; }
    claim usb/hotplug.c's header makes, and a client that walked the
    whole bus every second instead would still pass every behavioural
    check below. */
-static uint32_t sim_ports[2];
 static int      sim_nports[2] = { 4, 4 };
 static long     port_reads;
-static int      sim_nhc = 1;
 
 static int sim_port_count(struct usb_hc *h){ return sim_nports[h->index]; }
 static long port_reads_hc[2];
@@ -946,7 +963,7 @@ static void clients_main(void)
        enumerates - e == 3, enumerates - e);
     ck("  ... and no hold", usb_hotplug_holds() == 1, usb_hotplug_holds());
 
-    head("hot-plug: a walk that finds nothing on an occupied bus is retried once");
+    head("hot-plug: a walk that finds nothing on an occupied bus is retried twice");
     kpoll_init();
     sim_ports[0] = 0x1;
     usb_kpoll_register();
@@ -957,19 +974,62 @@ static void clients_main(void)
         sim_ports[0] = 0x3; ticks(100); kernel_poll();
         ck("the change rescans", enumerates - e == 1, enumerates - e);
         ticks(100); kernel_poll();
-        ck("  ... and a second later it tries once more, unprompted",
+        ck("  ... and a second later it tries again, unprompted",
            enumerates - e == 2 && usb_hotplug_retries() == r0 + 1,
            enumerates - e);
-        for(int i = 0; i < 5; i++){ ticks(100); kernel_poll(); }
+        ticks(100); kernel_poll();
+        ck("  ... the second retry waits two seconds, not one", enumerates - e == 2, enumerates - e);
+        ticks(100); kernel_poll();
+        ck("  ... and then comes", enumerates - e == 3 && usb_hotplug_retries() == r0 + 2,
+           enumerates - e);
+        for(int i = 0; i < 10; i++){ ticks(100); kernel_poll(); }
         ck("  ... and not again: a broken bus is reported, not hammered",
-           enumerates - e == 2, enumerates - e);
+           enumerates - e == 3, enumerates - e);
     }
     e = enumerates;
     sim_ports[0] = 0x0; ticks(100); kernel_poll();   /* still finds 0 */
-    ticks(100); kernel_poll();
+    for(int i = 0; i < 4; i++){ ticks(100); kernel_poll(); }
     ck("an EMPTY bus that enumerates nothing is not retried",
        enumerates - e == 1, enumerates - e);
     sim_enum_result = 3;
+
+    /* v0.9.7.6, Kyan on 0.9.7.5: "only one USB works after the
+       unplugs, plugging back in works". The walk found SOME devices,
+       so the nothing-found retry above never fired, and the one the
+       reset caught stayed dead until the next plug event. */
+    head("v0.9.7.6: a walk that finds some devices but not all is retried");
+    for(int i = 0; i < 70; i++){ ticks(100); kernel_poll(); }  /* out of any storm hold */
+    kpoll_init();
+    sim_hc[0].ops = &SIM_OPS; sim_nhc = 1;
+    sim_ports[0] = 0x1; sim_dead[0] = 0;
+    usb_kpoll_register();
+    e = enumerates;
+    sim_dead[0] = 0x1;                     /* the receiver on port 0: caught by the reset */
+    sim_ports[0] = 0x3; ticks(100); kernel_poll();   /* the stick arrives on port 1 */
+    ck("the stick's arrival walks the bus; the receiver does not answer",
+       enumerates - e == 1 && sim_ndev == 1 && sim_devs[0].port == 1, sim_ndev);
+    sim_dead[0] = 0;                       /* a second later it is ready */
+    ticks(100); kernel_poll();
+    ck("  ... a second later the bus is walked again, unprompted (0.9.7.5: never)",
+       enumerates - e == 2, enumerates - e);
+    ck("  ... and both are back", sim_ndev == 2, sim_ndev);
+    for(int i = 0; i < 10; i++){ ticks(100); kernel_poll(); }
+    ck("  ... and with nothing missing, no more walks", enumerates - e == 2, enumerates - e);
+
+    head("v0.9.7.6: a device that never answers costs two walks per plug event");
+    for(int i = 0; i < 70; i++){ ticks(100); kernel_poll(); }
+    e = enumerates;
+    sim_dead[0] = 0x4;                     /* something on port 2 that is broken */
+    sim_ports[0] = 0x7; ticks(100); kernel_poll();
+    for(int i = 0; i < 20; i++){ ticks(100); kernel_poll(); }
+    ck("the arrival, then two retries, then quiet", enumerates - e == 3, enumerates - e);
+    ck("  ... and the working ones are in the table throughout", sim_ndev == 2, sim_ndev);
+    for(int i = 0; i < 70; i++){ ticks(100); kernel_poll(); }
+    e = enumerates;
+    sim_ports[0] = 0x5;                    /* port 1 unplugged: a new plug event */
+    for(int i = 0; i < 20; i++){ ticks(100); kernel_poll(); }
+    ck("  ... a new plug event gets a fresh pair of retries", enumerates - e == 3, enumerates - e);
+    sim_dead[0] = 0;
 
     head("v0.9.7.3: a replug inside one poll, seen by the change bit");
     /* Kyan: "usb devices plugging back in out still an pain point".

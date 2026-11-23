@@ -81,17 +81,18 @@
    QEMU only. */
 /* v0.9.7.4: USB that comes back after more than one replug. QEMU only. */
 /* v0.9.7.5: Retro PC as a program of its own, for Windows and Linux. */
-#define HAVENDOS_VER_BUILD  5
+/* v0.9.7.6: the first Stable release; a USB device slow after a replug is retried. */
+#define HAVENDOS_VER_BUILD  6
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.7.5"
+#define HAVENDOS_VER_NUM    "0.9.7.6"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
-#define HAVENDOS_CHANNEL    "Beta"
+#define HAVENDOS_CHANNEL    "Stable"
 /* "Gaia", v0.9.3: the earth -- the ground an install stands on, and now
    all of it rather than the first 2047 MB. RM-1003 named it for 0.9.1;
    the display series ("Janus", 0.9.0-0.9.2.2) took those numbers first,
@@ -128,7 +129,12 @@
 #define HAVENDOS_RELEASE     ""
 #define HAVENDOS_BUILD       0
 #define HAVENDOS_REVISION    0
-#define HAVENDOS_CHANNEL_ID  20
+/* v0.9.7.6: Kyan, 23 Nov 2026: "0.9.7 releases are stable now". From
+   here the 0.9.7 line is Stable: GitHub's "Latest", no early-access
+   warnings, and an installed system with no /boot/channel.inf follows
+   Stable -- so every later 0.9.7.N has to be Stable too, or it refuses
+   it. A Beta system (0.9.7.5 and before) takes a Stable update. */
+#define HAVENDOS_CHANNEL_ID  50
 #define HAVENDOS_LEVEL       1      /* 1 maintenance, 2 feature update, 3 the half-year release */
 #define HAVENDOS_VENDOR     "TechHaven Studios"
 
@@ -140,7 +146,7 @@
    Everything that says "early access" reads this: the boot splash,
    the notice after it, the setup wizard and `ver`. Set it to 0 and
    every one of them goes quiet; nothing else changes. */
-#define HAVENDOS_PRERELEASE 1
+#define HAVENDOS_PRERELEASE 0
 
 #define HAVENDOS_EA_LINE1   "EARLY ACCESS -- BETA SOFTWARE"
 #define HAVENDOS_EA_LINE2   "Expect bugs. Do not keep anything here you cannot lose."

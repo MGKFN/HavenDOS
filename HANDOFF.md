@@ -1,6 +1,6 @@
 # HavenDOS — handoff, 23 November 2026
 
-Current release: **v0.9.7.5** (a GitHub pre-release) (channel Beta, codename "Mnemosyne"),
+Current release: **v0.9.7.6** (Stable, a full GitHub release) (codename "Mnemosyne"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -50,6 +50,32 @@ file into a new chat, with the bundle zip, to pick up where this left off.
 - **Careful:** `tests/test_chrome.c` is the desktop bars' 58-check suite.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
+
+## START HERE: 0.9.7.6 (23 Nov) — STABLE, AND USB RETRIES
+
+Kyan, 23 Nov ~12:00, on 0.9.7.5 on the HP: "only one USB works after
+the unplugs, plugging back in works, it still has too many bugs", then
+"just try to guess fix them ... we're behind schedule" and "0.9.7
+releases are stable now". His photos were the boot log only.
+
+- **Stable:** version.h `HAVENDOS_CHANNEL "Stable"`, `CHANNEL_ID 50`,
+  `PRERELEASE 0`. release_names.py makes it a full GitHub release
+  ("Latest"). A Beta system accepts it; once updated (no
+  /boot/channel.inf) a system follows Stable, so EVERY later 0.9.7.N
+  must stay Stable or installed systems refuse it.
+- **USB, guessed from his words:** the walk resets every port; a device
+  slow back from reset was dropped at once, and the only retry fired
+  when a walk found NOTHING. Now (1) usb/core.c `attach_with_retries()`:
+  3 tries, 100/250 ms apart, skipped if the port empties; (2)
+  usb/hotplug.c: any occupied root port with no device after a walk owes
+  a re-walk, 1 s then 2 s (`HP_RETRIES` per plug event), then a log line
+  naming the port. test_kpoll's sim walk now fills its table from
+  sim_ports & ~sim_dead.
+- If he still reports USB trouble: the log now says which port and
+  whether it answered -- ask for `dmesg | grep usb`.
+- Next bigger fix if the guess was wrong: walk only the changed port
+  instead of the whole bus (the core rebuilds the table wholesale today;
+  HID/MSC/net bind by index -- that is the work).
 
 ## AFTER 0.9.7.5 (23 Nov) — RETRO PC HAS ITS OWN REPO
 

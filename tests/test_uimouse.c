@@ -43,6 +43,7 @@ static uint32_t g_ids[9] = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
 int      task_current(void){ return g_slot; }
 uint32_t task_id(int s){ return g_ids[s]; }
 
+#include "wm_stubs.inc"          /* v0.9.8: the window manager, off */
 #include "../shell/uimouse.c"
 
 static int total, fails;

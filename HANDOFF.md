@@ -1,6 +1,6 @@
 # HavenDOS — handoff, 24 November 2026
 
-Current release: **v0.9.7.10** (Stable, a full GitHub release) (codename "Mnemosyne"),
+Current release: **v0.9.8** (Beta, a GitHub pre-release) (codename "Hestia"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -51,7 +51,46 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.7.10 (24 Nov) — THE FINISHED LOOK
+## START HERE: 0.9.8 Beta "Hestia" (24 Nov) — THE DESKTOP IN PIXELS
+
+Kyan, 24 Nov: users say HavenDOS "feels old". Decided (see the project doc
+claude/havendos-road-to-1.0-pixel-desktop.md): keep the name; back to Beta
+(CH20, PRERELEASE 1) with free numbering 0.9.8, 0.9.9, ... until 1.0 Stable
+in spring; option 1 = step by step: 0.9.8 desktop, 0.9.9 resizable windows
+(80x25 dropped everywhere; Shell renamed Terminal), 0.9.10 pixel building
+blocks, 0.9.11-0.9.14 apps rebuilt, 0.9.15 new pixel games (old ones kept as
+Legacy), 0.9.16 HTTPS, 0.9.17 languages EN/NL/DE/FR/ES, RCs, 1.0. UI font
+IBM Plex Sans. The old 27100.1000 scheme is NOT used.
+- drivers/wm_core.inc (#included at the end of drivers/vga.c): layers (desk =
+  shadow_boot at the grid; windows = a task's cells, viewport only, at a pixel
+  origin; bar callback; popup callback; LT_SOLO = one console whole-screen).
+  wm_owner(x,y) = topmost layer containing the pixel (round corners);
+  wm_px() paints only owned pixels, darkened by higher windows' shadows
+  (shadow_at, asymmetric). Per-console painted caches wm_painted[slot][].
+  put_cell/vga_flush/caret/pointer route through it when wm_is_on.
+  vga_wm_full(slot) = whole screen while front (80x25 auto, F11);
+  vga_wm_solo(on) = current console whole screen (lock, screensaver, Alt+Tab).
+- Pixel primitives: px_fill/px_round/px_line/px_text (font_ui.h, Plex Sans
+  pre-rendered 12-24 px)/px_icon (icons.h, 65 icons x 16/24/32/48, two 4-bit
+  coverages a pixel). Tools: tools/make_font_ui.py, tools/make_icons.py
+  (Material Symbols Rounded subset in tools/assets/msr-icons.ttf).
+- shell/chrome.c: wm_sync() tells the WM the viewport/position; wm_hook()
+  (from chrome_hook for every task) draws the pointer, takes WM clicks
+  (drivers/mouse.c routes presses not on the front app's content to
+  mouse_take_wm_clicks), drags (wm_drag), title buttons, taskbar clicks,
+  Super = startmenu_run(). Never hold g_wm_busy across a task switch.
+- shell/taskbar.c, shell/startmenu.c (modal; search, categories, Recent,
+  Ctrl+D/Ctrl+F, lock/power). Clickables stay inside vga_wm_reach() -- the
+  pointer is clamped to the grid, not the margins.
+- shell/desktop.c: vga_wm_enable(1) in desktop_run; desktop icons registered
+  as pixel tiles (vga_wm_desk_icon); TASKBAR_Y = D_ROWS - TB_ROWS.
+- tests/test_wm.c (62, pixel read-back), tests/wm_stubs.inc (weak, WM off).
+- Harnesses updated: redraw_hunt (Lock via pixel click), desktop_layout
+  (search + pixel bell), layout_audit (search), window_apps.click_px().
+- Known: no resize (0.9.9); duplicate app headers; Alt+Tab over the app's
+  console; pointer doesn't reach margins.
+
+## 0.9.7.10 (24 Nov) — THE FINISHED LOOK
 
 Kyan: complaints that HavenDOS "is still text mode and outdated in 2026";
 "0.9.7.10 bc then we have an full finished look if i agree with the look".

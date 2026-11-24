@@ -277,6 +277,7 @@ static uint16_t p_saved, p_drawn;
 static int      p_arrow;              /* v0.9.7.10: this code put the arrow up */
 static void pointer_hide(void)
 {
+    { extern int vga_wm_on(void); if(vga_wm_on()) return; }   /* v0.9.8 */
     /* v0.9.7.10: only an arrow THIS code showed. The hook runs for
        every keyboard poll, also where nothing here is tracking the
        mouse (the desktop), and hiding unconditionally took the
@@ -293,6 +294,8 @@ static void pointer_hide(void)
 static void pointer_show(int x, int y)
 {
     uint16_t c;
+    { extern int vga_wm_on(void); extern void wm_pointer_update(void);
+      if(vga_wm_on()){ wm_pointer_update(); return; } }   /* v0.9.8 */
     /* v0.9.7.10: on a framebuffer, the arrow (drivers/vga.c), drawn in
        pixels over the screen; no cell is touched. */
     if(vga_pointer_pixels()){

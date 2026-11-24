@@ -34,7 +34,7 @@
 
 #define HAVENDOS_VER_MAJOR  0
 #define HAVENDOS_VER_MINOR  9
-#define HAVENDOS_VER_PATCH  7
+#define HAVENDOS_VER_PATCH  8
 /* A fourth number, for a patch release that fixes the release before it
    without adding a feature.  ver_cmp() in fs/update.c already parses four
    components, so 0.8.5.1 compares as newer than 0.8.5 and `update`
@@ -88,18 +88,20 @@
    v0.9.7.9: the installer asks which free space when there is more than
    one, and with none chosen takes the smallest that fits, not the first.
    v0.9.7.10: the finished look -- a smooth font in IBM Plex Mono, an arrow
-   pointer, window shadows and rounded corners. */
-#define HAVENDOS_VER_BUILD  10
+   pointer, window shadows and rounded corners.
+   v0.9.8 (Beta again, Kyan 24 Nov): the desktop -- windows in pixels that
+   move and stack, a pixel taskbar and Start menu, an icon for every app. */
+#define HAVENDOS_VER_BUILD  0
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.7.10"
+#define HAVENDOS_VER_NUM    "0.9.8"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
-#define HAVENDOS_CHANNEL    "Stable"
+#define HAVENDOS_CHANNEL    "Beta"
 /* "Gaia", v0.9.3: the earth -- the ground an install stands on, and now
    all of it rather than the first 2047 MB. RM-1003 named it for 0.9.1;
    the display series ("Janus", 0.9.0-0.9.2.2) took those numbers first,
@@ -114,7 +116,10 @@
 /* "Mnemosyne", v0.9.7: memory -- the release that keeps the oldest
    builds alive (Retro PC boots K-DOS Beta 1.1b) and teaches every
    install the numbers it will be known by. */
-#define HAVENDOS_CODENAME   "Mnemosyne"
+/* "Hestia", v0.9.8: the hearth -- the home a desktop is. Kyan, 24 Nov:
+   back to Beta until HavenDOS 1.0, the road to it re-planned around a
+   pixel desktop (claude/havendos-road-to-1.0-pixel-desktop.md). */
+#define HAVENDOS_CODENAME   "Hestia"
 #define HAVENDOS_FULL       HAVENDOS_NAME " " HAVENDOS_VER " " HAVENDOS_CHANNEL \
                             " \"" HAVENDOS_CODENAME "\""
 
@@ -141,8 +146,10 @@
    warnings, and an installed system with no /boot/channel.inf follows
    Stable -- so every later 0.9.7.N has to be Stable too, or it refuses
    it. A Beta system (0.9.7.5 and before) takes a Stable update. */
-#define HAVENDOS_CHANNEL_ID  50
-#define HAVENDOS_LEVEL       1      /* 1 maintenance, 2 feature update, 3 the half-year release */
+/* v0.9.8: Beta again (CH20). A system following Stable takes it after
+   `update channel beta`; fs/update.c says so when it refuses. */
+#define HAVENDOS_CHANNEL_ID  20
+#define HAVENDOS_LEVEL       2      /* 1 maintenance, 2 feature update, 3 the half-year release */
 #define HAVENDOS_VENDOR     "TechHaven Studios"
 
 /* ── IS THIS A PRE-RELEASE? ──────────────────────────────────────────
@@ -153,7 +160,7 @@
    Everything that says "early access" reads this: the boot splash,
    the notice after it, the setup wizard and `ver`. Set it to 0 and
    every one of them goes quiet; nothing else changes. */
-#define HAVENDOS_PRERELEASE 0
+#define HAVENDOS_PRERELEASE 1
 
 #define HAVENDOS_EA_LINE1   "EARLY ACCESS -- BETA SOFTWARE"
 #define HAVENDOS_EA_LINE2   "Expect bugs. Do not keep anything here you cannot lose."

@@ -208,6 +208,8 @@ void vga_cell_px(int *w, int *h){ if(w) *w = sim_cw; if(h) *h = sim_ch; }
 #include "kpollguard.inc"
 
 /* ── the driver, as it ships ──────────────────────────────────────── */
+#define WM_HAVE_MOUSE
+#include "wm_stubs.inc"          /* v0.9.8: the window manager, off */
 #include "../drivers/keyboard.c"
 /* The mouse shares the controller, and shared the bug. */
 #include "../drivers/mouse.c"

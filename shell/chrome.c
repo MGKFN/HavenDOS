@@ -39,6 +39,7 @@
 #include "../include/keys.h"
 #include "../include/task.h"
 #include "../include/chrome.h"
+#include "../include/wm.h"
 
 extern void     mouse_get_phys(int *x, int *y);
 extern int      mouse_outside(void);
@@ -52,15 +53,20 @@ extern void     keyboard_set_chrome_hook(int (*fn)(int));
 extern void     toast_info(const char *m);
 
 /* ── the layout, pure ────────────────────────────────────────────────── */
+/* v0.9.8: how many rows the title bar and the taskbar take. One, except
+   with the window manager on a small cell (8x16), where a 16-pixel bar
+   would be too small to hold an icon and a title: two. */
+static int ch_tr = 1;
 void chrome_layout(int pw, int ph, int boxed, int full, ch_layout_t *L)
 {
+    int tr = ch_tr;
     memset(L, 0, sizeof *L);
     L->title_y = -1; L->bar_y = -1; L->boxed = boxed; L->full = full;
     if(!boxed){
-        if(!full && pw >= 80 && ph - 2 >= 25){
-            L->vx = 0; L->vy = 1; L->vw = pw; L->vh = ph - 2;
+        if(!full && pw >= 80 && ph - 2 * tr >= 25){
+            L->vx = 0; L->vy = tr; L->vw = pw; L->vh = ph - 2 * tr;
             L->title_y = 0; L->title_x0 = 0; L->title_x1 = pw - 1;
-            L->bar_y = ph - 1; L->viewport = 1;
+            L->bar_y = ph - tr; L->viewport = 1;
         } else {
             L->vx = 0; L->vy = 0; L->vw = pw; L->vh = ph;     /* whole screen */
             L->viewport = 0;
@@ -68,18 +74,18 @@ void chrome_layout(int pw, int ph, int boxed, int full, ch_layout_t *L)
         return;
     }
     /* boxed: an 80x25 box, a title row above it, a frame row below it */
-    if(pw < 82 || ph < 27){                                 /* no room for a box */
+    if(pw < 82 || ph < 25 + tr + 1){                         /* no room for a box */
         L->vx = 0; L->vy = 0; L->vw = pw; L->vh = ph; L->viewport = 0; L->boxed = 0;
         return;
     }
     L->vw = 80; L->vh = 25; L->vx = (pw - 80) / 2; L->viewport = 1;
-    if(!full && ph >= 28){
-        int top = (ph - 1 - 27) / 2;            /* rows 0 .. ph-2 hold it */
-        L->title_y = top; L->vy = top + 1; L->bar_y = ph - 1;
+    if(!full && ph >= 25 + 2 * tr + 1){
+        int top = (ph - tr - (25 + tr + 1)) / 2;   /* rows 0 .. ph-1-tr hold it */
+        L->title_y = top; L->vy = top + tr; L->bar_y = ph - tr;
     } else {
         L->vy = (ph - 25) / 2;
-        if(L->vy < 1) L->vy = 1;
-        L->title_y = L->vy - 1;
+        if(L->vy < tr) L->vy = tr;
+        L->title_y = L->vy - tr;
     }
     L->title_x0 = L->vx - 1; L->title_x1 = L->vx + 80;
 }
@@ -138,6 +144,8 @@ typedef struct {
     uint32_t    next_check;     /* ticks                                */
     int         grown;          /* v0.9.6.6: full screen at 80x25, filled */
     int         pc, pr;         /* ... and the grid to go back to         */
+    int         moved, wx, wy;  /* v0.9.8: where it was dragged to (px)    */
+    int         solo;           /* v0.9.8: it has the whole screen         */
 } ch_task_t;
 static ch_task_t g_t[TASK_MAX];
 static void (*g_surround)(int vx, int vy, int vw, int vh, const char *name);
@@ -226,14 +234,38 @@ static void draw_bar(int y)
 
 static void current_layout(ch_task_t *t, ch_layout_t *L)
 {
+    if(vga_wm_on()) ch_tr = vga_wm_title_rows();      /* v0.9.8 */
     chrome_layout(vga_phys_cols(), vga_phys_rows(), t->boxed, t->full, L);
+}
+
+/* ── v0.9.8: THE WINDOW, IN PIXELS ────────────────────────────────────
+   With the window manager on, nothing of the window is drawn into the
+   app's console any more: drivers/wm_core.inc draws the title bar, the
+   edge and the shadow, and shows the app's viewport -- its 80x25 box, or
+   the space between title bar and taskbar -- wherever the window is. The
+   layout above still decides the box; this tells the window manager. */
+static void wm_sync(ch_task_t *t)
+{
+    ch_layout_t L; int x, y, s = task_current();
+    if(!vga_wm_on() || !vga_wm_is_open(s)) return;
+    current_layout(t, &L);
+    /* no title bar and taskbar fit (80x25), or full screen: the window has
+       the whole screen while it is in front */
+    vga_wm_full(s, !L.viewport || t->solo);
+    if(!L.viewport || t->solo) return;
+    vga_mouse_px(L.vx, L.vy, 0, 0, &x, &y);
+    if(t->moved && L.boxed){ x = t->wx; y = t->wy; }
+    vga_wm_geometry(s, L.vx, L.vy, L.vw, L.vh, x, y, L.boxed ? WM_FLOAT : WM_MAXED);
 }
 
 /* Paint everything outside the app's box. With the viewport cleared,
    so the surround's ordinary drawing lands on the screen. */
+static void wm_sync(ch_task_t *t);
+static void wm_full_leave(ch_task_t *t);
 static void paint(ch_task_t *t)
 {
     ch_layout_t L; int vx, vy, vw, vh, act = vga_viewport_active();
+    if(vga_wm_on()){ wm_sync(t); t->sig = bar_sig(); return; }   /* v0.9.8: pixels */
     current_layout(t, &L);
     vga_viewport_get(&vx, &vy, &vw, &vh);
     vga_viewport_clear();
@@ -284,7 +316,8 @@ static void apply_layout(ch_task_t *t, int repaint_from_old)
     if(L.viewport) vga_viewport_set(L.vx, L.vy, L.vw, L.vh);
     else           vga_viewport_clear();
     mouse_clamp_to_grid();
-    if(L.title_y >= 0 || L.bar_y >= 0) paint(t);
+    if(vga_wm_on()) wm_sync(t);                     /* v0.9.8: also with no title bar */
+    else if(L.title_y >= 0 || L.bar_y >= 0) paint(t);
 }
 
 /* ── v0.9.6.6: full screen FILLS for an 80x25 app ─────────────────────
@@ -342,11 +375,31 @@ static void shrink(ch_task_t *t, int keep)
 void chrome_leave_front(void)
 {
     ch_task_t *t = me();
+    if(t && t->solo){ wm_full_leave(t); return; }     /* v0.9.8 */
     if(t && t->grown) shrink(t, 1);
+}
+
+static void wm_full_leave(ch_task_t *t)
+{
+    if(!t->solo) return;
+    t->solo = 0;
+    if(t->grown) shrink(t, 1);
+    else { t->full = 0; apply_layout(t, 1); }
+    wm_sync(t);
 }
 
 static void toggle_full(ch_task_t *t)
 {
+    /* v0.9.8: full screen is the window having the whole screen */
+    if(vga_wm_on()){
+        if(t->solo){ wm_full_leave(t); return; }
+        t->solo = 1;
+        vga_wm_full(task_current(), 1);
+        if(t->boxed && grow(t)) return;
+        t->full = 1; apply_layout(t, 1);
+        if(!t->boxed) toast_info("Full screen -- F11 or Alt+Enter brings the window back");
+        return;
+    }
     if(t->grown){ shrink(t, 1); return; }
     if(!t->full && t->boxed && grow(t)) return;
     t->full = !t->full;
@@ -360,6 +413,11 @@ int chrome_begin(const char *name, int boxed)
     ch_task_t *t = me();
     if(!t || !task_ready()) return 0;
     t->on = 1; t->boxed = boxed; t->full = 0; t->name = name;
+    t->moved = 0; t->solo = 0;
+    if(vga_wm_on()){                       /* v0.9.8: a window of pixels */
+        extern const char *desktop_app_icon_id(const char *name);
+        vga_wm_open(task_current(), name, desktop_app_icon_id(name));
+    }
     apply_layout(t, 0);
     return 1;
 }
@@ -370,6 +428,8 @@ void chrome_end(void)
 {
     ch_task_t *t = me();
     vga_deco_clear(0);                     /* v0.9.7.10: the window is gone */
+    if(t) t->solo = 0;                                  /* v0.9.8 */
+    vga_wm_close(task_current());
     if(t && t->grown) shrink(t, 0);        /* v0.9.6.6: the grid the person chose */
     if(t) t->on = 0;
     vga_viewport_clear();
@@ -382,6 +442,7 @@ static uint16_t p_saved, p_drawn;
 static int      p_arrow;              /* v0.9.7.10: this code put the arrow up */
 static void ptr_hide(void)
 {
+    if(vga_wm_on()) return;                /* v0.9.8: the hook below draws it */
     /* v0.9.7.10: only an arrow THIS code showed. The hook runs for
        every keyboard poll, also where nothing here is tracking the
        mouse (the desktop), and hiding unconditionally took the
@@ -394,6 +455,7 @@ static void ptr_hide(void)
 static void ptr_show(int x, int y)
 {
     uint16_t c; uint8_t a, inv;
+    if(vga_wm_on()) return;                /* v0.9.8 */
     /* v0.9.7.10: the arrow, on a framebuffer */
     if(vga_pointer_pixels()){
         extern void mouse_get_frac(int*,int*);
@@ -422,11 +484,14 @@ static void bring(int slot)
     if(task_set_front(slot) == 0) task_wait_front();
 }
 
+static int wm_hook(ch_task_t *t, int key);
 int chrome_hook(int key)
 {
     ch_task_t *t = me();
     ch_layout_t L;
     int x, y, clicks, chip, what;
+
+    if(vga_wm_on()) return wm_hook(t, key);   /* v0.9.8 */
 
     if(!t || !t->on){ return key; }
     if(key == KEY_FULLSCREEN){
@@ -475,6 +540,191 @@ int chrome_hook(int key)
     }
 }
 
+
+/* ════════════════════════════════════════════════════════════════════
+   v0.9.8: THE WINDOW MANAGER'S HOOK
+
+   With the window manager on, this runs for every keyboard poll of
+   every task, the desktop included. It draws the pointer, takes the
+   clicks the mouse driver gave the window manager (anything that is not
+   the content of the app in front -- see drivers/mouse.c), and acts on
+   them: a title bar dragged moves its window, its buttons minimise,
+   fill the screen or close, another window or the desktop clicked comes
+   to the front, the taskbar and the Start menu do their things.
+   ════════════════════════════════════════════════════════════════════ */
+extern void mouse_get_px(int *x, int *y);
+extern int  mouse_buttons_raw(void);
+extern int  mouse_take_wm_clicks(int *x, int *y);
+extern void mouse_repost_clicks(int edges);
+extern int  mouse_pointer_wanted(void);
+extern void mouse_get_frac(int *fx, int *fy);
+extern void mouse_sync(void);
+extern void kpoll_sleep_ms(uint32_t ms);
+extern int  taskbar_hit(int x, int y, int *idx);
+extern int  taskbar_hover(int x, int y);
+extern uint32_t taskbar_sig(void);
+extern void startmenu_run(void);
+extern void desktop_tbpin_open(int i);
+
+static int g_wm_busy, g_wm_modal;
+void wm_busy(int on){ g_wm_modal += on ? 1 : -1; if(g_wm_modal < 0) g_wm_modal = 0; }
+static int g_hov_slot = -1, g_hov_part;
+static uint32_t g_bar_sig, g_bar_next;
+
+void wm_pointer_update(void)
+{
+    int px, py, fx, fy;
+    if(!mouse_is_ready()) return;
+    if(!mouse_pointer_wanted()){ vga_pointer_hide(); return; }
+    mouse_get_phys(&px, &py); mouse_get_frac(&fx, &fy);
+    vga_pointer_show(px, py, fx, fy, mouse_buttons_raw() & 1);
+}
+
+static ch_task_t *slot_task(int s)
+{
+    if(s < 0 || s >= TASK_MAX || g_t[s].id != task_id(s)) return 0;
+    return &g_t[s];
+}
+
+static void wm_bring(int slot)
+{
+    if(slot == task_current()) return;
+    chrome_leave_front();
+    if(task_set_front(slot) == 0) task_wait_front();
+}
+
+/* Drag window s by its title bar until the button comes up. */
+static void wm_drag(int s, int px0, int py0)
+{
+    int wx, wy, ww, wh, x, y, nx, ny, lx, ly;
+    int sw = vga_screen_w(), sh = vga_screen_h(), th = vga_wm_title_h(), bh = vga_wm_bar_h();
+    vga_wm_get(s, &wx, &wy, &ww, &wh);
+    lx = wx; ly = wy;
+    while(mouse_buttons_raw() & 1){
+        mouse_get_px(&x, &y);
+        nx = wx + (x - px0); ny = wy + (y - py0);
+        /* the title bar stays reachable: on the screen, above the bar */
+        if(ny < th) ny = th;
+        if(ny > sh - bh - 4) ny = sh - bh - 4;
+        if(nx > sw - 3 * th) nx = sw - 3 * th;
+        if(nx + ww < 3 * th) nx = 3 * th - ww;
+        if(nx != lx || ny != ly){ vga_wm_move(s, nx, ny); lx = nx; ly = ny; }
+        wm_pointer_update();
+        kpoll_sleep_ms(10);
+    }
+    {
+        ch_task_t *t = slot_task(s);
+        if(t){ t->moved = 1; t->wx = lx; t->wy = ly; }
+    }
+}
+
+static void wm_taskbar_click(int x, int y)
+{
+    int idx = -1, what = taskbar_hit(x, y, &idx);
+    switch(what){
+    case 1:                                   /* Start */
+        startmenu_run();
+        break;
+    case 2:                                   /* a pinned app */
+        chrome_leave_front();
+        desktop_tbpin_open(idx);
+        break;
+    case 3:                                   /* an open window */
+        if(idx == vga_wm_front_slot() && !vga_wm_is_min(idx)){
+            vga_wm_minimize(idx, 1);
+            wm_bring(0);
+        } else {
+            if(vga_wm_is_min(idx)) vga_wm_minimize(idx, 0);
+            wm_bring(idx);
+        }
+        break;
+    case 4: {                                 /* notifications: their window */
+        extern int desktop_open_app(const char *id);
+        chrome_leave_front();
+        desktop_open_app("notif");
+        break; }
+    default: break;
+    }
+    vga_wm_repaint_bar();
+}
+
+static int wm_hook(ch_task_t *t, int key)
+{
+    int x, y, s, part, c;
+    if(g_wm_busy || g_wm_modal) return key;
+    if(key == KEY_SUPER){ startmenu_run(); return -1; }   /* it guards itself (wm_busy) */
+    if(key == KEY_FULLSCREEN && t && t->on){ toggle_full(t); return -1; }
+    if(key != -1){ g_close_req = 0; return key; }
+    if(!mouse_is_ready()) return -1;
+    g_wm_busy = 1;
+    wm_pointer_update();
+
+    /* the clock and the window list, a few times a second at most */
+    if((int32_t)(get_ticks() - g_bar_next) >= 0){
+        uint32_t sig = taskbar_sig();
+        g_bar_next = get_ticks() + 25;
+        if(sig != g_bar_sig){ g_bar_sig = sig; vga_wm_repaint_bar(); }
+    }
+
+    mouse_get_px(&x, &y);
+    vga_wm_hit(x, y, &s, &part);
+    /* the title bar's buttons light up under the pointer */
+    {
+        int hs = (s > 0 && part >= WMP_MIN && part <= WMP_CLOSE) ? s : -1;
+        int hp = hs > 0 ? part : 0;
+        if(hs != g_hov_slot || hp != g_hov_part){
+            if(g_hov_slot > 0 && g_hov_slot != hs) vga_wm_buttons(g_hov_slot, 0, 0);
+            if(hs > 0) vga_wm_buttons(hs, hp, 0);
+            g_hov_slot = hs; g_hov_part = hp;
+        }
+    }
+    if(part == WMP_BAR) { if(taskbar_hover(x, y)) vga_wm_repaint_bar(); }
+    else if(taskbar_hover(-1, -1)) vga_wm_repaint_bar();
+
+    /* only the task in front acts on clicks: one click, one action */
+    if(task_current() != task_front()){ g_wm_busy = 0; return -1; }
+    c = mouse_take_wm_clicks(&x, &y);
+    if(!c){ g_wm_busy = 0; return -1; }
+    vga_wm_hit(x, y, &s, &part);
+    g_wm_busy = 0;            /* what follows may switch tasks or open an app */
+    if(!(c & 1)){
+        /* a right or middle click on another window or the desktop still
+           brings it forward, and the app gets it */
+        if(part == WMP_CONTENT && s != task_current()){ wm_bring(s); mouse_repost_clicks(c); }
+        return -1;
+    }
+    switch(part){
+    case WMP_TITLE:
+    case WMP_EDGE:
+        if(s != task_current()){ mouse_repost_clicks(0); wm_bring(s); break; }
+        if(part == WMP_TITLE && t && t->on && t->boxed && !t->solo) wm_drag(s, x, y);
+        break;
+    case WMP_MIN:
+        vga_wm_buttons(s, 0, 0);
+        vga_wm_minimize(s, 1);
+        wm_bring(0);
+        break;
+    case WMP_MAX:
+        if(s != task_current()){ wm_bring(s); keyboard_inject(KEY_FULLSCREEN); break; }
+        if(t && t->on) toggle_full(t);
+        break;
+    case WMP_CLOSE:
+        vga_wm_buttons(s, WMP_CLOSE, WMP_CLOSE);
+        g_close_req = 1;
+        if(s != task_current()){ wm_bring(s); keyboard_inject(27); break; }
+        return 27;
+    case WMP_CONTENT:
+        /* another window, or the desktop: it comes forward and gets the click */
+        if(s != task_current()){ wm_bring(s); mouse_repost_clicks(c); }
+        break;
+    case WMP_BAR:
+        wm_taskbar_click(x, y);
+        break;
+    default: break;
+    }
+    return -1;
+}
+
 void chrome_init(void){ keyboard_set_chrome_hook(chrome_hook); }
 
 /* v0.9.7.1: a screen that takes the WHOLE display from inside an app --
@@ -489,8 +739,10 @@ int chrome_pause(void)
     ch_task_t *t = me();
     if(!t || !t->on) return 0;
     ptr_hide();
+    if(t->solo){ wm_full_leave(t); }
     if(t->grown) shrink(t, 1);
     t->on = 0;
+    vga_wm_solo(1);                        /* v0.9.8: the whole screen is its */
     return 1;
 }
 
@@ -498,6 +750,7 @@ void chrome_resume(int was)
 {
     ch_task_t *t = me();
     if(!was || !t) return;
+    vga_wm_solo(0);                        /* v0.9.8 */
     t->on = 1;
     apply_layout(t, 0);
 }

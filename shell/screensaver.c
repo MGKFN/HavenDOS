@@ -188,9 +188,11 @@ void screensaver_check(void){
     if(get_ticks() - last_activity < (uint32_t)secs * TICKS_PER_SEC) return;
 
     rng_state = get_ticks() ^ 0xABCD1234;
+    { extern void vga_wm_solo(int on); vga_wm_solo(1); }     /* v0.9.8: over every window */
     if(ss_type==0)      screensaver_matrix();
     else if(ss_type==1) screensaver_stars();
     else                screensaver_pipes();
+    { extern void vga_wm_solo(int on); vga_wm_solo(0); }
     ss_type=(ss_type+1)%3;
     last_activity = get_ticks();
 }

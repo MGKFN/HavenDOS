@@ -548,6 +548,8 @@ static uint16_t saved_char=0;
 
 void ui_draw_cursor(void){
     if(!mouse_is_ready())return;
+    { extern int vga_wm_on(void); extern void wm_pointer_update(void);
+      if(vga_wm_on()){ wm_pointer_update(); return; } }   /* v0.9.8: one pointer */
     /* v0.9.7.10: on a framebuffer the pointer is an arrow in pixels, on the
        whole screen, over whatever is there -- nothing is written into the
        console's cells, so there is nothing to restore. The cell pointer
@@ -592,6 +594,7 @@ void ui_draw_cursor(void){
 }
 
 void ui_erase_cursor(void){
+    { extern int vga_wm_on(void); if(vga_wm_on()) return; }   /* v0.9.8 */
     vga_pointer_hide();                       /* v0.9.7.10: the arrow */
     if(last_mx<0||last_my<0)return;
     vga_shadow_write(last_mx,last_my,saved_char);

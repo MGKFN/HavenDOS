@@ -11,6 +11,8 @@
    reach it */
 #include "../include/task.h"
 int task_current(void){ return 0; }
+int task_front(void){ return 0; }
+void kpoll_sleep_ms(uint32_t ms){ (void)ms; }
 uint32_t task_id(int s){ (void)s; return 0; }
 int task_ready(void){ return 1; }
 int task_state(int s){ (void)s; return 0; }
@@ -57,6 +59,8 @@ void keyboard_inject(int c){ (void)c; }
 void keyboard_set_chrome_hook(int (*fn)(int)){ (void)fn; }
 void toast_info(const char *m){ (void)m; }
 
+#define WM_HAVE_CHROME
+#include "wm_stubs.inc"          /* v0.9.8: the window manager, off */
 #include "../shell/chrome.c"
 
 static int total, fails;

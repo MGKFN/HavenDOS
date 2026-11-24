@@ -93,6 +93,12 @@ def place(q, x, y):
     return None
 
 
+def click_px(q, x, y, settle=1.2):
+    """v0.9.8: a click at a screen PIXEL (pixel chrome has no cell of its
+    own): place() on the cell under it, which finds the arrow and corrects."""
+    click(q, int((x - X0) // CW), int(y // CH), settle)
+
+
 def button(q, name="left", settle=1.0):
     ev(q, [{"type": "btn", "data": {"down": True, "button": name}}]); time.sleep(0.08)
     ev(q, [{"type": "btn", "data": {"down": False, "button": name}}]); time.sleep(settle)

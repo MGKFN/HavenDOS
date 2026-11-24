@@ -65,6 +65,11 @@ static int8_t  mouse_bytes[3];
 
 /* ── Click-edge latch ────────────────────────────────────────── */
 static int mouse_btn_prev=0;
+static int g_wm_edge, g_wm_x, g_wm_y;      /* v0.9.8: the window manager's clicks */
+void mouse_get_px(int *x, int *y);
+void mouse_get_frac(int *fx, int *fy);
+void mouse_sync(void);
+static void px_now(int *x, int *y);
 static int mouse_btn_edge=0;
 
 /* ── Accumulator for sub-cell motion ─────────────────────────── */
@@ -208,10 +213,50 @@ static void mouse_apply(int raw_dx, int raw_dy, int new_btn)
         if(mouse_y > maxy) { mouse_y = maxy; accum_y = 0; }
     }
 
-    mouse_btn_edge |= (new_btn & ~mouse_btn_prev);
+    {
+        /* v0.9.8: a press that is not on the content of the app in front
+           -- a title bar, the taskbar, another window, the desktop around
+           them -- is the window manager's (shell/chrome.c wm_hook). Where
+           it went is decided where it was pressed, not where it is read. */
+        int press = new_btn & ~mouse_btn_prev;
+        if(press){
+            extern int vga_wm_on(void);
+            extern int vga_wm_click_is_app(int x, int y);
+            int px, py;
+            px_now(&px, &py);
+            if(vga_wm_on() && !vga_wm_click_is_app(px, py)){
+                g_wm_edge |= press; g_wm_x = px; g_wm_y = py;
+                press = 0;
+            }
+        }
+        mouse_btn_edge |= press;
+    }
     mouse_btn_prev  = new_btn;
     mouse_btn       = new_btn;
 }
+
+/* v0.9.8: the pointer on the screen, in pixels */
+static void frac_now(int *fx, int *fy);
+static void px_now(int *x, int *y)
+{
+    extern void vga_mouse_px(int col, int row, int fx, int fy, int *x, int *y);
+    int fx, fy;
+    frac_now(&fx, &fy);
+    vga_mouse_px(mouse_x, mouse_y, fx, fy, x, y);
+}
+void mouse_get_px(int *x, int *y){ mouse_sync(); px_now(x, y); }
+int mouse_buttons_raw(void){ mouse_sync(); return mouse_btn; }
+int mouse_take_wm_clicks(int *x, int *y)
+{
+    int e;
+    mouse_sync();
+    e = g_wm_edge; g_wm_edge = 0;
+    if(x) *x = g_wm_x;
+    if(y) *y = g_wm_y;
+    return e;
+}
+/* A click that brought a window forward is that window's click too. */
+void mouse_repost_clicks(int edges){ mouse_btn_edge |= edges; }
 
 /* An I2C-HID trackpad, through the same arithmetic. drivers/i2c_hid.c
    has already turned absolute finger positions into deltas -- that
@@ -406,9 +451,17 @@ static int mouse_mine(void){ return !g_front_check || g_front_check(); }
    -- an app indexing a cell array by it must never see a column it
    does not have. Outside the box the buttons are not the app's either:
    they belong to the window's title bar and the taskbar. */
+extern int vga_wm_cur_map(int x, int y, int *cx, int *cy);
 static int outside_box(void)
 {
     int vx, vy, vw, vh;
+    {   /* v0.9.8: a window anywhere on the screen, in pixels */
+        int px, py, cx, cy, r;
+        mouse_get_px(&px, &py);
+        r = vga_wm_cur_map(px, py, &cx, &cy);
+        if(r >= 0) return !r;
+        if(r == -2) return 1;          /* the desktop, under a window or the bar */
+    }
     if(!vga_viewport_active()) return 0;
     vga_viewport_get(&vx, &vy, &vw, &vh);
     return mouse_x < vx || mouse_y < vy || mouse_x >= vx + vw || mouse_y >= vy + vh;
@@ -419,6 +472,15 @@ void mouse_get(int *x,int *y,int *btn){
     int vx = 0, vy = 0, vw = 0, vh = 0, lx, ly;
     mouse_sync();
     lx = mouse_x; ly = mouse_y;
+    {   /* v0.9.8: inside a window placed by the window manager */
+        int px, py, cx, cy;
+        mouse_get_px(&px, &py);
+        if(vga_wm_cur_map(px, py, &cx, &cy) >= 0){
+            *x = cx; *y = cy;
+            *btn = (mouse_mine() && !outside_box()) ? mouse_btn : 0;
+            return;
+        }
+    }
     if(vga_viewport_active()){
         vga_viewport_get(&vx, &vy, &vw, &vh);
         lx -= vx; ly -= vy;
@@ -436,10 +498,17 @@ void mouse_get_phys(int *x, int *y){ mouse_sync(); *x = mouse_x; *y = mouse_y; }
    arrow -- the movement the cell position has not used up yet. Never
    outside the cell, so the arrow's tip is always over the cell a click
    goes to. */
+static void frac_now(int *fx, int *fy);
 void mouse_get_frac(int *fx, int *fy)
 {
-    int nx, dnx, ny, dny, cw = 8, ch = 16;
     mouse_sync();
+    frac_now(fx, fy);
+}
+/* v0.9.8: the same without pumping USB -- mouse_apply() needs it, and it
+   can run from the PS/2 interrupt */
+static void frac_now(int *fx, int *fy)
+{
+    int nx, dnx, ny, dny, cw = 8, ch = 16;
     mouse_ratio(&nx, &dnx, &ny, &dny);
     vga_cell_px(&cw, &ch);
     *fx = (int)((long)(accum_x > 0 ? accum_x : 0) * cw / (dnx > 0 ? dnx : 1));

@@ -28,7 +28,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
-          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/migratecmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c shell/uimouse.c shell/chrome.c shell/retro.c emu/cpu86.c emu/pcbios.c emu/cpu386.c emu/pc386.c
+          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/migratecmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c shell/uimouse.c shell/chrome.c shell/taskbar.c shell/startmenu.c shell/retro.c emu/cpu86.c emu/pcbios.c emu/cpu386.c emu/pc386.c
 
 SRCS_S  = boot/boot.S
 OBJS_C  = $(SRCS_C:.c=.o)
@@ -627,6 +627,13 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -Wno-int-to-pointer-cast \
 	           -o /tmp/hd_tcon tests/test_console.c && \
 	  python3 tools/run_suite.py --name test_console --min 359 -- /tmp/hd_tcon
+	@echo "── test_wm ────────────────────────────────"
+	@echo "  v0.9.8: the window manager's pixels -- who owns each one"
+	@$(TESTCC) -no-pie -fno-builtin -Iinclude -Itests \
+	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
+	           -Wno-int-to-pointer-cast \
+	           -o /tmp/hd_twm tests/test_wm.c && \
+	  python3 tools/run_suite.py --name test_wm --min 62 -- /tmp/hd_twm
 	@echo "── test_der ───────────────────────────────"
 	@echo "  writing DER, checked against the bytes -- stage 3"
 	@# -fno-builtin and the kernel's own string.c: net/der.c net/x509.c's

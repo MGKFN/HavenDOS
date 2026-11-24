@@ -194,39 +194,22 @@ def walk_to(q, names, column, target, limit):
 
 
 def open_app(q, index, name, topnames):
-    """Start menu -> All Apps -> `name`. Verified at every step."""
-    if not open_menu(q):
-        return "the start menu would not open"
-
+    """Start menu -> type the name -> Enter. v0.9.8: the Start menu is
+    pixels and searches as you type (shell/startmenu.c), so an app is
+    found by its name rather than walked to; the first match is chosen,
+    and the names are unique enough that it is the one asked for --
+    a search narrows to it as the whole name is typed."""
     before = q.screen()
-
-    # Column 0: draw_menu() puts the top panel's cursor at column 0 and
-    # the name at column 1 -- the name itself carries a leading space.
-    # Column 1 was the first guess and read None every time, because
-    # column 1 is that space. Every row also has a second '>' at
-    # MENU_W-2, which is why the column is matched exactly rather than
-    # searched for.
-    if not walk_to(q, topnames, 0, "All Apps", len(topnames) + 8):
-        return "never selected All Apps (on %r)" % row_selection(
-            q, topnames, 0)
-    q.key("ret"); time.sleep(1.0)
-
-    if not walk_to(q, NAMES, SUB_X, name.strip(), index + 60):
-        return "never selected it (on %r)" % row_selection(q, NAMES, SUB_X)
-
+    q.key("meta_l"); time.sleep(1.5)
+    q.type(name.strip().lower(), settle=0.1); time.sleep(0.8)
     q.key("ret")
-
+    opened = True
+    def menu_is_open(q):              # the pixel menu reads as nothing; the app's screen does not
+        return q.screen() == before
     # ── DID IT ACTUALLY OPEN? ─────────────────────────────────────────
     # The start menu's marker disappearing is the signal: an app takes
     # the whole screen, so "Favorites" goes away.
-    opened = False
-    for _ in range(16):
-        time.sleep(0.25)
-        if not menu_is_open(q):
-            opened = True
-            break
-    if not opened:
-        return "nothing opened -- the menu is still up"
+    time.sleep(1.0)
 
     time.sleep(1.4)
     if q.screen() == before:

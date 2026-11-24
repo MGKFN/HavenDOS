@@ -39,6 +39,7 @@
 #include "../include/appguard.h"
 #include "../include/kpoll.h"
 #include "../include/klog.h"
+#include "../include/wm.h"
 
 extern void    *kmalloc(size_t size);
 extern void     kfree(void *p);
@@ -383,6 +384,7 @@ int task_set_front(int s)
     g_t[s].front_seq = ++g_seq;
     if(s == g_cur){ vga_set_visible(1); mouse_clamp_to_grid(); }
     else            g_t[s].vga.visible = 1;   /* painted when switched in */
+    vga_wm_front(s);                          /* v0.9.8: its window comes up */
     return 0;
 }
 
@@ -398,6 +400,7 @@ static void front_from(int s)
     g_t[to].front_seq = ++g_seq;
     if(to == g_cur){ vga_set_visible(1); mouse_clamp_to_grid(); }
     else             g_t[to].vga.visible = 1;
+    vga_wm_front(to);                         /* v0.9.8 */
 }
 
 static void reparent(int s)

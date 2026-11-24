@@ -5,6 +5,7 @@
 #include "../include/font8x8_ext.h"
 #include "../include/font8x16.h"
 #include "../include/font_aa.h"     /* v0.9.7.10: the smooth font's master */
+#include "../include/wm.h"          /* v0.9.8: the window manager */
 
 /* ── THE FRAMEBUFFER CELL IS 8 WIDE AND 16 TALL, v0.8.8.2 ────────────
    It was 8x8, and the console stretched every character to twice its
@@ -195,6 +196,14 @@ static uint16_t  fbc_painted[VGA_CELLS_MAX];
 static int       fbc_painted_valid;
 static int       fbc_ptr_on;      /* v0.9.7.10: the arrow pointer is drawn (see below) */
 static void      fbc_aa_build(void);
+/* v0.9.8: the window manager (drivers/wm_core.inc, at the end of this file) */
+static int       wm_is_on;
+static void      wm_put_cur(int idx, uint16_t entry);
+static void      wm_flush_cur(void);
+static void      wm_caret(int idx);
+static void      wm_ptr_touch(void);
+static void      wm_invalidate_all(void);
+static void      wm_rebuild(void);
 
 static void fbc_forget(void)
 {
@@ -763,6 +772,7 @@ void vga_deco_clear(int slot)
 /* Repaint every cell a pointer rectangle touches, from what is on screen. */
 static void fbc_ptr_touch(void)
 {
+    if (wm_is_on) { wm_ptr_touch(); return; }        /* v0.9.8 */
     if (!fbc_painted_valid) return;
     int c0 = (fbc_ptr_x - (int)fbc_ox) / (int)fbc_cwp, r0 = (fbc_ptr_y - (int)fbc_oy) / (int)fbc_chp;
     int c1 = (fbc_ptr_x + PTR_W * fbc_ptr_s - 1 - (int)fbc_ox) / (int)fbc_cwp;
@@ -779,7 +789,7 @@ static void fbc_ptr_touch(void)
    0 if there is no framebuffer: the caller draws the old cell pointer. */
 int vga_pointer_show(int col, int row, int fx, int fy, int down)
 {
-    if (!fbc_active || !fbc_addr || !g_vis) return 0;
+    if (!fbc_active || !fbc_addr || (!g_vis && !wm_is_on)) return 0;
     if (fx < 0) fx = 0;
     if (fx >= (int)fbc_cwp) fx = (int)fbc_cwp - 1;
     if (fy < 0) fy = 0;
@@ -798,9 +808,50 @@ void vga_pointer_hide(void)
 {
     if (!fbc_ptr_on) return;
     fbc_ptr_on = 0;
-    if (fbc_active && fbc_addr && g_vis) fbc_ptr_touch();
+    if (fbc_active && fbc_addr && (g_vis || wm_is_on)) fbc_ptr_touch();
 }
 int vga_pointer_pixels(void){ return fbc_active && fbc_addr != 0; }
+
+/* v0.9.8: one pixel row of one cell, into out[0 .. fbc_cwp-1]. sy is the
+   row's SCREEN y (the gradient is a function of it). Every way a cell is
+   drawn -- the grid's own cells and a window's, anywhere on the screen --
+   comes through here, so a glyph looks the same wherever it lands. */
+static void glyph_row(uint16_t entry, uint32_t py, uint32_t sy, uint32_t *out)
+{
+    uint8_t ch   = (uint8_t)(entry & 0xFF);
+    uint8_t attr = (uint8_t)(entry >> 8);
+    uint32_t fg = fbc_rgb[attr & 0x0F];
+    uint32_t bg = (fbc_grad_on && ((attr >> 4) & 0x0F) == 0) ? fbc_bg0(sy)   /* v0.9.7.8 */
+                                                            : fbc_rgb[(attr >> 4) & 0x0F];
+    const uint8_t *glyph = &font8x16[(uint32_t)ch * FBC_CH];
+    if (fbc_aa_on && fbc_aa_w == fbc_cwp && fbc_aa_h == fbc_chp) {
+        /* v0.9.7.10: the smooth font -- one coverage byte a pixel */
+        const uint8_t *a = &fbc_aa[((uint32_t)ch * fbc_aa_h + py) * fbc_aa_w];
+        for (uint32_t px = 0; px < fbc_cwp; px++) {
+            uint32_t v = a[px];
+            out[px] = !v ? bg : (v == 255u ? fg : aa_mix(fg, bg, v));
+        }
+        return;
+    }
+    if (fbc_fill) {
+        /* v0.9.6.6: a cell of any size, nearest source pixel */
+        uint8_t bits = glyph[py * FBC_CH / fbc_chp];
+        for (uint32_t px = 0; px < fbc_cwp; px++)
+            out[px] = ((bits >> (FBC_CW - 1 - px * FBC_CW / fbc_cwp)) & 1) ? fg : bg;
+        return;
+    }
+    {
+        uint8_t bits = glyph[py / (uint32_t)fbc_sy];
+        uint32_t k = 0;
+        for (int col = 0; col < FBC_CW; col++) {
+            uint32_t c = ((bits >> (FBC_CW - 1 - col)) & 1) ? fg : bg;
+            for (int rx = 0; rx < fbc_sx; rx++) out[k++] = c;
+        }
+    }
+}
+
+#define FBC_ROW_MAX 512u          /* the widest cell any mode makes */
+static uint32_t g_rowbuf[FBC_ROW_MAX];
 
 static void fbc_put_ex(int x, int y, uint16_t entry, int record)
 {
@@ -809,56 +860,13 @@ static void fbc_put_ex(int x, int y, uint16_t entry, int record)
         if (!fbc_painted_valid) fbc_forget();
         fbc_painted[y*g_cols+x] = entry;
     }
-    uint8_t ch   = (uint8_t)(entry & 0xFF);
-    uint8_t attr = (uint8_t)(entry >> 8);
-    uint32_t fg = fbc_rgb[attr & 0x0F];
-    uint32_t bg = fbc_rgb[(attr >> 4) & 0x0F];
-    int      bg_grad = fbc_grad_on && ((attr >> 4) & 0x0F) == 0;   /* v0.9.7.8 */
-    const uint8_t *glyph = &font8x16[(uint32_t)ch * FBC_CH];
-
     uint32_t px0 = fbc_ox + (uint32_t)x * fbc_cwp;
     uint32_t py0 = fbc_oy + (uint32_t)y * fbc_chp;
-
-    if (fbc_aa_on && fbc_aa_w == fbc_cwp && fbc_aa_h == fbc_chp) {
-        /* v0.9.7.10: the smooth font -- one coverage byte a pixel */
-        const uint8_t *a = &fbc_aa[(uint32_t)ch * fbc_aa_w * fbc_aa_h];
-        for (uint32_t py = 0; py < fbc_chp; py++) {
-            uint32_t *line = fbc_addr + (py0 + py) * fbc_pitch + px0;
-            if (bg_grad) bg = fbc_bg0(py0 + py);
-            for (uint32_t px = 0; px < fbc_cwp; px++) {
-                uint32_t v = *a++;
-                *line++ = !v ? bg : (v == 255u ? fg : aa_mix(fg, bg, v));
-            }
-        }
-        fbc_deco_over(x, y);
-        fbc_ptr_over(x, y);
-        return;
-    }
-    if (fbc_fill) {
-        /* v0.9.6.6: a cell of any size, nearest source pixel. Only while
-           a boxed app is full screen; every other cell takes the whole-
-           scale loop below, unchanged. */
-        for (uint32_t py = 0; py < fbc_chp; py++) {
-            uint8_t bits = glyph[py * FBC_CH / fbc_chp];
-            uint32_t *line = fbc_addr + (py0 + py) * fbc_pitch + px0;
-            if (bg_grad) bg = fbc_bg0(py0 + py);
-            for (uint32_t px = 0; px < fbc_cwp; px++)
-                *line++ = ((bits >> (FBC_CW - 1 - px * FBC_CW / fbc_cwp)) & 1) ? fg : bg;
-        }
-        fbc_deco_over(x, y);
-        fbc_ptr_over(x, y);
-        return;
-    }
-    for (int row = 0; row < FBC_CH; row++) {
-        uint8_t bits = glyph[row];
-        for (int ry = 0; ry < fbc_sy; ry++) {
-            uint32_t *line = fbc_addr + (py0 + (uint32_t)(row * fbc_sy + ry)) * fbc_pitch + px0;
-            if (bg_grad) bg = fbc_bg0(py0 + (uint32_t)(row * fbc_sy + ry));
-            for (int col = 0; col < FBC_CW; col++) {
-                uint32_t c = ((bits >> (FBC_CW - 1 - col)) & 1) ? fg : bg;
-                for (int rx = 0; rx < fbc_sx; rx++) *line++ = c;
-            }
-        }
+    uint32_t w = fbc_cwp < FBC_ROW_MAX ? fbc_cwp : FBC_ROW_MAX;
+    for (uint32_t py = 0; py < fbc_chp; py++) {
+        uint32_t *line = fbc_addr + (py0 + py) * fbc_pitch + px0;
+        glyph_row(entry, py, py0 + py, g_rowbuf);
+        for (uint32_t px = 0; px < w; px++) line[px] = g_rowbuf[px];
     }
     fbc_deco_over(x, y);
     fbc_ptr_over(x, y);
@@ -881,6 +889,7 @@ static void fbc_put(int x, int y, uint16_t entry) { fbc_put_ex(x, y, entry, 1); 
  */
 static inline void put_cell(int idx, uint16_t entry)
 {
+    if (wm_is_on) { wm_put_cur(idx, entry); return; }   /* v0.9.8 */
     if (!g_vis) return;                 /* a console behind the front */
     if (fbc_active) {
         if (!fbc_painted_valid) fbc_forget();
@@ -1185,6 +1194,7 @@ int vga_set_mode_fill(int cols, int rows){
     for(uint32_t py=0;py<fbc_h;py++)
         for(uint32_t px=0;px<fbc_w;px++) fbc_addr[py*fbc_pitch+px]=fbc_bg0(py);
     for(int i=0;i<g_rows*g_cols;i++) fbc_put(i%g_cols,i/g_cols,shadow[i]);
+    if(wm_is_on){ wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all(); }   /* v0.9.8 */
     return 1;
 }
 int vga_fill_active(void){ return fbc_fill; }
@@ -1224,6 +1234,7 @@ int vga_set_mode(int cols, int rows){
                 fbc_addr[py*fbc_pitch+px]=((blank_fb>>12)&0x0F)
                                           ? fbc_rgb[(blank_fb>>12)&0x0F] : fbc_bg0(py);
         for(int i=0;i<g_rows*g_cols;i++) fbc_put(i%g_cols,i/g_cols,blank_fb);
+        if(wm_is_on){ wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all(); }   /* v0.9.8 */
         if(cur_y>=g_rows) cur_y=g_rows-1;
         if(cur_x>=g_cols) cur_x=g_cols-1;
         return 1;
@@ -1640,6 +1651,7 @@ uint16_t vga_shadow_read(int x, int y){
    one pass, so the screen updates atomically from the user's
    perspective — no intermediate blank frame is ever visible.       */
 void vga_flush(void){
+    if(wm_is_on){ wm_flush_cur(); return; }      /* v0.9.8: every window paints */
     if(!g_vis) return;
     if(g_screen_owner != shadow){
         /* A different console is coming forward. Nothing has to be
@@ -1678,6 +1690,12 @@ void vga_present(void){
 }
 
 static void update_hw_cursor(void){
+    if(wm_is_on){                       /* v0.9.8: the caret of a window */
+        int x=cur_x, y=cur_y;
+        if(!vp_xlate(&x,&y)){ x=0; y=0; }
+        if(!defer_depth) wm_caret(y*g_cols+x);
+        return;
+    }
     if(!g_vis) return;                  /* only the front has a caret */
     /* cur_x/cur_y are LOGICAL. The CRTC and the framebuffer caret are
        both physical, so the caret of an app in a centred viewport
@@ -1987,6 +2005,8 @@ void vga_ctx_load(vga_ctx_t *c)
     defer_depth = c->defer;
     g_vis = c->visible;
     g_clip_n = c->clip_n; g_clip_maxx = c->clip_maxx; g_clip_maxy = c->clip_maxy;
+    /* v0.9.8: with windows, whatever it drew while another task ran */
+    if(wm_is_on){ if(g_console_ready && !defer_depth) wm_flush_cur(); return; }
     /* Coming forward: paint it now, unless it is mid-frame -- then the
        frame's own end commits it, which is what the frame is for. */
     if(g_vis && g_console_ready && !defer_depth){
@@ -1998,6 +2018,7 @@ void vga_ctx_load(vga_ctx_t *c)
 void vga_set_visible(int on)
 {
     g_vis = on ? 1 : 0;
+    if(wm_is_on) return;                 /* v0.9.8: windows stay on the screen */
     if(g_vis && g_console_ready && !defer_depth){
         vga_flush();
         update_hw_cursor();
@@ -2040,6 +2061,10 @@ void vga_set_palette(const uint32_t *rgb16, uint32_t grad_top, uint32_t grad_bot
     fbc_grad_top = grad_top; fbc_grad_bot = grad_bot;
     if (fbc_grad_on) fbc_grad_build();
 
+    if (fbc_active && fbc_addr && wm_is_on) {    /* v0.9.8 */
+        wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all();
+        return;
+    }
     if (fbc_active && fbc_addr) {
         fbc_clear_margin();
         fbc_forget();                    /* every cell is stale now */
@@ -2064,6 +2089,9 @@ void vga_set_font_smooth(int on)
     fbc_aa_w = fbc_aa_h = 0;            /* rebuild at the current size */
     if (!fbc_active || !fbc_addr) return;
     fbc_aa_build();
+    if (wm_is_on) { wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all(); return; }   /* v0.9.8 */
     fbc_forget();
     if (g_vis) for (int k = 0; k < g_rows * g_cols; k++) fbc_put(k % g_cols, k / g_cols, shadow[k]);
 }
+
+#include "wm_core.inc"        /* v0.9.8: the window manager's pixels */

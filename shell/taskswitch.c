@@ -131,11 +131,13 @@ static int overlay_begin(vga_ctx_t *saved)
     o.vp_x = o.vp_y = o.vp_w = o.vp_h = 0;
     o.defer = 0;
     vga_ctx_load(&o);
+    { extern void vga_wm_solo(int on); vga_wm_solo(1); }   /* v0.9.8: over every window */
     return 1;
 }
 
 static void overlay_end(vga_ctx_t *saved)
 {
+    { extern void vga_wm_solo(int on); vga_wm_solo(0); }   /* v0.9.8 */
     vga_forget_cells(g_ov);
     vga_ctx_load(saved);
     /* The panel must come off the screen NOW, even if the app under it

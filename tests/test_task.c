@@ -124,6 +124,7 @@ void appguard_ctx_clear(appguard_ctx_t *c){ memset(c, 0, sizeof *c); c->name = "
 /* THE REAL THING. Included rather than linked so the suite can read
    the table -- which stack a task was given, what state it is in --
    the way tests/test_kpoll.c reads kpoll's. */
+#include "wm_stubs.inc"          /* v0.9.8: the window manager, off */
 #include "../kernel/task.c"
 
 /* ════════════════════════════════════════════════════════════════════

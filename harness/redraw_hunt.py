@@ -78,6 +78,28 @@ def diff(a, b):
     return out
 
 
+def startmenu_lock_px(sw=1280, sh=800):
+    """The lock button's centre, as shell/startmenu.c lays the menu out
+    (geometry()) for this grid: 8x16 cells at 128x50 on 1280x800, so the
+    title bar and taskbar are two rows (32 px) and the font 16 px."""
+    ch = sh // ROWS if sh // ROWS in (16, 32, 48) else 16
+    th = ch if ch >= 24 else 2 * ch
+    tr = 1 if ch >= 24 else 2
+    bh = sh - (ROWS - tr) * ch
+    fp = max(12, min(24, th // 2))
+    pad = fp
+    pw = min(fp * 40, sw - 2 * pad)
+    ph = min(fp * 34, sh - bh - 2 * pad)
+    gx0 = (sw - COLS * (8 * (ch // 16))) // 2      # the grid's left edge
+    pw = min(fp * 40, COLS * (8 * (ch // 16)) - 2 * pad)
+    px0, py0 = gx0 + pad // 2, sh - bh - pad // 2 - ph
+    foot = fp * 3
+    fy = py0 + ph - foot
+    bw = foot - fp // 2
+    bx = px0 + pw - pad - 2 * (bw + fp // 4)
+    return bx + bw // 2, fy + fp // 4 + bw // 2
+
+
 def sign_in(q):
     """From the account screen or the sign-in screen, as admin."""
     for _ in range(12):
@@ -153,42 +175,37 @@ def main():
 
         check("signing in as admin reaches the desktop", sign_in(q))
         time.sleep(2.0)
-        for _ in range(3):
-            q.key("esc"); time.sleep(0.4)
+        # v0.9.8: ESC on the desktop opens the Start menu and ESC in it
+        # closes it -- an even number of presses leaves it shut
+        for _ in range(2):
+            q.key("esc"); time.sleep(0.5)
         base = body(lines(q))
 
         if True:
-            # Start -> Lock, Kyan's photo
-            LA.open_menu(q)
+            # Start -> Lock, Kyan's photo. v0.9.8: the Start menu is pixels
+            # (shell/startmenu.c); its lock button is at the right of its
+            # foot, where startmenu_geometry() says.
+            import window_apps as W
+            q.key("meta_l"); time.sleep(1.5)
+            lx, ly = startmenu_lock_px()
+            W.click_px(q, lx, ly, settle=3.0)
             L = lines(q)
-            lock_y = next((y for y, l in enumerate(L) if l[:22].strip().startswith("Lock")
-                           or "Lock" in l[:22]), None)
-            if lock_y is None:
-                check("the Start menu has its Lock row", False, "\n".join(L[-14:]))
-            else:
-                import window_apps as W
-                W.click(q, 4, lock_y, settle=3.0)
-                L = lines(q)
-                check("Start -> Lock: the sign-in screen's strip is on the last row",
-                      "Enter=Select" in L[ROWS - 1], "\n".join(l.rstrip() for l in L[-6:]))
-                check("Start -> Lock: nothing of the Start menu is left (the photo)",
-                      not any(w in l for l in L for w in ("Favorites", "All Apps", "Hardware")),
-                      "\n".join(l.rstrip() for l in L[ROWS - 16:]))
-                check("signing in again reaches the desktop", sign_in(q))
-                time.sleep(2.0)
-                for _ in range(3):
-                    q.key("esc"); time.sleep(0.4)
-                d = diff(base, body(lines(q)))
-                check("the desktop is as it was before Lock", not d, "\n".join(d[:6]))
-                base = body(lines(q))
+            check("Start -> Lock: the sign-in screen's strip is on the last row",
+                  "Enter=Select" in L[ROWS - 1], "\n".join(l.rstrip() for l in L[-6:]))
+            check("Start -> Lock: nothing of the desktop is left (the photo)",
+                  not any(w in l for l in L for w in ("RAM free", "LIVE -")),
+                  "\n".join(l.rstrip() for l in L[ROWS - 16:]))
+            check("signing in again reaches the desktop", sign_in(q))
+            time.sleep(2.0)
+            d = diff(base, body(lines(q)))
+            check("the desktop is as it was before Lock", not d, "\n".join(d[:6]))
+            base = body(lines(q))
 
         # 5/6: the Shell's own `cls` and `lock`, on the whole grid
-        q.key("meta_l"); time.sleep(0.6); q.key("esc"); time.sleep(0.6)
-        L = lines(q)
-        at = next(((x, y) for y, l in enumerate(L) for x in [l.find("Shell")] if x >= 0 and y < 6), None)
+        # v0.9.8: the desktop's first icon (the Shell) is a tile of pixels
+        # over cells 1..15 of rows 2..3 -- clicked there, opened with Enter
         import window_apps as W
-        if at:
-            W.click(q, at[0] + 1, at[1], settle=0.6); q.key("ret"); time.sleep(3.0)
+        W.click(q, 4, 2, settle=0.6); q.key("ret"); time.sleep(3.0)
         L = lines(q)
         check("the Shell opens from its desktop icon", any("@havendos" in l for l in L),
               "\n".join(l.rstrip() for l in L if l.strip())[-600:])

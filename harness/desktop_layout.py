@@ -250,29 +250,40 @@ def main():
         # once moves to "Apps"; inside it, down once moves off the
         # Shell to the Text Editor, which lays out for 80x25 and
         # therefore gets boxed.
-        q.key("esc");   time.sleep(1.2)
-        q.key("down");  time.sleep(0.8)      # Favorites -> Apps
-        q.key("ret");   time.sleep(1.2)      # open the Apps submenu
-        q.key("down");  time.sleep(0.8)      # Shell -> Text Editor
+        # v0.9.8: the Start menu is pixels and searches as you type
+        # (shell/startmenu.c); the window around a boxed app is pixels too,
+        # with no "ESC closes" any more -- what shows that it is a window
+        # is the desktop still visible around it.
+        q.key("esc");   time.sleep(1.5)
+        q.type("text editor", settle=0.12); time.sleep(1.0)
         q.key("ret");   time.sleep(3.0)
         s = best_screen(q)[0]
         q.shot(OUT + "-app.ppm")
-        check("the boxed app is given a window title bar saying how to "
-              "leave", "ESC closes" in s, s)
+        check("the boxed app opens in a window, the desktop around it",
+              "RAM free" in s or "LIVE" in s, s)
         check("the boxed app is NOT the Shell (which is never boxed)",
               "HavenDOS Shell v" not in s,
-              "icon navigation did not move off icon 0")
+              "the search opened the Shell")
         q.key("esc"); time.sleep(2.5)       # the app's own ESC=Close
 
         print("[5/5] clicking the taskbar notification cluster")
-        q.click(cols - 24, rows - 1)
-        time.sleep(1.8)
+        # v0.9.8: the pixel taskbar's bell, left of the clock, inside the
+        # grid's width (shell/taskbar.c layout())
+        sc = max(1, min(1280 // (cols * 8), 800 // (rows * 16)))
+        cw, chh = 8 * sc, 16 * sc
+        gx0 = (1280 - cols * cw) // 2
+        th = chh if chh >= 24 else 2 * chh
+        bh = 800 - (rows - (1 if chh >= 24 else 2)) * chh
+        fp = max(12, min(24, th // 2))
+        kx0 = gx0 + cols * cw - bh // 4 - (5 * fp * 55 // 100 + bh // 2)
+        bell_x = kx0 - bh // 2
+        q.click((bell_x - gx0) // cw, rows - 1)
+        time.sleep(2.5)
         q.shot(OUT + "-bellclick.ppm")
         s = best_screen(q)[0]
-        check("clicking the bell opens the drawer",
-              "Notifications" in s,
-              "clicked column %d of row %d and the drawer did not open"
-              % (cols - 24, rows - 1))
+        check("clicking the bell opens the notifications",
+              "Notifications" in s or "otification" in s,
+              "clicked the bell at x=%d and nothing opened" % bell_x)
     finally:
         q.stop()
 

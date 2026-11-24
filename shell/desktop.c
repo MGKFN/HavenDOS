@@ -6,6 +6,7 @@
 #include "../include/instdisk.h"
 #include "version.h"
 #include "../include/vga.h"
+#include "../include/wm.h"
 #include "../include/appguard.h"
 #include "../include/task.h"
 #include "../include/machine.h"
@@ -483,6 +484,23 @@ int desktop_app_pin_toggle(const char *id, int fav){
                : pin_toggle(PIN_FILE_DESK,desk_ids,&desk_n,id);
 }
 
+/* ── v0.9.8: for the pixel taskbar, Start menu and windows ─────────── */
+int         desktop_app_cat(int i)   { return (i>=0&&i<NREG)?appreg[i].cat:-1; }
+int         desktop_fav_count(void)  { if(!tb_loaded) pins_load(); return fav_n; }
+int         desktop_fav_app(int k)   { return (k>=0&&k<fav_n)?reg_find(fav_ids[k]):-1; }
+const char *desktop_tbpin_id(int i)  { return (i>=0&&i<tb_n)?tb_ids[i]:""; }
+/* A window's icon: its app's id, found by the name chrome_begin() got */
+const char *desktop_app_icon_id(const char *name){
+    if(!name) return "_app";
+    for(int i=0;i<NREG;i++) if(!strcmp(appreg[i].name,name)) return appreg[i].id;
+    return "_app";
+}
+void desktop_lock_screen(void){
+    vga_wm_solo(1);
+    login_screen();
+    vga_wm_solo(0);
+}
+
 /* ---- Views ---------------------------------------------------
    reg_fill() writes registry indices for one start-menu row into
    `out` and returns the count.  This is the only place a view is
@@ -542,9 +560,13 @@ extern int cfg_desk_small(void);
    separate pass and is not claimed here. */
 #define D_ROWS        vga_rows()
 #define D_COLS        vga_cols()
-#define TASKBAR_Y     (D_ROWS-1)   /* 24 at 25 rows */
-#define INFO_SEP_Y    (D_ROWS-4)   /* 21            */
-#define INFO_Y        (D_ROWS-3)   /* 22            */
+/* v0.9.8: with the window manager on, the pixel taskbar takes the last
+   one or two rows (two on an 8x16 cell); the desktop's own rows end
+   above it, so nothing it draws is hidden under the bar. */
+#define TB_ROWS       (vga_wm_on() ? vga_wm_title_rows() : 1)
+#define TASKBAR_Y     (D_ROWS-TB_ROWS)   /* 24 at 25 rows */
+#define INFO_SEP_Y    (TASKBAR_Y-3)      /* 21            */
+#define INFO_Y        (TASKBAR_Y-2)      /* 22            */
 #define ICON_TOP      2
 #define ICON_BOT      (INFO_SEP_Y-1)
 #define ICON_ROWS_VIS ((ICON_BOT-ICON_TOP+1)/ICON_TILE_STEP)
@@ -627,7 +649,9 @@ static void draw_icons(int sel, int menu_open){
             vga_putchar_at(c, sx, sy, fg, th->desk_bg);
         }
 
+    if(vga_wm_on()) vga_wm_desk_icons_begin();
     if(!icon_count){
+        if(vga_wm_on()) vga_wm_desk_icons_end();
         vga_puts_at("No desktop shortcuts.",2,3,th->desk_fg,th->desk_bg);
         vga_puts_at("Windows key or ESC opens",2,5,th->desk_fg,th->desk_bg);
         vga_puts_at("the start menu;",2,6,th->desk_fg,th->desk_bg);
@@ -660,6 +684,13 @@ static void draw_icons(int sel, int menu_open){
         if(blk==th->desk_bg) blk=VGA_BLACK;
         vga_color_t bfg = (blk==VGA_CYAN||blk==VGA_GREEN) ? VGA_BLACK : VGA_WHITE;
         if(s){ blk=sb; bfg=sf; }
+        if(vga_wm_on()){
+            /* v0.9.8: the tile in pixels (drivers/wm_core.inc); its cells
+               stay the wallpaper, and a click still lands on them */
+            int th2 = cfg_desk_small() ? 1 : 2;
+            vga_wm_desk_icon(x, y, x + 15, y + th2, a->id, a->name, s);
+            continue;
+        }
         vga_putchar_at(' ',x,y,bfg,blk);
         vga_putchar_at(a->icon[0],x+1,y,bfg,blk);
         vga_putchar_at(a->icon[1],x+2,y,bfg,blk);
@@ -687,6 +718,7 @@ static void draw_icons(int sel, int menu_open){
         }
     }
 
+    if(vga_wm_on()) vga_wm_desk_icons_end();
     int total_rows = (icon_count + ncols - 1)/ncols;
     if(total_rows > rows_vis){
         int bar_x = field_w < D_COLS ? field_w : D_COLS-1;
@@ -3639,7 +3671,7 @@ static void app_power(void){
         machine_poweroff();
     }
     if(c=='3'){
-        login_screen();
+        desktop_lock_screen();          /* v0.9.8: over every window */
     }
 }
 
@@ -4297,6 +4329,9 @@ void desktop_run(void){
     sub_refresh();
     screensaver_reset();
     music_startup();
+    /* v0.9.8: the desktop is a desktop of windows, in pixels */
+    { extern void taskbar_paint(int,int,int,int);
+      if(task_ready() && vga_fb_active()){ vga_wm_enable(1); vga_wm_set_bar(taskbar_paint); } }
     uint8_t last_rtc_s=0xFF;  /* track RTC seconds for clock update */
     /* Welcome toast + notification */
     toast_success("Welcome to HavenDOS " HAVENDOS_VER "!");
@@ -4462,7 +4497,7 @@ void desktop_run(void){
                     /* Lock click */
                     else if(mx<MENU_W&&my==MENU_LOCK_Y){
                         menu_state=0; needs_draw=1;
-                        login_screen();
+                        desktop_lock_screen();
                     }
                     /* Click outside → close */
                     else if(my==TASKBAR_Y||
@@ -4550,7 +4585,10 @@ void desktop_run(void){
 
         if(menu_state==0){
             /* Desktop: no menu open */
-            if(c==27){ menu_state=1; top_sel=0; sub_sel=0; sub_scroll=0; sub_refresh(); }
+            if(c==27){
+                if(vga_wm_on()) keyboard_inject(KEY_SUPER);   /* v0.9.8: the new menu */
+                else { menu_state=1; top_sel=0; sub_sel=0; sub_scroll=0; sub_refresh(); }
+            }
             else if(c=='\t')    { /* fits=1: the shell derives its layout from vga_rows(),
                            same as its registry entry says. */
                         desktop_run_app(app_shell, "Shell", 1); needs_draw=1; }

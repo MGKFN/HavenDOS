@@ -116,6 +116,7 @@ void vga_set_font_smooth(int on){ g_smooth = on; }
 
 /* ── the code under test, as it ships ─────────────────────────────── */
 #include "taskstub.inc"     /* v0.9.6: tasks off */
+#include "wm_stubs.inc"          /* v0.9.8: the window manager, off */
 #include "../shell/ui.c"
 /* v0.9.6.5: not linked here */
 int mouse_outside(void){ return 0; }

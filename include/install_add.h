@@ -38,6 +38,7 @@
 #include "fat16fmt.h"
 #include "fat32fmt.h"
 #include "esp.h"
+#include "gpt_write.h"   /* gpt_gap_t, v0.9.7.9 */
 
 /* Partitions are aligned to this, in sectors: 1 MB, which is what every
    partitioning tool made since about 2010 uses. An unaligned partition
@@ -209,6 +210,15 @@ uint32_t havendos_wholedisk_sectors(uint64_t disk_sectors);
 
 int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
                               void (*cb)(int,int,const char*));
+
+/* v0.9.7.9: which free space. With none set (0) the install takes the
+   SMALLEST free space that fits -- it used to take the first one on the
+   disk, which on Kyan's laptop was 34 GB meant for macOS. The wizard lists
+   them (havendos_install_gaps, disk order, those big enough to hold an
+   install) and asks whenever there is more than one. */
+void     havendos_install_set_gap(uint64_t first_lba);
+uint64_t havendos_install_get_gap(void);
+int      havendos_install_gaps(int disk, gpt_gap_t *out, int max);
 
 const char *havendos_install_add_strerror(int code);
 

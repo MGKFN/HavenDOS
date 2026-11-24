@@ -1008,6 +1008,63 @@ int main(void)
            r == INSTADD_E_VERIFY, r);
     }
 
+    /* ── v0.9.7.9: TWO FREE SPACES ───────────────────────────────────
+       Kyan's laptop: 34 GB free kept for macOS, then a partition, then the
+       2 GB he made for HavenDOS. 0.9.7.8 took the first gap that fit --
+       the 34 GB one -- and made 32 GB of it HavenDOS. */
+    head("v0.9.7.9: two free spaces -- the small one unless told otherwise");
+    {
+        inst_add_t r2;
+        int r, ng;
+        gpt_gap_t gg[8];
+        uint64_t a, b, mid_a, mid_b, big_first, small_first;
+        build_disk_gap(1024ull * 1024 * 1024 * 1024 / 512 / 2, 128,
+                       (34ull + 2 + 1) * 1024 * 2048);
+        ck("rebuild the disk and its ESP", reset_esp(0, 0), 0);
+        a = WIN_FREE_FIRST; b = WIN_FREE_LAST;
+        mid_a = a + 34ull * 1024 * 2048;           /* 34 GB in */
+        mid_b = b - 2ull * 1024 * 2048;            /* 2 GB before the end */
+        r = gpt_add_partition(gptrd, (gpt_wr_fn)d_write, 0, mid_a, mid_b,
+                              T_DATA, "macOS, later", 0, 0, 0);
+        ck("a partition splits the free space in two", r == GPTW_OK, r);
+        ng = havendos_install_gaps(MODEL_DISK, gg, 8);
+        ck("the installer sees two free spaces", ng == 2, ng);
+        big_first   = ng > 0 ? gg[0].first_lba : 0;
+        small_first = ng > 1 ? gg[1].first_lba : 0;
+        ck("in disk order: the 34 GB one first",
+           ng == 2 && gg[0].sectors > gg[1].sectors, ng);
+
+        havendos_install_set_gap(0);
+        r = havendos_install_additive(MODEL_DISK, 1, &r2, 0);
+        ck("with no choice made, it plans", r == INSTADD_OK, r);
+        ck("in the SMALL space (0.9.7.8: the first, the 34 GB one)",
+           r2.part_first >= small_first && r2.gap_first == small_first,
+           (long)(r2.part_first / 2048));
+        ck("and it is about 2 GB, FAT32",
+           r2.part_sectors <= 2ull * 1024 * 2048 && r2.part_sectors > 1900ull * 2048
+           && r2.fs_type == 32, (long)(r2.part_sectors / 2048));
+
+        havendos_install_set_gap(big_first);
+        r = havendos_install_additive(MODEL_DISK, 1, &r2, 0);
+        ck("told to use the 34 GB space, it does",
+           r == INSTADD_OK && r2.gap_first == big_first, (long)(r2.gap_first / 2048));
+        ck("taking its 32 GB cap, as before", r2.part_sectors == INSTADD_MAX_SECTORS,
+           (long)(r2.part_sectors / 2048));
+
+        havendos_install_set_gap(12345);           /* no gap starts there */
+        r = havendos_install_additive(MODEL_DISK, 1, &r2, 0);
+        ck("a choice that no longer exists falls back to the smallest",
+           r == INSTADD_OK && r2.gap_first == small_first, (long)(r2.gap_first / 2048));
+
+        havendos_install_set_gap(0);
+        r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
+        ck("the real install succeeds", r == INSTADD_OK, r);
+        ng = havendos_install_gaps(MODEL_DISK, gg, 8);
+        ck("and the 34 GB space is still free, whole",
+           ng >= 1 && gg[0].first_lba == big_first
+           && gg[0].sectors >= 34ull * 1024 * 2048 - 2048, ng);
+    }
+
     head("a disk with no GPT is refused, not guessed at");
     {
         inst_add_t r2;

@@ -46,6 +46,8 @@ def main():
         q.stop()
     png("/tmp/gs_iso.ppm", os.path.join(IMG, "grub-iso.png"))
 
+    if os.path.exists("/tmp/hd_tg_choose.ppm"):     # harness/two_gaps_0979.py
+        png("/tmp/hd_tg_choose.ppm", os.path.join(IMG, "choose-space.png"))
     for n in ("02_picker", "04_confirm"):
         src = "/tmp/hd_db_%s.png" % n
         if os.path.exists(src):

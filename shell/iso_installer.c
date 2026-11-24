@@ -133,6 +133,7 @@ static void plan_disks(void)
             continue;
         }
         /* A GPT disk. Ask the additive installer what it would do. */
+        havendos_install_set_gap(0);     /* v0.9.7.9: each disk planned on its own */
         g_dplan_rc[i] = havendos_install_additive(i, 1, &g_dplan[i], 0);
         if(g_dplan_rc[i] == INSTADD_E_ALREADY)
             g_dmode[i] = DMODE_DONE;
@@ -422,6 +423,77 @@ static void screen_already_installed(int drive)
    disagree again. */
 #define PICK_MAX_ROWS 10
 
+/* ── v0.9.7.9: WHICH FREE SPACE ────────────────────────────────────────
+   Kyan's laptop had two: 34 GB kept for macOS and 2 GB made for HavenDOS.
+   The installer took the first on the disk, the 34 GB one, and made a
+   32 GB partition in it without asking. Now, when a disk has more than one
+   free space an install fits in, this screen lists them -- size, where on
+   the disk, what is either side -- and the person picks. The bar starts on
+   the SMALLEST, which is also what an install does with no choice made.
+   Returns 1 with the choice set (and the plan redone), 0 for ESC. */
+static void mb_or_gb(uint64_t sectors, char *out){
+    uint64_t mb = sectors / 2048ull;
+    if(mb >= 1024){
+        uint32_t g = (uint32_t)(mb / 1024), f = (uint32_t)((mb % 1024) * 10 / 1024);
+        utoa(g, out, 10); int l = (int)strlen(out);
+        out[l++] = '.'; utoa(f, out + l, 10); strcat(out, " GB");
+    } else { utoa((uint32_t)mb, out, 10); strcat(out, " MB"); }
+}
+static const char *part_beside(const gpt_part_t *p, int n, uint64_t lba, int before){
+    for(int i = 0; i < n; i++){
+        if(before  && p[i].last_lba + 1 <= lba && lba - p[i].last_lba <= 4096) return p[i].name[0] ? p[i].name : "a partition";
+        if(!before && p[i].first_lba >= lba && p[i].first_lba - lba <= 4096) return p[i].name[0] ? p[i].name : "a partition";
+    }
+    return before ? "the start of the disk" : "the end of the disk";
+}
+static int screen_gap_picker(int drive){
+    gpt_gap_t g[8];
+    static gpt_part_t parts[GPT_MAX_PARTS];
+    int n = havendos_install_gaps(drive, g, 8), sel = 0, np;
+    if(n <= 1) return 1;                      /* one choice is no choice */
+    np = inst_disk_gpt_parts(drive, parts, GPT_MAX_PARTS);
+    if(np < 0) np = 0;
+    for(int i = 1; i < n; i++) if(g[i].sectors < g[sel].sectors) sel = i;
+    for(;;){
+        cls(); hdr("Choose the Free Space",2,6);
+        footer("Up/Down=select  ENTER=use this one  ESC=back to the disks");
+        vga_puts_at("This disk has more than one free space. HavenDOS goes in ONE of them",6,3,BODY_FG,BODY_BG);
+        vga_puts_at("and uses up to 32 GB of it; the rest stays free. Pick the one you",6,4,BODY_FG,BODY_BG);
+        vga_puts_at("made for HavenDOS -- another may be meant for something else.",6,5,VGA_YELLOW,BODY_BG);
+        vga_puts_at("  Size        Where on the disk     Between",6,7,ACC,BODY_BG);
+        for(int i = 0; i < n; i++){
+            char sz[16], at[24], pos[16];
+            int y = 9 + i * 2, on = (i == sel);
+            vga_color_t fg = on ? VGA_WHITE : BODY_FG, bg = on ? VGA_BLUE : BODY_BG;
+            for(int x = 6; x < 76; x++){ vga_putchar_at(' ',x,y,fg,bg); vga_putchar_at(' ',x,y+1,fg,bg); }
+            mb_or_gb(g[i].sectors, sz);
+            strcpy(at, "at "); mb_or_gb(g[i].first_lba, pos); strcat(at, pos);
+            vga_puts_at(on ? ">" : " ", 6, y, ACC, bg);
+            vga_puts_at(sz, 8, y, on ? VGA_YELLOW : fg, bg);
+            vga_puts_at(at, 20, y, fg, bg);
+            vga_puts_at(part_beside(parts, np, g[i].first_lba, 1), 42, y, fg, bg);
+            vga_puts_at("and", 38, y + 1, VGA_DARK_GREY, bg);
+            vga_puts_at(part_beside(parts, np, g[i].last_lba + 1, 0), 42, y + 1, fg, bg);
+        }
+        {
+            char sz[16], line[72];
+            uint64_t use = g[sel].sectors; if(use > INSTADD_MAX_SECTORS) use = INSTADD_MAX_SECTORS;
+            mb_or_gb(use, sz);
+            strcpy(line, "HavenDOS would use about "); strcat(line, sz); strcat(line, " of the highlighted space.");
+            vga_puts_at(line, 6, 10 + n * 2, OK_COL, BODY_BG);
+        }
+        int c = keyboard_waitchar();
+        if(c == 27) return 0;
+        if(c == 0x148 && sel > 0) sel--;
+        if(c == 0x150 && sel < n - 1) sel++;
+        if(c == '\n' || c == '\r'){
+            havendos_install_set_gap(g[sel].first_lba);
+            g_dplan_rc[drive] = havendos_install_additive(drive, 1, &g_dplan[drive], 0);
+            return 1;
+        }
+    }
+}
+
 static int screen_drive_picker(int ndisks){
     int sel=0;
     int nshow = ndisks < PICK_MAX_ROWS ? ndisks : PICK_MAX_ROWS;
@@ -503,6 +575,13 @@ static int screen_drive_picker(int ndisks){
                    guess: the number the install itself would use. */
                 char fb[12];
                 utoa((uint32_t)(g_dplan[i].part_sectors/2048), fb, 10);
+                {   /* v0.9.7.9: several free spaces -- the next screen asks */
+                    gpt_gap_t gg[8];
+                    if(havendos_install_gaps(i, gg, 8) > 1){
+                        vga_puts_at("keeps disk - space chosen next",42,8+i,OK_COL,bg);
+                        break;
+                    }
+                }
                 vga_puts_at("keeps this disk, uses",42,8+i,OK_COL,bg);
                 vga_puts_at(fb,64,8+i,ACC,bg);
                 vga_puts_at("MB",64+(int)strlen(fb)+1,8+i,OK_COL,bg);
@@ -1010,6 +1089,12 @@ void iso_install_wizard(void){
             inst_add_t rep;
             int ret;
 
+            /* v0.9.7.9: more than one free space -- ask which. The plan
+               behind the picker row was made with none chosen. */
+            havendos_install_set_gap(0);
+            g_dplan_rc[drive] = havendos_install_additive(drive, 1, &g_dplan[drive], 0);
+            if(!screen_gap_picker(drive))          continue;
+            if(g_dplan_rc[drive] != INSTADD_OK)    continue;
             if(!screen_additive_preview(drive, 1)) continue;
             if(!screen_additive_confirm(drive))    continue;
 

@@ -84,15 +84,17 @@
 /* v0.9.7.6: the first Stable release; a USB device slow after a replug is retried. */
 /* v0.9.7.7: a bug sweep -- fuzzing and every QEMU harness; Retro PC 0.1.1's reader fixes.
    v0.9.7.8: FAT32 from 64 MB; Notepad's Ctrl+A/X, wrap and 4000 lines; the
-   THS look -- a themed boot menu and Studio, the default theme. */
-#define HAVENDOS_VER_BUILD  8
+   THS look -- a themed boot menu and Studio, the default theme.
+   v0.9.7.9: the installer asks which free space when there is more than
+   one, and with none chosen takes the smallest that fits, not the first. */
+#define HAVENDOS_VER_BUILD  9
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.7.8"
+#define HAVENDOS_VER_NUM    "0.9.7.9"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Stable"

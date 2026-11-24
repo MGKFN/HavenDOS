@@ -1,6 +1,6 @@
 # HavenDOS — handoff, 23 November 2026
 
-Current release: **v0.9.7.8** (Stable, a full GitHub release) (codename "Mnemosyne"),
+Current release: **v0.9.7.9** (Stable, a full GitHub release) (codename "Mnemosyne"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -51,7 +51,21 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.7.8 (24 Nov) — THE THS LOOK, FAT32, NOTEPAD
+## START HERE: 0.9.7.9 (24 Nov) — THE INSTALLER ASKS WHICH FREE SPACE
+
+Kyan installed 0.9.7.8 on the HP: the disk had 34 GB free (for a hackintosh)
+before the 2 GB he made for HavenDOS; havendos_install_additive took
+gpt_find_free()'s FIRST fitting gap and made 32 GB of the 34. Told him: run
+`uninstall` (space comes back whole), don't reinstall with 0.9.7.8.
+- fs/install.c: pick_gap() -- the chosen gap (havendos_install_set_gap(first
+  LBA)) or the SMALLEST that fits; havendos_install_gaps() lists usable gaps.
+- shell/iso_installer.c: screen_gap_picker() "Choose the Free Space" when a
+  disk has >1 usable gap; plans are made with set_gap(0) per disk.
+- test_installadd 220; harness/two_gaps_0979.py 14/14 (absolute-sector layout:
+  sgdisk's +N start offsets are NOT relative to the previous partition).
+- Guide THS-IG-1001 REV B.
+
+## 0.9.7.8 (24 Nov) — THE THS LOOK, FAT32, NOTEPAD
 
 Kyan, 24 Nov: wants a FAT32 fresh install on a ~2000 MiB partition (his HP
 install dates from the first installable version); themed GRUB menu (ISO and

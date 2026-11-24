@@ -12,7 +12,7 @@ when it does not. Same block vocabulary as THS-RM-1005 (docs/rm1005):
 
 [[Section title]] becomes "section N"; [[^Section title]] "Section N".
 
-Every key, screen title and message quoted here is the text the 0.9.7.8
+Every key, screen title and message quoted here is the text the 0.9.7.9
 installer, boot menu and setup actually print -- shell/iso_installer.c,
 shell/setup.c, fs/esp.c. If one of those changes, change this.
 """
@@ -36,9 +36,9 @@ META = dict(
     subtitle=("A step-by-step guide for a first install,<br/>"
               "from an empty USB stick to the HavenDOS desktop,<br/>"
               "with Windows still there afterwards"),
-    part="THS-IG-1001 REV A",
+    part="THS-IG-1001 REV B",
     date="24 NOV 2026",
-    release="v0.9.7.8 Stable &ldquo;Mnemosyne&rdquo;",
+    release="v0.9.7.9 Stable &ldquo;Mnemosyne&rdquo;",
     need=[
         ("TIME", "about 45 minutes"),
         ("PC", "a Windows 10 or 11 PC, 64-bit, from about 2012 on"),
@@ -126,7 +126,7 @@ SECTIONS = [
  ("ol", ["Go to <b>github.com/MGKFN/HavenDOS/releases</b>. The release at the "
          "top, marked <b>Latest</b>, is the one to use.",
          "Under <b>Assets</b>, click the file that ends in <b>.iso</b> "
-         "&mdash; for this release <b>HavenDOS-0.9.7.8.iso</b>, about 17 MB. "
+         "&mdash; for this release <b>HavenDOS-0.9.7.9.iso</b>, about 17 MB. "
          "It goes to your Downloads folder.",
          "Go to <b>rufus.ie</b> and download <b>Rufus</b>, the "
          "&ldquo;Standard&rdquo; or &ldquo;Portable&rdquo; version. It is a "
@@ -145,7 +145,7 @@ SECTIONS = [
          "to make changes?</i>, click <b>Yes</b>. If it asks about updates, "
          "either answer is fine.",
          "Under <b>Device</b>, check that the name and size are your USB stick.",
-         "Click <b>SELECT</b> and choose <b>HavenDOS-0.9.7.8.iso</b> from your "
+         "Click <b>SELECT</b> and choose <b>HavenDOS-0.9.7.9.iso</b> from your "
          "Downloads folder.",
          "Leave every other setting as it is, and click <b>START</b>.",
          "Rufus asks how to write the image. Choose <b>Write in DD Image "
@@ -248,7 +248,7 @@ SECTIONS = [
  ("fig", "grub-iso.png", "FIGURE 7-1",
   "The menu on the USB stick. The red bar is the choice that "
   + key("Enter") + " starts."),
- ("ol", ["Press " + key("&darr;") + " three times, to <b>HavenDOS v0.9.7.8 -- "
+ ("ol", ["Press " + key("&darr;") + " three times, to <b>HavenDOS v0.9.7.9 -- "
          "Install to Disk</b>.",
          "Press " + key("Enter") + "."]),
  ("note", "If every key you press later shows up <b>twice</b>, restart and "
@@ -266,6 +266,9 @@ SECTIONS = [
        "256 GB, 512 GB, 1 TB. The USB stick is listed too: it is the small "
        "one. Read the <b>Notes</b> column:"),
  ("table", ["Notes says", "Means"], [
+   ["keeps disk - space chosen next",
+    "The right one, and the disk has more than one free space: the next "
+    "screen asks which."],
    ["keeps this disk, uses <b>4095</b> MB",
     "The right one. HavenDOS goes in the free space from [[Step 4: Make room on the disk]], "
     "and this is how big it will be."],
@@ -281,6 +284,19 @@ SECTIONS = [
   "number of MB is what HavenDOS will use."),
  ("p", "Pick the line that says <b>keeps this disk</b> with " + key("&uarr;")
        + " " + key("&darr;") + " and press " + key("Enter") + "."),
+ ("h3", "Choose the Free Space"),
+ ("p", "Only if the disk has more than one free space &mdash; for example "
+       "one you made for HavenDOS and one you are keeping for something "
+       "else. Each is listed with its size, where it is on the disk and "
+       "which partitions it sits between. The bar starts on the "
+       "<b>smallest</b>."),
+ ("fig", "choose-space.png", "FIGURE 10-2",
+  "Two free spaces. HavenDOS uses the highlighted one, up to 32 GB of it."),
+ ("caution", "Check the size. Pick the space you made in "
+             "[[Step 4: Make room on the disk]] &mdash; the one of about 4 GB, "
+             "or whatever you typed there &mdash; and press " + key("Enter") +
+             ". Releases before 0.9.7.9 did not ask, and took the first free "
+             "space on the disk."),
  ("h3", "What will be written"),
  ("p", "The installer lists, before it touches anything, the new partition "
        "it will make (its size, and <b>formatted FAT32</b>), and the four "
@@ -290,7 +306,7 @@ SECTIONS = [
  ("p", "It says <b>HavenDOS will be installed BESIDE what is already on "
        "disk</b>, <b>Nothing is deleted</b>, and, on a Windows laptop, that "
        "Windows was found and is expected to keep booting."),
- ("fig", "confirm.png", "FIGURE 10-2",
+ ("fig", "confirm.png", "FIGURE 10-3",
   "The last screen before anything is written. It waits for YES."),
  ("ol", ["Type " + key("Y") + key("E") + key("S") + " in capitals.",
          "Press " + key("Enter") + "."]),
@@ -319,7 +335,7 @@ SECTIONS = [
   "starts Windows after 8 seconds."),
  ("p", "It has three choices:"),
  ("table", ["Choice", "Does"], [
-   ["HavenDOS v0.9.7.8 Stable", "Starts HavenDOS."],
+   ["HavenDOS v0.9.7.9 Stable", "Starts HavenDOS."],
    ["Windows Boot Manager", "Starts Windows. <b>Chosen by itself after "
                             "8 seconds</b>, so the computer still ends up "
                             "in Windows if you do nothing."],

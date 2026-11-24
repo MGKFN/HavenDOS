@@ -1008,6 +1008,58 @@ static const char s_add_cfg[] =
     "}\n";
 static const char s_add_marker[] = "HavenDOS " HAVENDOS_VER " installed OK\n";
 
+/* ── v0.9.7.9: WHICH FREE SPACE ────────────────────────────────────────
+   Kyan, 24 Nov: his disk had two free spaces, 34 GB he was keeping for
+   macOS and the 2 GB he made for HavenDOS. This took gpt_find_free()'s
+   answer -- the FIRST gap on the disk big enough -- which was the 34 GB
+   one, and made a 32 GB partition in it. Nothing was asked, and the one
+   screen that showed the size said it in a column he had no reason to
+   doubt.
+
+   Two changes. The installer can now be told which free space to use
+   (havendos_install_set_gap(), by the gap's first sector; the wizard asks
+   whenever there is more than one), and with no choice made it takes the
+   SMALLEST free space that fits rather than the first -- the one least
+   likely to be somebody's plan for something else. */
+static uint64_t s_want_gap;              /* first LBA of the chosen gap, 0 = choose */
+void havendos_install_set_gap(uint64_t first_lba){ s_want_gap = first_lba; }
+uint64_t havendos_install_get_gap(void){ return s_want_gap; }
+
+/* The free spaces on `disk` an install could use, in disk order. */
+int havendos_install_gaps(int disk, gpt_gap_t *out, int max)
+{
+    gpt_gap_t all[16];
+    int n, i, k = 0;
+    if(!out || max <= 0) return 0;
+    n = gpt_find_gaps(add_disk_rd, (void *)(long)disk, all, 16);
+    if(n < 0) return n;
+    for(i = 0; i < n && k < max; i++)
+        if(all[i].sectors >= INSTADD_MIN_SECTORS + INSTADD_ALIGN) out[k++] = all[i];
+    return k;
+}
+
+/* The gap to install into: the chosen one if it is still there and big
+   enough, else the smallest that is. */
+static int pick_gap(int disk, uint64_t need, gpt_gap_t *out)
+{
+    gpt_gap_t g[16];
+    int n = gpt_find_gaps(add_disk_rd, (void *)(long)disk, g, 16), i, best = -1;
+    if(n < 0) return GPTW_E_NOTGPT;
+    if(s_want_gap){
+        for(i = 0; i < n; i++)
+            if(g[i].first_lba == s_want_gap){
+                if(g[i].sectors < need) return GPTW_E_NOSPACE;
+                *out = g[i]; return GPTW_OK;
+            }
+        /* the chosen space is gone (the table changed): choose again */
+    }
+    for(i = 0; i < n; i++)
+        if(g[i].sectors >= need && (best < 0 || g[i].sectors < g[best].sectors)) best = i;
+    if(best < 0) return GPTW_E_NOSPACE;
+    *out = g[best];
+    return GPTW_OK;
+}
+
 int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
                               void (*cb)(int,int,const char*))
 {
@@ -1077,15 +1129,13 @@ int havendos_install_additive(int disk, int dry_run, inst_add_t *rep,
     }
     esp_reserve = need_esp ? (uint64_t)ESPMK_WANT_MB * 2048ull : 0ull;
 
-    r = gpt_find_free(add_disk_rd, (void *)(long)disk,
-                      INSTADD_MIN_SECTORS + esp_reserve, &gap);
+    r = pick_gap(disk, INSTADD_MIN_SECTORS + esp_reserve, &gap);
     if(r == GPTW_E_NOSPACE && esp_reserve){
         /* Not enough for the ESP we would like. Try the floor before
            refusing the machine outright -- a 48 MB boot partition is
            a working one, and the alternative is no install at all. */
         esp_reserve = (uint64_t)ESPMK_MIN_MB * 2048ull;
-        r = gpt_find_free(add_disk_rd, (void *)(long)disk,
-                          INSTADD_MIN_SECTORS + esp_reserve, &gap);
+        r = pick_gap(disk, INSTADD_MIN_SECTORS + esp_reserve, &gap);
     }
     if(r == GPTW_E_NOSPACE)                     return INSTADD_E_NOSPACE;
     if(r != GPTW_OK)                            return INSTADD_E_NOGPT;

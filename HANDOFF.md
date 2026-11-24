@@ -1,6 +1,6 @@
 # HavenDOS — handoff, 23 November 2026
 
-Current release: **v0.9.7.7** (Stable, a full GitHub release) (codename "Mnemosyne"),
+Current release: **v0.9.7.8** (Stable, a full GitHub release) (codename "Mnemosyne"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -51,7 +51,49 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.7.7 (23 Nov) — A BUG SWEEP
+## START HERE: 0.9.7.8 (24 Nov) — THE THS LOOK, FAT32, NOTEPAD
+
+Kyan, 24 Nov: wants a FAT32 fresh install on a ~2000 MiB partition (his HP
+install dates from the first installable version); themed GRUB menu (ISO and
+installed) in the THS gradient/colours "like the docs and website", applied by
+default with a little back story; Notepad wrap at the screen edge, more than
+200 lines, Ctrl+A and Ctrl+X broken; and an install guide "so a person that
+doesnt know anything could do it".
+- FAT32 from 64 MB: fs/instsize.c instadd_fs_for(), INSTADD_FAT32_MIN_SECTORS.
+  Nothing infers FS from size after install (vfs mounts and asks).
+  test_installadd's fault injections now MEASURE the kernel-copy start via the
+  progress callback (kstart_cb) -- the old "write 700" assumed a FAT16 format.
+- GRUB theme: tools/make_grub_theme.py writes isodir/boot/grub/themes/havendos/,
+  include/grub_theme_embed.h (data, fs/esp.c only) and include/grub_theme.h
+  (names, fs/uninstall.c). Outputs are COMMITTED (needs PIL + grub-mkfont to
+  regenerate). EFI loader modules + gfxmenu png (Makefile; grub_efi_embed.h
+  regenerated). ESP grub.cfg guards the theme with `if loadfont ...`.
+  GRUB's progress_bar ignores height (~27 px) -- dropped; the label shows it.
+- Studio theme: index 0 of shell/ui.c themes[] (legacy_map all +1;
+  NTHEMES_BASE 13). theme_t gained pal/grad_top/grad_bot/story.
+  drivers/vga.c: fbc_rgb is mutable, vga_set_palette(rgb16, top, bot);
+  background 0 drawn per pixel row from fbc_grad[] (cache stays valid: pixels
+  depend on cell + row only). Text-mode VGA gets the DAC, no fade.
+  No .theme file -> Studio. Retro PC forces the standard palette while open.
+  harness/fbtext.py reads gradient backgrounds (each colour tried as fg).
+- Notepad (shell/desktop.c): ED_ROWS 4000, ED_COLS 128, one shared ed_io
+  buffer; ed_wrap() after each typed char at ED_VCOLS-1; loader wraps long
+  lines. Ctrl+A was drivers/keyboard.c (0x01 = the extended-key marker:
+  now pushed as 0x01 0x00). Ctrl+X: a precedence bug in ed_delete_sel.
+  ed_redraw draws only to strlen (strcpy leaves stale tails).
+  harness/notepad_0978.py types at 80 ms/key -- at 30 ms QEMU drops keys.
+- Install guide: docs/install-guide/{content,build,style}.py/css ->
+  docs/HavenDOS-Install-Guide.pdf (THS-IG-1001). Needs weasyprint + the four
+  house fonts (@fontsource -> TTF in ~/.local/share/fonts). Figures in
+  docs/install-guide/img/ from harness/guide_shots.py.
+- make test 7824 checks. Harnesses fixed for Studio: fbtext (fade), mouse_apps
+  (saturation), fat16_regress (Shell Mode + `disk`), migrate_fat32 (FAT16 made
+  by the real 0.9.7.7 ISO, MIGRATE_OLD_ISO, then this kernel mcopied on).
+  CAREFUL: `make all` writes HavenDOS-<ver>.iso, so building before bumping
+  the version overwrites the PREVIOUS release's ISO in the tree. Get old ISOs
+  from GitHub (gh api .../releases/assets/<id> -H Accept:octet-stream).
+
+## 0.9.7.7 (23 Nov) — A BUG SWEEP
 
 Kyan: "we need to fix unknown bugs ... just go on fixing, we can't start
 0.9.8 soon enough". No bug list, so the sweep looked itself:

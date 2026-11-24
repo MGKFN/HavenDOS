@@ -22,8 +22,8 @@ int vga_cols(void){ return g_cols; }
 int vga_rows(void){ return g_rows; }
 
 /* The constants and the two functions, lifted from shell/desktop.c. */
-#define ED_ROWS        200
-#define ED_COLS        79
+#define ED_ROWS        4000   /* v0.9.7.8 */
+#define ED_COLS        128
 #define ED_LNPAD       5
 
 int ed_vrows(void)
@@ -112,8 +112,11 @@ int main(void)
     ck("a tiny mode still reports a usable column count",
        ed_vcols() >= 16, ed_vcols());
     g_cols = 400; g_rows = 400;
-    ck("an enormous mode is bounded by the buffer, not the screen",
-       ed_vcols() == ED_COLS && ed_vrows() == ED_ROWS, ed_vcols());
+    /* v0.9.7.8: 4000 lines -- no screen is that tall, so rows follow the
+       screen; columns are still bounded by the 128-character line. */
+    ck("an enormous mode is bounded by the line width, not the screen",
+       ed_vcols() == ED_COLS, ed_vcols());
+    ck("and shows every row that screen has", ed_vrows() == 400 - 4, ed_vrows());
 
     printf("\n%d/%d passed\n", total - fails, total);
     return fails ? 1 : 0;

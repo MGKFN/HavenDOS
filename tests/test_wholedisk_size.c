@@ -33,7 +33,7 @@ static void ck(int c, const char *what){
 
 int main(void){
     /* The sizes a person actually has, plus the boundary either side. */
-    static const uint64_t mb[] = {16,64,256,512,1024,2047,2048,2049,2050,
+    static const uint64_t mb[] = {16,63,64,65,66,100,256,512,1024,2000,2047,2048,2049,2050,
                                   4096,8192,16384,32768,32769,65536,131072,
                                   262144,524288,1048576,2097152};
     char msg[112];
@@ -76,9 +76,9 @@ int main(void){
                  (unsigned long long)mb[i]);
         ck(spans == part, msg);
 
-        snprintf(msg, sizeof msg, "%llu MB disk: FAT16 at or under 2047 MB, FAT32 above",
+        snprintf(msg, sizeof msg, "%llu MB disk: FAT16 under 64 MB, FAT32 from 64 MB (0.9.7.8)",
                  (unsigned long long)mb[i]);
-        ck(fs == (part > INSTADD_FAT16_MAX_SECTORS ? 32 : 16), msg);
+        ck(fs == (part >= INSTADD_FAT32_MIN_SECTORS ? 32 : 16), msg);
     }
 
     /* A disk at or under the cap is used whole, not truncated to it. */
@@ -109,9 +109,22 @@ int main(void){
     fat32_geom_t over32; memset(&over32, 0, sizeof over32);
     ck(fat32_geom(INSTADD_FAT16_MAX_SECTORS + INSTADD_ALIGN, &over32) == 1,
        "one MB above the boundary has a FAT32 geometry");
-    ck(instadd_fs_for(INSTADD_FAT16_MAX_SECTORS) == 16
-       && instadd_fs_for(INSTADD_FAT16_MAX_SECTORS + 1) == 32,
-       "the boundary itself is FAT16, one sector more is FAT32");
+    /* v0.9.7.8: the FAT16/FAT32 boundary is 64 MB now. 2047 MB is still
+       the largest FAT16 the formatter can make (checked above), but the
+       installer never asks it for more than 63 MB. */
+    ck(instadd_fs_for(INSTADD_FAT32_MIN_SECTORS - 1) == 16
+       && instadd_fs_for(INSTADD_FAT32_MIN_SECTORS) == 32,
+       "the boundary: one sector under 64 MB is FAT16, 64 MB is FAT32");
+    ck(instadd_fs_for(2000u * 2048u) == 32,
+       "a 2000 MiB partition is FAT32 (Kyan, 24 Nov)");
+    ck(instadd_fs_for(INSTADD_FAT16_MAX_SECTORS) == 32,
+       "2047 MB, FAT16's old ceiling, is FAT32 now");
+    {
+        fat32_geom_t lo; memset(&lo, 0, sizeof lo);
+        ck(fat32_geom(INSTADD_FAT32_MIN_SECTORS, &lo) == 1
+           && lo.clusters >= FAT32_MIN_CLUSTERS + 60000u,
+           "64 MB as FAT32 clears 65525 clusters with room to spare");
+    }
     ck(fat32_geom(INSTADD_MAX_SECTORS, &over32) == 1,
        "the 32 GB cap has a FAT32 geometry");
 

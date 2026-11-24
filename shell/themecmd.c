@@ -43,7 +43,31 @@ static void strip(int n){
     vga_set_color(t->accent,t->win_bg); vga_putchar(' ');
 }
 
+/* v0.9.7.8: `theme story` -- the few lines of history a theme carries. */
+static void story(int n){
+    const theme_t *t=ui_theme_get(n);
+    vga_set_color(VGA_LIGHT_RED,VGA_BLACK);
+    vga_printf("  %s\n\n",t->name);
+    vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
+    if(t->story){
+        const char *p=t->story;
+        vga_puts("  ");
+        for(;*p;p++){ vga_putchar(*p); if(*p=='\n') vga_puts("  "); }
+        vga_putchar('\n');
+    } else vga_puts("  This one has no story yet -- only its colours.\n");
+    vga_set_color(VGA_WHITE,VGA_BLACK);
+}
+
 void cmd_theme(const char *arg){
+    if(arg && (!strcmp(arg,"story") || !strncmp(arg,"story ",6))){
+        int n = ui_current_theme();
+        if(arg[5]==' ' && arg[6]){
+            n = (arg[6]>='0'&&arg[6]<='9') ? atoi(arg+6) : theme_by_name(arg+6);
+            if(n<0 || n>=ui_theme_total()){ vga_printf("theme: no theme '%s'\n",arg+6); return; }
+        }
+        story(n);
+        return;
+    }
     if(arg && arg[0]){
         int n = (arg[0]>='0'&&arg[0]<='9') ? atoi(arg) : theme_by_name(arg);
         if(n<0 || n>=ui_theme_count()){
@@ -63,7 +87,7 @@ void cmd_theme(const char *arg){
     }
     int cur=ui_current_theme();
     vga_set_color(VGA_LIGHT_CYAN,VGA_BLACK);
-    vga_puts("  Themes   -- theme <number or name> switches\n");
+    vga_puts("  Themes   -- theme <number or name> switches, theme story tells one's history\n");
     for(int i=0;i<ui_theme_total();i++){
         int locked = i>=ui_theme_count();
         if(i==ui_theme_base_count()){
@@ -80,6 +104,7 @@ void cmd_theme(const char *arg){
         vga_puts("  ");
         vga_puts(ui_theme_get(i)->name);
         if(i==cur){ vga_set_color(VGA_DARK_GREY,VGA_BLACK); vga_puts("   current"); }
+        if(ui_theme_get(i)->story){ vga_set_color(VGA_DARK_GREY,VGA_BLACK); vga_puts("   -- theme story"); }
         vga_putchar('\n');
     }
     vga_set_color(VGA_DARK_GREY,VGA_BLACK);

@@ -106,6 +106,19 @@ static long long g_wdrop_lba = -1;
 static int g_wfail_once = -1;
 static int g_wcount = 0;
 
+/* v0.9.7.8: where the kernel copy starts, in writes. These suites used to
+   hard-code "write 700 is inside the kernel" -- true for a FAT16 format of
+   545 writes. A 1 GB gap is FAT32 now, whose FATs alone are thousands of
+   writes, and 700 landed in the format. So the point is measured: a clean
+   install reports "Copying HavenDOS kernel" through its callback, and the
+   write count at that moment is where the kernel begins. */
+static int g_kstart = -1;
+static void kstart_cb(int s, int t, const char *m)
+{
+    (void)s; (void)t;
+    if(g_kstart < 0 && m && strstr(m, "Copying HavenDOS kernel")) g_kstart = g_wcount;
+}
+
 /* THE MODEL DISK IS INDEX 1, NOT 0, on purpose.
 
    Disk 0 exists in the table and every access to it fails. Anything in the
@@ -558,10 +571,11 @@ int main(void)
         ck("and the count is a whole number of megabytes",
            rep.part_sectors % INSTADD_ALIGN == 0,
            (long)(rep.part_sectors % INSTADD_ALIGN));
-        ck("the geometry is a valid FAT16",
-           rep.geom.clusters >= FAT16_MIN_CLUSTERS
-           && rep.geom.clusters <= FAT16_MAX_CLUSTERS,
-           (long)rep.geom.clusters);
+        /* v0.9.7.8: this 1 GB gap is FAT32 now (FAT32 from 64 MB). */
+        ck("a 1 GB gap is planned as FAT32", rep.fs_type == 32, rep.fs_type);
+        ck("the geometry is a valid FAT32",
+           rep.geom32.clusters >= FAT32_MIN_CLUSTERS,
+           (long)rep.geom32.clusters);
         ck("and the volume can hold the kernel",
            rep.vol_need_bytes <= rep.vol_free_bytes, 0);
         ck("the ESP survey succeeded", rep.esp_rc == ESP_OK, rep.esp_rc);
@@ -571,7 +585,7 @@ int main(void)
                (unsigned long long)rep.part_first,
                (unsigned long long)rep.part_last,
                (unsigned long long)(rep.part_sectors / 2048),
-               rep.geom.sects_per_clust, rep.geom.clusters);
+               rep.geom32.sects_per_clust, rep.geom32.clusters);
     }
 
     head("a live session may preview but may not write");
@@ -875,9 +889,15 @@ int main(void)
         ck("rebuild the disk and its ESP", reset_esp(&elo, &ehi), 0);
         snapshot();
 
-        /* 4 for the table, 545 for the format, ~70 for the directories and
-           the menu: failing from 700 lands inside the kernel copy. */
-        g_wcount = 0; g_wfail_at = 700;
+        /* Measure where the kernel copy starts on this disk, then fail
+           from 100 writes into it. */
+        g_kstart = -1; g_wcount = 0;
+        havendos_install_additive(MODEL_DISK, 0, &r2, kstart_cb);
+        ck("measured where the kernel copy starts", g_kstart > 0, g_kstart);
+        build_disk(1024ull * 1024 * 1024 * 1024 / 512 / 2);
+        ck("rebuild the disk and its ESP again", reset_esp(&elo, &ehi), 0);
+        snapshot();
+        g_wcount = 0; g_wfail_at = g_kstart + 100;
         g_logging = 1; g_nwlog = 0;
         r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
         g_logging = 0; g_wfail_at = -1;
@@ -911,7 +931,11 @@ int main(void)
         build_disk(1024ull * 1024 * 1024 * 1024 / 512 / 2);
         ck("rebuild the disk and its ESP", reset_esp(&elo, &ehi), 0);
 
-        g_wcount = 0; g_wfail_once = 700;      /* inside the kernel copy */
+        g_kstart = -1; g_wcount = 0;
+        havendos_install_additive(MODEL_DISK, 0, &r2, kstart_cb);
+        build_disk(1024ull * 1024 * 1024 * 1024 / 512 / 2);
+        ck("rebuild it after measuring", reset_esp(&elo, &ehi), 0);
+        g_wcount = 0; g_wfail_once = g_kstart + 100;   /* inside the kernel copy */
         r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
         g_wfail_once = -1;
 
@@ -953,6 +977,30 @@ int main(void)
         ck("rebuild the disk and its ESP", reset_esp(0, 0), 0);
         r = havendos_install_additive(MODEL_DISK, 1, &r2, 0);
         ck("plan it first", r == INSTADD_OK, r);
+        g_wdrop_lba = (long long)r2.part_first;
+        r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
+        g_wdrop_lba = -1;
+        /* v0.9.7.8: a 1 GB gap is FAT32, and the FAT32 path mounts the new
+           volume to write its files -- which reads the boot sector, so the
+           loss is caught there, earlier than the read-back. Either way it
+           is a failure, not a success. */
+        ck("the install reports it as a failure (FAT32: caught at mount)",
+           r == INSTADD_E_VERIFY || r == INSTADD_E_FILES, r);
+    }
+
+    head("and on FAT16 the read-back catches it (a 48 MB gap)");
+    {
+        /* The FAT16 path writes its own structures and never rereads the
+           boot sector before the verify, so this is the case the verify is
+           for. FAT16 is only made below 64 MB now. */
+        inst_add_t r2;
+        int r;
+        build_disk_gap(1024ull * 1024 * 1024 * 1024 / 512 / 2, 128,
+                       48ull * 2048);
+        ck("rebuild with a 48 MB gap", reset_esp(0, 0), 0);
+        r = havendos_install_additive(MODEL_DISK, 1, &r2, 0);
+        ck("plan it first", r == INSTADD_OK, r);
+        ck("a 48 MB gap is FAT16", r2.fs_type == 16, r2.fs_type);
         g_wdrop_lba = (long long)r2.part_first;
         r = havendos_install_additive(MODEL_DISK, 0, &r2, 0);
         g_wdrop_lba = -1;

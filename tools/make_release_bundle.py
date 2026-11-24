@@ -147,6 +147,7 @@ a fresh conversation.
 | `HavenDOS-{ver}.iso` | bootable disc, BIOS and UEFI |
 | `HavenDOS-{ver}-source.zip` | the tree, minus build products |
 | `update/` | updating an installed machine in place |
+| `HavenDOS-Install-Guide.pdf` | installing HavenDOS beside Windows, step by step, for a first install (also in `docs/`) |
 | `docs/` | the hardware test plans -- the parts only the laptop can answer -- and the newest roadmap (THS-RM PDF) |
 
 ## Updating a machine that already runs HavenDOS
@@ -315,6 +316,12 @@ def main():
 
     # The newest official roadmap (THS-RM-xxxx), so a new chat has the
     # plan as well as the state. The highest document number wins.
+    # v0.9.7.8: the install guide (THS-IG-1001), at the top of the bundle
+    # too, where someone new opens it first.
+    guide = os.path.join(ROOT, "docs", "HavenDOS-Install-Guide.pdf")
+    if os.path.exists(guide):
+        shutil.copy2(guide, os.path.join(stage, "docs"))
+        shutil.copy2(guide, stage)
     rdir = os.path.join(ROOT, "docs", "roadmap")
     if os.path.isdir(rdir):
         rms = sorted(f for f in os.listdir(rdir)

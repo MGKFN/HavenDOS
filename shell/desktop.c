@@ -1400,8 +1400,11 @@ static void app_calculator(void){
      - Right-click context menu: Copy / Cut / Paste / Select All
      - Multi-line clipboard (up to ED_CLIP_LINES lines)
    ═══════════════════════════════════════════════════════════ */
-#define ED_ROWS        200   /* max lines in buffer            */
-#define ED_COLS        79    /* max chars per line             */
+/* v0.9.7.8: 4000 lines of up to 126 characters (Kyan, 24 Nov: "200 lines
+   is small"). Was 200 lines of 78. About 1 MB together with the one file
+   buffer below, which load and save now share. */
+#define ED_ROWS        4000  /* max lines in buffer            */
+#define ED_COLS        128   /* max chars per line, + the NUL  */
 /* v0.7.19 — these were compile-time 21 and 74, pinned to 80x25.  In 80x50,
    90x30 or 90x60 the editor therefore drew a 21x74 box in the top-left of the
    screen and left the rest of it holding whatever was there before, which is
@@ -1414,6 +1417,8 @@ static void app_calculator(void){
 #define ED_CLIP_LINES  64    /* max lines in clipboard         */
 
 static char  ed_buf[ED_ROWS][ED_COLS];
+/* The file as bytes, for load and save -- one buffer, not one each. */
+static char  ed_io[ED_ROWS*(ED_COLS+2)];
 static char  ed_filename[48];
 static int   ed_dirty;
 static int   ed_insert;
@@ -1507,10 +1512,16 @@ static void ed_redraw(int cur_row, int cur_col, int scroll_row, int scroll_col)
         vga_puts_at(ln, 0, 2+vr, lgc, VGA_BLACK);
         vga_putchar_at('|', ED_LNPAD-1, 2+vr, VGA_DARK_GREY, VGA_BLACK);
 
-        /* Line content — char by char so we can highlight selection */
+        /* Line content — char by char so we can highlight selection.
+           v0.9.7.8: only up to the line's end. Deleting and joining lines
+           copies with strcpy(), which leaves the old bytes after the new
+           NUL, and this loop drew every cell of the row -- so a cut of
+           several lines left their text on screen, first letter blanked,
+           over a buffer that was empty. Found by harness/notepad_0978.py. */
+        int blen = (br<ED_ROWS) ? (int)strlen(ed_buf[br]) : 0;
         for(int dc=0;dc<ED_VCOLS;dc++){
             int bc = dc + scroll_col;
-            char ch = (br<ED_ROWS && bc<ED_COLS) ? ed_buf[br][bc] : 0;
+            char ch = (bc<blen) ? ed_buf[br][bc] : 0;
             if(!ch) ch=' ';
             int in_s = ed_in_sel(br,bc);
             vga_color_t fg = in_s ? VGA_BLACK   : (br==cur_row?VGA_WHITE:VGA_LIGHT_GREY);
@@ -1574,6 +1585,36 @@ static void ed_split_line(int row, int col){
     ed_dirty=1;
 }
 
+/* ── v0.9.7.8: WRAPPING AT THE EDGE OF THE SCREEN ─────────────────
+   Kyan, 24 Nov: a new line when the text reaches the edge. After each
+   typed character, a line longer than the visible width is split at its
+   last space before the edge -- the word that crossed it moves down
+   whole -- or at the edge itself when there is no space. The cursor
+   follows its character. The break is a real line break in the file,
+   as on a typewriter. */
+static int ed_wrap_width(void){
+    /* One less than the view: the cursor sits AFTER the last character,
+       and at ED_VCOLS it would be off the edge -- the view scrolled one
+       column sideways a keystroke before the wrap, and stayed there. */
+    int w = ED_VCOLS - 1;
+    if(w > ED_COLS-3) w = ED_COLS-3;   /* so ed_insert_char never refuses */
+    if(w < 8) w = 8;
+    return w;
+}
+static void ed_wrap(int *crow, int *ccol){
+    int row=*crow, W=ed_wrap_width();
+    int len=(int)strlen(ed_buf[row]);
+    if(len<=W || row>=ED_ROWS-2) return;
+    int br=W;
+    while(br>0 && ed_buf[row][br]!=' ') br--;
+    if(br<=0) br=W;                    /* one long word: break at the edge */
+    else br++;                         /* keep the space on this line     */
+    ed_split_line(row, br);
+    /* a trailing space at the break serves no one */
+    { int l=(int)strlen(ed_buf[row]); if(l>0&&ed_buf[row][l-1]==' ') ed_buf[row][l-1]=0; }
+    if(*ccol>=br){ *crow=row+1; *ccol-=br; }
+}
+
 /* ── Clipboard operations ────────────────────────────────── */
 
 /* ── v0.9.7 (E-2): the editor's lines and the shared clipboard ──────
@@ -1633,10 +1674,14 @@ static void ed_delete_sel(int *crow,int *ccol){
     int sr=ed_sel_sr,sc=ed_sel_sc,er=ed_sel_er,ec=ed_sel_ec;
     ed_sel_norm(&sr,&sc,&er,&ec);
     if(sr==er){
-        /* Single line — remove chars sc..ec */
+        /* Single line — remove chars sc..ec.
+           v0.9.7.8: a loop stood here first, before the one below:
+               ed_buf[sr][i]=ed_buf[sr][i+(ec-sc)<len-i?ec-sc:0];
+           `<` binds tighter than `?:`, so its index was 0 or ec-sc -- it
+           filled the line from sc on with copies of one character, and the
+           shift below then moved that rubble. Every Ctrl+X (and menu Cut)
+           of a selection within one line scrambled the line. Removed. */
         int len=(int)strlen(ed_buf[sr]);
-        for(int i=sc;i<len;i++) ed_buf[sr][i]=ed_buf[sr][i+(ec-sc)<len-i?ec-sc:0];
-        /* safer: memmove-style */
         int rmv=ec-sc; if(rmv<0)rmv=0;
         for(int i=sc;i<len-rmv;i++) ed_buf[sr][i]=ed_buf[sr][i+rmv];
         for(int i=len-rmv;i<len;i++) ed_buf[sr][i]=0;
@@ -1775,13 +1820,15 @@ static void ed_save_prompt(void){
             int k=keyboard_waitchar();
             if(k=='\n'||k=='\r') break;
             if(k==27){return;}
-            if(k=='\b'&&sp>0){sp--;name[sp]=0;vga_putchar_at(' ',9+sp,23,VGA_BLACK,VGA_CYAN);vga_set_cursor(9+sp,23);}
-            else if(k>=32&&k<127&&sp<46){name[sp++]=k;name[sp]=0;vga_putchar_at(k,9+sp-1,23,VGA_BLACK,VGA_CYAN);vga_set_cursor(9+sp,23);}
+            /* v0.9.7.8: row pr, not 23 -- on a screen taller than 25 rows
+               the name was typed into the middle of the text */
+            if(k=='\b'&&sp>0){sp--;name[sp]=0;vga_putchar_at(' ',9+sp,pr,VGA_BLACK,VGA_CYAN);vga_set_cursor(9+sp,pr);}
+            else if(k>=32&&k<127&&sp<46){name[sp++]=k;name[sp]=0;vga_putchar_at(k,9+sp-1,pr,VGA_BLACK,VGA_CYAN);vga_set_cursor(9+sp,pr);}
         }
         if(name[0]) strncpy(ed_filename,name,47);
         else return;
     }
-    static char fbuf[ED_ROWS*(ED_COLS+2)];
+    char *fbuf=ed_io;
     int p=0;
     for(int r=0;r<ED_ROWS;r++){
         int l=(int)strlen(ed_buf[r]);
@@ -1796,7 +1843,7 @@ static void ed_save_prompt(void){
         for(int x=0;x<vga_cols();x++) vga_putchar_at(' ',x,pr,VGA_BLACK,VGA_CYAN);
         vga_puts_at("Saved.",0,pr,VGA_BLACK,VGA_CYAN);
         if(!vfs_using_disk())   /* v0.9.3: was !fat16, wrong on FAT32 */
-            vga_puts_at("(RAMFS - lost on reboot, no persistent disk)",10,23,VGA_YELLOW,VGA_CYAN);
+            vga_puts_at("(RAMFS - lost on reboot, no persistent disk)",10,pr,VGA_YELLOW,VGA_CYAN);
         sleep_ms(1400);
     } else {
         /* Save genuinely failed — do NOT clear the dirty flag, and
@@ -2060,8 +2107,11 @@ static void app_texteditor_run(void){
         } else if(c>=32&&c<127){
             if(ed_sel_active) ed_delete_sel(&crow,&ccol);
             if(ed_insert) ed_insert_char(crow,ccol,c);
-            else { if(ccol<ED_COLS-1){ed_buf[crow][ccol]=(char)c; ed_dirty=1;} }
+            else { if(ccol<ED_COLS-2){
+                       if(!ed_buf[crow][ccol]) ed_buf[crow][ccol+1]=0;
+                       ed_buf[crow][ccol]=(char)c; ed_dirty=1; } }
             ccol++;
+            ed_wrap(&crow,&ccol);          /* v0.9.7.8 */
         }
 
         /* Collapse selection if start==end */
@@ -2072,6 +2122,7 @@ static void app_texteditor_run(void){
         if(crow<srow) srow=crow;
         if(crow>=srow+ED_VROWS) srow=crow-ED_VROWS+1;
         if(ccol<scol) scol=ccol;
+        if(ccol<ED_VCOLS) scol=0;        /* v0.9.7.8: back to the left edge when it fits */
         if(ccol>=scol+ED_VCOLS) scol=ccol-ED_VCOLS+1;
 
         ed_redraw(crow,ccol,srow,scol);
@@ -2210,13 +2261,27 @@ static void app_texteditor_load(const char *filename){
     for(int i=0;i<ED_ROWS;i++) memset(ed_buf[i],0,ED_COLS);
     strncpy(ed_filename,filename,47); ed_dirty=0; ed_insert=1;
     ed_sel_active=0; ed_clip_lines=0;
-    static char fbuf[ED_ROWS*(ED_COLS+2)];
-    int r=vfs_read(filename,fbuf,sizeof(fbuf)-1);
+    char *fbuf=ed_io;
+    int r=vfs_read(filename,fbuf,(uint32_t)sizeof(ed_io)-1);
     if(r>0){
         fbuf[r]=0; int row=0,col=0;
         for(int i=0;i<r&&row<ED_ROWS;i++){
             if(fbuf[i]=='\n'){row++;col=0;}
-            else if(fbuf[i]>=32&&col<ED_COLS-1){ed_buf[row][col++]=fbuf[i];ed_buf[row][col]=0;}
+            else if(fbuf[i]>=32){
+                /* v0.9.7.8: a line longer than the buffer is WRAPPED onto
+                   the next one, at its last space if it has one. It was
+                   cut off at 78 characters, and saving wrote the cut
+                   version back over the file. */
+                if(col>=ED_COLS-2){
+                    int br=col; while(br>0&&ed_buf[row][br-1]!=' ') br--;
+                    if(row+1>=ED_ROWS) break;
+                    if(br<=0) br=col;
+                    strcpy(ed_buf[row+1],ed_buf[row]+br);
+                    ed_buf[row][br]=0;
+                    row++; col=(int)strlen(ed_buf[row]);
+                }
+                ed_buf[row][col++]=fbuf[i]; ed_buf[row][col]=0;
+            }
         }
     }
     app_texteditor_run();

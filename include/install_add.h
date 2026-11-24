@@ -54,6 +54,15 @@
    FAT16, exactly as before; a larger one is FAT32. See instadd_fs_for(). */
 #define INSTADD_FAT16_MAX_SECTORS  4192256u      /* 2047 MB */
 
+/* v0.9.7.8: the smallest partition that is made FAT32. Kyan, 24 Nov: a
+   2000 MiB partition should be FAT32, not FAT16. Every new install from
+   64 MB up is FAT32 now; FAT16 is only for the 16-63 MB a tiny disk or
+   gap leaves. 64 MB, not FAT32's bare minimum of about 33 MB, so the
+   volume is never within a few clusters of the 65,525 FAT32 needs --
+   at 64 MB with 512-byte clusters it has about 130,000. FAT16 volumes
+   already installed keep working; `migrate` moves one to FAT32. */
+#define INSTADD_FAT32_MIN_SECTORS  131072u       /* 64 MB */
+
 /* The largest volume either installer makes, in sectors: 32 GB.
 
    Why there is a cap at all, now that FAT32 could go to 2 TB:

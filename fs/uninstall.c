@@ -18,6 +18,7 @@ extern int inst_disk_has_gpt(int i);
 #define P_DIR_HAVENDOS  "/EFI/HAVENDOS"
 #define P_LOADER        "/EFI/HAVENDOS/grubx64.efi"
 #define P_CFG           "/EFI/HAVENDOS/grub.cfg"
+#include "../include/grub_theme.h"   /* v0.9.7.8: the theme files, to remove */
 #define P_FALLBACK      "/EFI/BOOT/BOOTX64.EFI"
 #define P_FALLBACK_BAK  "/EFI/BOOT/BOOTX64.HDB"
 #define P_WINDOWS       "/EFI/Microsoft/Boot/bootmgfw.efi"
@@ -253,6 +254,17 @@ int uninst_run(int disk, int dry_run, uninst_report_t *r)
             if(!dry_run){
                 if(fat32_exists(P_CFG))    (void)fat32_delete(P_CFG);
                 if(fat32_exists(P_LOADER)) (void)fat32_delete(P_LOADER);
+                /* v0.9.7.8: and the boot menu's theme, which an install
+                   from 0.9.7.8 on writes beside them. Ours by name, from
+                   the same list fs/esp.c writes. */
+                for(int i = 0; i < GRUB_THEME_NFILES; i++){
+                    char tp[48]; uint32_t k = 0, j = 0;
+                    const char *d = "/EFI/HAVENDOS/";
+                    while(d[k] && k < sizeof tp - 1){ tp[k] = d[k]; k++; }
+                    while(grub_theme_names[i][j] && k < sizeof tp - 1) tp[k++] = grub_theme_names[i][j++];
+                    tp[k] = 0;
+                    if(fat32_exists(tp)) (void)fat32_delete(tp);
+                }
                 /* rmdir refuses a directory with anything left in it,
                    so a failure here means something we did not put
                    there is inside -- which is a reason to stop and

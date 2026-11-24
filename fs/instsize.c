@@ -9,7 +9,8 @@
 
 int instadd_fs_for(uint64_t sectors)
 {
-    return sectors > INSTADD_FAT16_MAX_SECTORS ? 32 : 16;
+    /* v0.9.7.8: FAT32 from 64 MB, not from 2048 MB. */
+    return sectors >= INSTADD_FAT32_MIN_SECTORS ? 32 : 16;
 }
 
 uint32_t havendos_wholedisk_sectors(uint64_t disk_sectors)

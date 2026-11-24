@@ -11,6 +11,12 @@ typedef struct {
     uint8_t     pat_kind;   /* UI_PAT_*                                  */
     char        pat_ch;     /* the wallpaper's character                 */
     vga_color_t pat_fg;     /* and its colour, on desk_bg                */
+    /* v0.9.7.8. Appended again. A theme may bring its own 16 colours (NULL:
+       the standard VGA ones) and fade background 0 from grad_top to
+       grad_bot down the screen; story is its few lines of history. */
+    const uint32_t *pal;
+    uint32_t    grad_top, grad_bot;
+    const char *story;
 } theme_t;
 
 /* Wallpaper shapes. One function draws them (ui_pattern_at), so the
@@ -58,6 +64,7 @@ void ui_load_preview(int n);
 void ui_force_cursor_redraw(void);
 void ui_idle(uint32_t ms);   /* v0.8.9.6: a wait that keeps reading the pointer */
 void ui_unlock_extra_themes(void);
+void ui_theme_apply_palette(void);   /* v0.9.7.8: the current theme's colours to the screen */
 int  ui_extra_themes_unlocked(void);
 #endif
 

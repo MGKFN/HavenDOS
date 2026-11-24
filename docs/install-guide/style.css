@@ -1,0 +1,28 @@
+/* THS-IG-1001 -- overrides on the house style (manual/style.css) and the
+   report cover (docs/rm1005/style.css). Only what an install guide needs:
+   its own running head, a key-cap, and the cover's "you will need" panel.
+   No colour or typeface is defined here. */
+@page {
+    @top-left  { content: "HavenDOS — installing beside Windows"; }
+    @top-right { content: "THS-IG-1001 REV A"; }
+}
+.key {
+    font-family: "IBM Plex Mono"; font-weight: 700; font-size: .86em;
+    border: .25mm solid #1a1714; border-bottom-width: .6mm;
+    border-radius: .6mm; padding: 0 .9mm; background: #e9e0c7;
+    white-space: nowrap;
+}
+.cmd { font-family: "IBM Plex Mono"; font-weight: 700; color: #a8321c; }
+.cover .need {
+    margin-top: 22mm; font-family: "IBM Plex Mono"; font-size: 6.9pt;
+    line-height: 1.9;
+}
+.cover .need .row { display: flex; gap: 3mm; }
+.cover .need .lab { width: 24mm; color: #a8321c; letter-spacing: .07em; }
+.cover .need .val { color: #1a1714; }
+.cover .needhead {
+    font-family: "IBM Plex Mono"; font-weight: 700; font-size: 6.6pt;
+    letter-spacing: .3em; color: #1a1714; margin-bottom: 1.5mm;
+    border-bottom: .25mm solid #1a1714; padding-bottom: 1mm; width: 70mm;
+}
+.cover .meta { margin-top: 12mm; }

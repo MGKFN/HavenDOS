@@ -293,3 +293,9 @@ void      vga_set_visible(int on);
 int       vga_visible(void);
 uint16_t *vga_boot_cells(void);
 void      vga_forget_cells(const uint16_t *cells);
+/* v0.9.7.8: a theme's palette (drivers/vga.c). NULL = standard VGA. A
+   gradient for background 0 when grad_top != grad_bot (framebuffer only). */
+void     vga_set_palette(const uint32_t *rgb16, uint32_t grad_top, uint32_t grad_bot);
+int      vga_palette_custom(void);
+uint32_t vga_palette_rgb(int i);
+

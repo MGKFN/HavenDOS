@@ -3,8 +3,11 @@
 
 Under OVMF, on a Windows-shaped GPT disk, the whole of what Kyan asked for:
 
-  [1] the ISO installs HavenDOS beside "Windows" into a 1.2 GB gap: FAT16,
-      the way every install before 0.9.3 was made. An 8 GB partition the
+  [1] an OLDER ISO (0.9.7.7) installs HavenDOS beside "Windows" into a
+      1.2 GB gap: FAT16, the way installs under 2 GB were made until 0.9.7.8
+      made everything from 64 MB FAT32. Then this release's kernel is put
+      on it, as `update` would: the system that runs `migrate` is the
+      release under test, on the kind of volume real installs still have. An 8 GB partition the
       owner made and never formatted sits after it, and 3 GB of free space.
   [2] the FAT16 volume is given a life: dotfiles under FAT16's own names
       (_ACCOUNT, _HAVENDO ...), a home folder three levels deep, a hundred
@@ -45,6 +48,11 @@ args = sys.argv[1:]
 USE_GAP = "--gap" in args
 args = [a for a in args if a != "--gap"]
 ISO = args[0] if args else os.path.join(os.path.dirname(HERE), "havendos.iso")
+# v0.9.7.8: the release that makes the FAT16 system. Any ISO before
+# 0.9.7.8; the last one is kept beside the tree by the release flow.
+OLD_ISO = os.environ.get("MIGRATE_OLD_ISO",
+                         os.path.join(os.path.dirname(HERE), "HavenDOS-0.9.7.7.iso"))
+NEW_KERNEL = os.path.join(os.path.dirname(HERE), "havendos_pass1.elf")
 IMG = "/tmp/hd_mig.img"
 GB = 16
 MENU_INSTALL = 3
@@ -182,8 +190,9 @@ def build():
 
 
 def install(before):
-    print("\n  [1] the ISO installs HavenDOS into the 1.2 GB gap (FAT16)")
-    with vm(ISO) as q:
+    iso_for_install = OLD_ISO
+    print("\n  [1] %s installs HavenDOS into the 1.2 GB gap (FAT16)" % os.path.basename(OLD_ISO))
+    with vm(iso_for_install) as q:
         time.sleep(12)
         for _ in range(MENU_INSTALL):
             q.key("down"); time.sleep(0.35)
@@ -314,6 +323,9 @@ def main():
             sys.exit("needs " + t)
     if not os.path.exists(ISO):
         sys.exit("missing " + ISO)
+    if not os.path.exists(OLD_ISO):
+        sys.exit("missing %s -- the FAT16 system is made by a release before "
+                 "0.9.7.8 (set MIGRATE_OLD_ISO)" % OLD_ISO)
     print("migrate: FAT16 -> FAT32 on one disk, under OVMF%s" % (" (into free space)" if USE_GAP else ""))
     before = build()
     for n, (a, b, nm) in sorted(before.items()):
@@ -324,6 +336,10 @@ def main():
     if not old:
         return 1
     old_first, old_last, _ = old
+    # this release's kernel onto the old FAT16 volume, as `update` puts it
+    r = sh("mcopy -o -i %s %s ::/BOOT/HAVENDOS.ELF" % (at(old_first), NEW_KERNEL))
+    ck("the FAT16 system now runs this release's kernel", r.returncode == 0,
+       r.stderr[-200:])
     seed(old_first)
     old_serial = int.from_bytes(bpb(old_first)[39:43], "little")
 

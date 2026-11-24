@@ -320,6 +320,20 @@ int main(void)
         ck("so is a grub.cfg", fat32_file_size(P_CFG) > 100, 0);
         ck("nothing was backed up, because nothing was in the way",
            !rep.would_back_up, 0);
+        /* v0.9.7.8: the boot menu's theme, beside grub.cfg */
+        {
+            int ok = 1, i, bad = -1;
+            for(i = 0; i < GRUB_THEME_NFILES; i++){
+                char tp[64];
+                snprintf(tp, sizeof tp, "/EFI/HAVENDOS/%s", grub_theme_names[i]);
+                if(fat32_file_size(tp) != grub_theme_size[i]){ ok = 0; bad = i; break; }
+            }
+            ck("every theme file is there, at its size (0.9.7.8)", ok, bad);
+            ck("and the theme's own file is among them",
+               fat32_file_size("/EFI/HAVENDOS/theme.txt") > 200, 0);
+            ck("the space estimate counted them",
+               rep.need_kb * 1024u >= 2u * FAKE_LOADER_SZ + 30000u, (long)rep.need_kb);
+        }
         fat32_unmount();
     }
 
@@ -679,6 +693,17 @@ int main(void)
             if(memcmp(CFG_TEXT + i, "/boot/havendos.elf", 18) == 0) has_elf = 1;
         }
         ck("it loads /boot/havendos.elf", has_elf, 0);
+        {
+            int th = 0, lf = 0, guard = 0;
+            for(i = 0; i + 10 <= n; i++){
+                if(memcmp(CFG_TEXT + i, "set theme=$prefix/theme.txt", 27) == 0) th = 1;
+                if(memcmp(CFG_TEXT + i, "loadfont $prefix/", 17) == 0) lf = 1;
+                if(memcmp(CFG_TEXT + i, "if loadfont", 11) == 0) guard = 1;
+            }
+            ck("the menu sets the THS theme (0.9.7.8)", th, 0);
+            ck("and loads its fonts from beside itself", lf, 0);
+            ck("only if the first font loads -- else the plain menu", guard, 0);
+        }
         ck("with mode=desktop, or the installed system boots the installer",
            has_mode, 0);
         ck("and gfx=text, as fs/install.c's own grub.cfg does", has_gfx, 0);

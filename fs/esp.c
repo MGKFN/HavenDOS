@@ -39,6 +39,10 @@ static const uint32_t grub_efi_img_size = 0;
 #define P_DIR_BOOT      "/EFI/BOOT"
 #define P_LOADER        "/EFI/HAVENDOS/grubx64.efi"
 #define P_CFG           "/EFI/HAVENDOS/grub.cfg"
+/* v0.9.7.8: the boot menu's theme, built in by tools/make_grub_theme.py and
+   written to /EFI/HAVENDOS/ beside grub.cfg ($prefix to GRUB). */
+#include "../include/grub_theme_embed.h"
+#define P_THEME_DIR     "/EFI/HAVENDOS/"
 #define P_FALLBACK      "/EFI/BOOT/BOOTX64.EFI"
 #define P_FALLBACK_BAK  "/EFI/BOOT/BOOTX64.HDB"
 #define P_WINDOWS       "/EFI/Microsoft/Boot/bootmgfw.efi"
@@ -61,6 +65,25 @@ static const char *CFG_TEXT =
     "# Windows back, and it is first in the list for a reason.\n"
     "set timeout=8\n"
     "set default=1\n"
+    "\n"
+    /* v0.9.7.8: the THS theme, written beside this file (see below). Every
+       line of it is conditional: a loader without gfxmenu, or a font that
+       does not load, leaves the plain text menu, which still works. The
+       colours are set first so even that one is graphite and red. */
+    "set menu_color_normal=light-gray/black\n"
+    "set menu_color_highlight=white/red\n"
+    "insmod all_video\n"
+    "insmod gfxterm\n"
+    "insmod png\n"
+    "insmod gfxmenu\n"
+    "set gfxmode=1920x1080,1600x900,1440x900,1366x768,1280x800,1024x768,auto\n"
+    "set gfxpayload=keep\n"
+    "if loadfont $prefix/" GRUB_THEME_FONT_DVM20 " ; then\n"
+    "    loadfont $prefix/" GRUB_THEME_FONT_DVMB20 "\n"
+    "    loadfont $prefix/" GRUB_THEME_FONT_DVM16 "\n"
+    "    set theme=$prefix/theme.txt\n"
+    "    terminal_output gfxterm\n"
+    "fi\n"
     "\n"
     /* The kernel command line is not optional and leaving it off is not a
        cosmetic difference. With no arguments the kernel comes up in
@@ -319,6 +342,8 @@ static int survey(esp_report_t *rep)
             uint32_t ex = fat32_file_size(P_FALLBACK);
             need += ((ex + cl - 1) / cl) * cl;       /* and a copy of what is there */
         }
+        for(int i = 0; i < GRUB_THEME_NFILES; i++)  /* v0.9.7.8: the theme     */
+            need += ((grub_theme_size[i] + cl - 1) / cl) * cl;
         need += cl * 8;                              /* directories and slack     */
         rep->need_kb = need / 1024u;
     }
@@ -384,6 +409,19 @@ int esp_install_mounted(esp_report_t *rep, int havendos_part, int dry_run)
         r = write_verified(P_CFG, (const uint8_t *)cfg, cstrlen(cfg));
     }
     if(r != ESP_OK) return r;
+
+    /* v0.9.7.8: the theme the menu above asks for. Written and verified
+       like everything else here; a failure stops the install like any
+       other write, rather than leaving a menu that points at nothing. */
+    for(int i = 0; i < GRUB_THEME_NFILES; i++){
+        char path[48];
+        uint32_t k = 0, j = 0;
+        while(P_THEME_DIR[k] && k < sizeof path - 1){ path[k] = P_THEME_DIR[k]; k++; }
+        while(grub_theme_names[i][j] && k < sizeof path - 1) path[k++] = grub_theme_names[i][j++];
+        path[k] = 0;
+        r = write_verified(path, grub_theme_data[i], grub_theme_size[i]);
+        if(r != ESP_OK) return r;
+    }
 
     r = write_verified(P_FALLBACK, grub_efi_img, grub_efi_img_size);
     if(r != ESP_OK) return r;

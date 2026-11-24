@@ -204,7 +204,10 @@ def main():
             if r < 0:
                 return False
             px = img.getpixel((60 * 16, r * 32 + 16))   # right of the text
-            return px != (0, 0, 0)
+            # v0.9.7.8: not "!= black" -- Studio's background is a graphite
+            # fade, never (0,0,0). A selection bar is a saturated colour (the
+            # accent); a background, faded or black, is grey.
+            return max(px) - min(px) > 40
         check("before the wheel: 'Light it by itself' is the selected row",
               highlighted("Light it by itself"))
         for _ in range(2):

@@ -596,6 +596,28 @@ int main(void)
         sim_ticks += 1;
     }
 
+    /* ── v0.9.7.8: Ctrl+A IS 0x01, THE QUEUE'S EXTENDED-KEY MARKER ──── */
+    head("v0.9.7.8: Ctrl+A arrives, and does not eat the key after it");
+    {
+        int c, c2;
+        while(keyboard_getchar() != -1) ;
+        qpush(0x1D); qpush(0x1E); qpush(0x9E); qpush(0x9D);   /* Ctrl+A */
+        c = keyboard_getchar();
+        ck("Ctrl+A alone arrives as 0x01 (0.9.7.7: never arrived)", c == 0x01, c);
+        qpush(0x1D); qpush(0x1E); qpush(0x9E); qpush(0x9D);   /* Ctrl+A */
+        qpush(0xE0); qpush(0x48); qpush(0xE0); qpush(0xC8);   /* then Up */
+        c = keyboard_getchar(); c2 = keyboard_getchar();
+        ck("Ctrl+A then Up: Ctrl+A first", c == 0x01, c);
+        ck("and Up still arrives as Up", c2 == 0x148, c2);
+        qpush(0x1D); qpush(0x2D); qpush(0xAD); qpush(0x9D);   /* Ctrl+X */
+        c = keyboard_getchar();
+        ck("Ctrl+X arrives as 0x18", c == 0x18, c);
+        keyboard_inject(0x01);
+        c = keyboard_getchar();
+        ck("an injected 0x01 arrives as 0x01 too", c == 0x01, c);
+        sim_ticks += 1;
+    }
+
     head("...but the predicate does not, on purpose");
     {
         long before = kpollguard_poll_count();

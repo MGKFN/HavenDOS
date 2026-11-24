@@ -170,34 +170,27 @@ def main():
     print("[2/2] booting the installed system")
     kill_stale()
     q = Qemu(None, disk=DISK, boot="c").start()
-    seen = []
     try:
-        # Read the answer off the BOOT LOG rather than out of a shell.
-        #
-        # The log echoes live, line by line, as each subsystem comes up, and
-        # the line vfs_init() produces is the exact fact under test -- which
-        # filesystem the VFS routed to on a real installed system.  Getting
-        # to a shell instead means driving seven wizard screens whose key
-        # handling differs per screen, and a harness that fails there has
-        # told you nothing about the filesystem.
-        t0 = time.time()
-        while time.time() - t0 < 90:
-            s = q.screen()
-            if s and (not seen or s != seen[-1]):
-                seen.append(s)
-            if any("VFS ready" in x or "no HavenDOS partition" in x for x in seen):
-                break
-            time.sleep(0.3)
-        log = "\n".join(seen)
-        check("the installed system boots far enough to report its filesystem",
-              "VFS ready" in log or "no HavenDOS partition" in log, log[-2500:])
+        # v0.9.7.8: asked of the system, not read off the boot log. This
+        # watched the log scroll past for "FAT16: mounted, VFS ready"; the
+        # boot splash keeps the log off the screen until a key is pressed,
+        # and even after one the line is on screen for less time than a
+        # screenshot takes to read before setup replaces it -- it failed
+        # against 0.9.7.7 just the same. The installed menu's second entry
+        # is Shell Mode, which skips setup, and `disk` says what is mounted.
+        time.sleep(2.5)
+        q.key("down"); time.sleep(0.3); q.key("ret")
+        s = q.wait_for("@havendos", timeout=90)
+        check("the installed system boots to a shell", s is not None, q.screen())
+        q.line("disk"); time.sleep(3)
+        log = q.screen()
         check("and the VFS routed to its own FAT16 partition",
-              "FAT16: mounted, VFS ready" in log, log[-2500:])
+              "FAT16 part : mounted" in log and "Active FS  : FAT16" in log, log)
         check("it did NOT fall through to the RAM filesystem",
-              "no HavenDOS partition" not in log, log[-2500:])
+              "RAMFS" not in log.split("Active FS")[-1], log)
         # The new branch must not fire on a disk that has no FAT32 on it.
         check("and did not claim a FAT32 volume that is not there",
-              "FAT32: mounted" not in log, log[-2500:])
+              "FAT32 part : not mounted" in log, log)
     finally:
         q.stop()
     kill_stale()

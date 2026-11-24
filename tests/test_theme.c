@@ -101,6 +101,10 @@ int  cfg_desk_pattern(void){ return g_cfg_pattern; }
 void cfg_set_desk_pattern(int v){ g_cfg_pattern = v; }
 void cfg_save(void){ g_cfg_saves++; }
 
+/* v0.9.7.8: the palette a theme sets, recorded */
+static const uint32_t *g_pal; static uint32_t g_gtop, g_gbot; static int g_pal_sets;
+void vga_set_palette(const uint32_t *p, uint32_t t, uint32_t b){ g_pal=p; g_gtop=t; g_gbot=b; g_pal_sets++; }
+
 /* ── the code under test, as it ships ─────────────────────────────── */
 #include "taskstub.inc"     /* v0.9.6: tasks off */
 #include "../shell/ui.c"
@@ -228,7 +232,7 @@ int main(void)
         ck("the file holds the theme's name",
            strncmp(g_file, ui_theme_name(4), strlen(ui_theme_name(4))) == 0, g_filelen);
         ck("and not a number", !(g_file[0] >= '0' && g_file[0] <= '9'), g_file[0]);
-        ck("the base table is twelve themes", n == 12, n);
+        ck("the base table is thirteen themes (Studio, 0.9.7.8)", n == 13, n);
     }
 
     head("a number from 0.9.4 or older is migrated once, by meaning");
@@ -360,6 +364,32 @@ int main(void)
         ui_load_theme();
         ck("and old Arctic is Arctic again once the extras exist",
            !strcmp(ui_theme_name(ui_current_theme()), "Arctic"), ui_current_theme());
+    }
+
+    head("v0.9.7.8: Studio, the default, brings the THS colours");
+    {
+        fs_reset();                          /* no .theme file at all */
+        ui_load_preview(3);
+        int sets = g_pal_sets;
+        ui_load_theme();
+        ck("with no saved theme, Studio is the theme",
+           !strcmp(ui_theme_name(ui_current_theme()), "Studio"), ui_current_theme());
+        ck("and its palette was put on the screen",
+           g_pal_sets > sets && g_pal != 0, g_pal_sets - sets);
+        ck("black is graphite, white is paper, light red is oxide",
+           g_pal && g_pal[0] == 0x13161c && g_pal[15] == 0xe8e4da && g_pal[12] == 0xe2673f, 0);
+        ck("and black fades down the screen", g_gtop != g_gbot, (long)g_gtop);
+        ck("Studio has a story", ui_theme_get(0)->story && strlen(ui_theme_get(0)->story) > 100, 0);
+        fs_reset();
+        memcpy(g_file, "Haven\n", 6); g_filelen = 6;
+        ui_load_theme();
+        ck("someone who chose Haven keeps Haven",
+           !strcmp(ui_theme_name(ui_current_theme()), "Haven"), ui_current_theme());
+        ck("on the standard VGA colours", g_pal == 0, 0);
+        ui_load_preview(0);
+        ck("previewing Studio shows its colours", g_pal != 0, 0);
+        ui_set_theme(1);
+        ck("choosing another puts the standard ones back", g_pal == 0, 0);
     }
 
     printf("\n%d/%d passed\n", total - fails, total);

@@ -627,7 +627,18 @@ static void rescan(void){
     usb_scan();
 }
 
+/* v0.9.7.8: the emulated PCs show their screens in the colours they were
+   written for. The Studio theme remaps the 16 VGA colours onto the THS
+   palette, which suits HavenDOS and not a 1990s DOS screen, so Retro PC
+   runs on the standard palette and gives the theme's back on the way out. */
+static void app_retro_body(void);
 void app_retro(void){
+    extern void ui_theme_apply_palette(void);
+    vga_set_palette(0, 0, 0);
+    app_retro_body();
+    ui_theme_apply_palette();
+}
+static void app_retro_body(void){
     int sel = 0, top = 0;
     if(g_next[0]){
         char path[64];

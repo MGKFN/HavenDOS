@@ -39,6 +39,13 @@ static const char sc_hi[128]={
 };
 
 static void push_key(int c){
+    /* v0.9.7.8: Ctrl+A IS 0x01, and 0x01 is this ring's marker for an
+       extended key. Pushed bare, the read side took it for a marker and
+       ate the next key as its payload -- or, with nothing after it, sat
+       waiting for one -- so Ctrl+A never reached Notepad (Kyan, 24 Nov).
+       It goes in escaped now, as the pair 0x01 0x00, and the read side
+       turns a 0x00 payload back into a plain 0x01. No key code is 0x100. */
+    if(c==0x01) c=0x100;
     if(c>0xFF){
         /* v0.7.12: the two bytes of an extended key were pushed with a
            separate full/empty test each.  If the ring filled between them the
@@ -451,6 +458,7 @@ static int kbd_getchar_raw(void){
         if(second==kbd_head) return -1;          /* payload not here yet */
         unsigned char c2=(unsigned char)kbd_buf[second];
         kbd_tail=(second+1)%KBD_BUF;
+        if(c2==0x00) return 0x01;              /* an escaped Ctrl+A */
         return 0x100|(int)c2;
     }
     kbd_tail=(kbd_tail+1)%KBD_BUF;

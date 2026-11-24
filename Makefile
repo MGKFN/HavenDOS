@@ -72,12 +72,15 @@ include/grub_disk_embed.h:
 # cannot work -- a "dual boot" that only boots one of the two is not one.
 # search_label is how the menu finds the HavenDOS partition without
 # hardcoding a disk number that breaks when a drive is added.
+# gfxmenu and png (v0.9.7.8) draw the THS theme fs/esp.c writes beside the
+# menu; without them the menu falls back to plain text, and still works.
 include/grub_efi_embed.h:
 	grub-mkimage -O x86_64-efi -o /tmp/havendos_bootx64.efi \
 	  -p '/EFI/HAVENDOS' \
 	  part_gpt part_msdos fat normal multiboot multiboot2 chain \
 	  configfile echo ls test search search_fs_uuid search_fs_file \
-	  search_label all_video gfxterm font efifwsetup reboot halt
+	  search_label all_video gfxterm font efifwsetup reboot halt \
+	  gfxmenu png
 	python3 tools/make_grub_efi_embed.py \
 	  /tmp/havendos_bootx64.efi include/grub_efi_embed.h
 
@@ -419,7 +422,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tesp tests/test_esp.c && \
-	  python3 tools/run_suite.py --name test_esp --min 114 -- /tmp/hd_tesp
+	  python3 tools/run_suite.py --name test_esp --min 120 -- /tmp/hd_tesp
 	@echo "── test_fat16borrow ───────────────────────"
 	@echo "  the writable borrow, and whose disk the writes land on"
 	@# fs/gpt.c is LINKED, not stubbed: fs/fat16.c asks it whether a
@@ -461,7 +464,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -o /tmp/hd_twds tests/test_wholedisk_size.c fs/fat16fmt.c \
 	           fs/fat32fmt.c fs/instsize.c \
 	           && \
-	  python3 tools/run_suite.py --name test_wholedisk_size --min 124 -- /tmp/hd_twds
+	  python3 tools/run_suite.py --name test_wholedisk_size --min 161 -- /tmp/hd_twds
 	@echo "── test_fat16gpt ──────────────────────────"
 	@echo "  can the installed system find its own partition on a GPT disk"
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
@@ -479,7 +482,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch \
 	           -o /tmp/hd_tia tests/test_installadd.c && \
-	  python3 tools/run_suite.py --name test_installadd --min 200 -- /tmp/hd_tia
+	  python3 tools/run_suite.py --name test_installadd --min 208 -- /tmp/hd_tia
 	@echo "── test_xhci ──────────────────────────────"
 	@echo "  xHCI against a controller that executes its commands"
 	@# -no-pie so a static ring's address still fits the uint32_t a
@@ -527,7 +530,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tkbd tests/test_kbdinit.c && \
-	  python3 tools/run_suite.py --name test_kbdinit --min 52 -- /tmp/hd_tkbd
+	  python3 tools/run_suite.py --name test_kbdinit --min 57 -- /tmp/hd_tkbd
 	@echo "── test_theme ─────────────────────────────"
 	@echo "  previewing a theme is not choosing one"
 	@# shell/ui.c is COMPILED here, not copied: the stubs are only the
@@ -537,7 +540,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	@$(TESTCC) -fno-builtin -Iinclude -Itests \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -o /tmp/hd_tth tests/test_theme.c && \
-	  python3 tools/run_suite.py --name test_theme --min 44 -- /tmp/hd_tth
+	  python3 tools/run_suite.py --name test_theme --min 53 -- /tmp/hd_tth
 	@echo "── test_blkdev ────────────────────────────"
 	@echo "  one block layer, and the two orders it holds"
 	@$(TESTCC) -Iinclude -Wno-builtin-declaration-mismatch \

@@ -201,12 +201,58 @@ static void fbc_forget(void)
 
 /* The 16 VGA attributes as RGB.  These are the standard values, so a theme
    written against the text console looks the same here. */
-static const uint32_t fbc_rgb[16] = {
+static const uint32_t fbc_rgb_std[16] = {
     0x000000, 0x0000AA, 0x00AA00, 0x00AAAA,
     0xAA0000, 0xAA00AA, 0xAA5500, 0xAAAAAA,
     0x555555, 0x5555FF, 0x55FF55, 0x55FFFF,
     0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF
 };
+
+/* ── v0.9.7.8: A THEME MAY BRING ITS OWN PALETTE ───────────────────────
+   The 16 attributes stay the 16 attributes -- every app still draws in
+   VGA_BLUE and VGA_LIGHT_RED -- but what they LOOK like is a table a theme
+   can replace. The Studio theme maps them onto the THS colours, so the
+   whole system, shell included, takes the studio's look without one app
+   being changed.
+
+   And black, attribute 0, can be a gradient: a background cell of colour
+   0 is drawn one pixel row at a time from fbc_grad[], which fades from
+   grad_top at the top of the screen to grad_bot at the foot. A function
+   of the pixel row alone, so a cell redrawn is a cell drawn the same --
+   the painted-cell cache stays honest. */
+static uint32_t fbc_rgb[16] = {
+    0x000000, 0x0000AA, 0x00AA00, 0x00AAAA,
+    0xAA0000, 0xAA00AA, 0xAA5500, 0xAAAAAA,
+    0x555555, 0x5555FF, 0x55FF55, 0x55FFFF,
+    0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF
+};
+#define FBC_GRAD_MAX 4320u
+static uint32_t fbc_grad[FBC_GRAD_MAX];
+static int      fbc_grad_on;
+static uint32_t fbc_grad_top, fbc_grad_bot;
+
+static void fbc_grad_build(void)
+{
+    uint32_t h = fbc_h ? fbc_h : 1, i;
+    if (h > FBC_GRAD_MAX) h = FBC_GRAD_MAX;
+    for (i = 0; i < h; i++) {
+        uint32_t c = 0;
+        for (int sh = 0; sh <= 16; sh += 8) {
+            int a = (int)((fbc_grad_top >> sh) & 0xFF);
+            int b = (int)((fbc_grad_bot >> sh) & 0xFF);
+            int v = a + (b - a) * (int)i / (int)(h > 1 ? h - 1 : 1);
+            c |= (uint32_t)v << sh;
+        }
+        fbc_grad[i] = c;
+    }
+}
+/* The colour of background 0 at pixel row y. */
+static inline uint32_t fbc_bg0(uint32_t y)
+{
+    if (!fbc_grad_on) return fbc_rgb[0];
+    if (y >= FBC_GRAD_MAX) y = FBC_GRAD_MAX - 1;
+    return fbc_grad[y];
+}
 
 int vga_fb_active(void) { return fbc_active; }
 uint32_t vga_fb_width(void)  { return fbc_w; }
@@ -446,11 +492,12 @@ static void fbc_clear_margin(void)
     uint32_t gy1 = fbc_oy + (uint32_t)g_rows * fbc_chp;
     for (uint32_t y = 0; y < fbc_h; y++) {
         uint32_t *line = fbc_addr + y * fbc_pitch;
+        uint32_t m = fbc_bg0(y);            /* v0.9.7.8: the theme's black */
         if (y < gy0 || y >= gy1) {
-            for (uint32_t x = 0; x < fbc_w; x++) line[x] = 0;
+            for (uint32_t x = 0; x < fbc_w; x++) line[x] = m;
         } else {
-            for (uint32_t x = 0; x < gx0; x++) line[x] = 0;
-            for (uint32_t x = gx1; x < fbc_w; x++) line[x] = 0;
+            for (uint32_t x = 0; x < gx0; x++) line[x] = m;
+            for (uint32_t x = gx1; x < fbc_w; x++) line[x] = m;
         }
     }
 }
@@ -489,6 +536,7 @@ static void fbc_put_ex(int x, int y, uint16_t entry, int record)
     uint8_t attr = (uint8_t)(entry >> 8);
     uint32_t fg = fbc_rgb[attr & 0x0F];
     uint32_t bg = fbc_rgb[(attr >> 4) & 0x0F];
+    int      bg_grad = fbc_grad_on && ((attr >> 4) & 0x0F) == 0;   /* v0.9.7.8 */
     const uint8_t *glyph = &font8x16[(uint32_t)ch * FBC_CH];
 
     uint32_t px0 = fbc_ox + (uint32_t)x * fbc_cwp;
@@ -501,6 +549,7 @@ static void fbc_put_ex(int x, int y, uint16_t entry, int record)
         for (uint32_t py = 0; py < fbc_chp; py++) {
             uint8_t bits = glyph[py * FBC_CH / fbc_chp];
             uint32_t *line = fbc_addr + (py0 + py) * fbc_pitch + px0;
+            if (bg_grad) bg = fbc_bg0(py0 + py);
             for (uint32_t px = 0; px < fbc_cwp; px++)
                 *line++ = ((bits >> (FBC_CW - 1 - px * FBC_CW / fbc_cwp)) & 1) ? fg : bg;
         }
@@ -510,6 +559,7 @@ static void fbc_put_ex(int x, int y, uint16_t entry, int record)
         uint8_t bits = glyph[row];
         for (int ry = 0; ry < fbc_sy; ry++) {
             uint32_t *line = fbc_addr + (py0 + (uint32_t)(row * fbc_sy + ry)) * fbc_pitch + px0;
+            if (bg_grad) bg = fbc_bg0(py0 + (uint32_t)(row * fbc_sy + ry));
             for (int col = 0; col < FBC_CW; col++) {
                 uint32_t c = ((bits >> (FBC_CW - 1 - col)) & 1) ? fg : bg;
                 for (int rx = 0; rx < fbc_sx; rx++) *line++ = c;
@@ -835,7 +885,7 @@ int vga_set_mode_fill(int cols, int rows){
     fbc_oy = (fbc_h - (uint32_t)g_rows * fbc_chp) / 2u;
     fbc_forget();
     for(uint32_t py=0;py<fbc_h;py++)
-        for(uint32_t px=0;px<fbc_w;px++) fbc_addr[py*fbc_pitch+px]=0;
+        for(uint32_t px=0;px<fbc_w;px++) fbc_addr[py*fbc_pitch+px]=fbc_bg0(py);
     for(int i=0;i<g_rows*g_cols;i++) fbc_put(i%g_cols,i/g_cols,shadow[i]);
     return 1;
 }
@@ -873,7 +923,8 @@ int vga_set_mode(int cols, int rows){
         for(int i=0;i<VGA_CELLS_MAX;i++) shadow[i]=blank_fb;
         for(uint32_t py=0;py<fbc_h;py++)
             for(uint32_t px=0;px<fbc_w;px++)
-                fbc_addr[py*fbc_pitch+px]=fbc_rgb[(blank_fb>>12)&0x0F];
+                fbc_addr[py*fbc_pitch+px]=((blank_fb>>12)&0x0F)
+                                          ? fbc_rgb[(blank_fb>>12)&0x0F] : fbc_bg0(py);
         for(int i=0;i<g_rows*g_cols;i++) fbc_put(i%g_cols,i/g_cols,blank_fb);
         if(cur_y>=g_rows) cur_y=g_rows-1;
         if(cur_x>=g_cols) cur_x=g_cols-1;
@@ -1664,3 +1715,42 @@ void vga_forget_cells(const uint16_t *cells)
     if(g_screen_owner == cells) g_screen_owner = 0;
 }
 uint16_t *vga_boot_cells(void) { return shadow_boot; }
+
+/* ── v0.9.7.8: the theme's palette ─────────────────────────────────────
+   rgb16 NULL is the standard VGA palette. grad_top == grad_bot means no
+   gradient: background 0 is just rgb16[0]. Every visible cell is redrawn
+   from the shadow buffer, so the change shows at once, everywhere.
+
+   On real VGA text memory (no framebuffer) the 16 colours are written to
+   the DAC through the attribute controller's default mapping -- 0-5, 20,
+   7, 56-63 -- and there is no gradient, because a text mode has no
+   pixels to fade. */
+static int g_pal_custom;
+int vga_palette_custom(void){ return g_pal_custom; }
+uint32_t vga_palette_rgb(int i){ return (i >= 0 && i < 16) ? fbc_rgb[i] : 0; }
+
+void vga_set_palette(const uint32_t *rgb16, uint32_t grad_top, uint32_t grad_bot)
+{
+    static const uint8_t dac_of[16] = {0,1,2,3,4,5,20,7,56,57,58,59,60,61,62,63};
+    const uint32_t *src = rgb16 ? rgb16 : fbc_rgb_std;
+    int i;
+    for (i = 0; i < 16; i++) fbc_rgb[i] = src[i] & 0xFFFFFFu;
+    g_pal_custom = rgb16 != 0;
+    fbc_grad_on  = rgb16 != 0 && grad_top != grad_bot;
+    fbc_grad_top = grad_top; fbc_grad_bot = grad_bot;
+    if (fbc_grad_on) fbc_grad_build();
+
+    if (fbc_active && fbc_addr) {
+        fbc_clear_margin();
+        fbc_forget();                    /* every cell is stale now */
+        if (!g_vis) return;              /* the front console repaints on its turn */
+        for (int k = 0; k < g_rows * g_cols; k++) fbc_put(k % g_cols, k / g_cols, shadow[k]);
+        return;
+    }
+    for (i = 0; i < 16; i++) {
+        outb(0x3C8, dac_of[i]);
+        outb(0x3C9, (uint8_t)((fbc_rgb[i] >> 18) & 0x3F));
+        outb(0x3C9, (uint8_t)((fbc_rgb[i] >> 10) & 0x3F));
+        outb(0x3C9, (uint8_t)((fbc_rgb[i] >>  2) & 0x3F));
+    }
+}

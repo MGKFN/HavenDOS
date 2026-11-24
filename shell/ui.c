@@ -42,8 +42,45 @@ extern int         current_user_admin(void);
    a file from an older release holds a number and goes through
    legacy_map[] once.
    ================================================================ */
+/* ── v0.9.7.8: STUDIO, THE DEFAULT ────────────────────────────────────
+   The Tech Haven Studios look -- the colours of the website, the printed
+   manuals and the boot menu -- as a theme: the 16 attributes remapped onto
+   the studio's palette (MGKFN/techhavenstudios, src/styles.css), and black
+   a graphite fade from the top of the screen to the foot. First in the
+   table, so it is what a new install, and anyone with no .theme file, gets.
+   Everyone else keeps the theme they chose: it is saved by name. */
+static const uint32_t studio_pal[16] = {
+    0x13161c,   /* BLACK         graphite (--background); the fade below   */
+    0x2c3a50,   /* BLUE          a steel surface, for bars                 */
+    0x5d8a4c,   /* GREEN                                                   */
+    0x4f8199,   /* CYAN                                                    */
+    0xb83d22,   /* RED           oxide fill (--oxide-fill), carries white  */
+    0x75598c,   /* MAGENTA                                                 */
+    0xb0782e,   /* BROWN                                                   */
+    0x9aa0aa,   /* LIGHT_GREY    --muted-foreground                        */
+    0x4c525d,   /* DARK_GREY     a rule you can read                       */
+    0x7aa7c7,   /* LIGHT_BLUE    --info                                    */
+    0x7fb069,   /* LIGHT_GREEN   --ok                                      */
+    0xa6cbd8,   /* LIGHT_CYAN                                              */
+    0xe2673f,   /* LIGHT_RED     oxide (--oxide), the one spot colour      */
+    0xb39ddb,   /* LIGHT_MAGENTA                                           */
+    0xe0a94b,   /* YELLOW        --warn                                    */
+    0xe8e4da,   /* WHITE         paper, read in reverse (--foreground)     */
+};
+static const char studio_story[] =
+    "Every Tech Haven Studios manual is printed in two colours: black ink\n"
+    "and one oxide red, on cream stock, like a software box on a shop shelf\n"
+    "in 1989. The website turns that page over -- paper-white type on the\n"
+    "graphite of a monitor's bezel -- and the boot menu wears it too.\n"
+    "Studio is that page, booted. The graphite fades down the screen like\n"
+    "the glass of an old CRT, the text is the colour of the paper, and the\n"
+    "red is kept for one thing: whatever you have chosen.";
+
 #define C(x) VGA_##x
 static theme_t themes[]={
+ {C(BLUE), C(WHITE),       C(BLACK),  C(BLACK),C(LIGHT_GREY), C(RED),    C(WHITE),       C(LIGHT_RED),    C(RED),          C(WHITE),
+   "Studio",         C(WHITE),      UI_PAT_NONE,   ' ', C(BLACK),
+   studio_pal, 0x1e232c, 0x0c0e12, studio_story},
  /* bar_bg bar_fg  desk_bg  win_bg win_fg  title_bg title_fg  accent  icon_bg icon_fg
       name            desk_fg   wallpaper                         */
  {C(BLACK),C(WHITE),       C(BLUE),   C(BLACK),C(LIGHT_GREY), C(CYAN),   C(LIGHT_CYAN),  C(LIGHT_CYAN),   C(LIGHT_CYAN),   C(WHITE),
@@ -89,34 +126,35 @@ static theme_t themes[]={
    "Rose",           C(WHITE),      UI_PAT_GRID,   '.', C(LIGHT_RED)},
 };
 #undef C
-#define NTHEMES_BASE  12
+#define NTHEMES_BASE  13   /* v0.9.7.8: Studio first */
 #define NTHEMES_ALL   ((int)(sizeof(themes)/sizeof(themes[0])))
 static int cur_theme    = 0;
 static int g_extra_themes = 0;   /* set to 1 when themes-extra is installed */
 static int g_pattern_on   = 1;
 
 /* Old index (0.6 to 0.9.4) to the new theme most like it. */
+/* v0.9.7.8: every entry one higher than it was -- Studio took index 0. */
 static const uint8_t legacy_map[20] = {
-    1,  /* Midnight Cyan  -> Midnight      */
-    0,  /* Classic Blue   -> Haven         */
-    2,  /* Terminal Green -> Terminal      */
-    3,  /* Amber          -> Amber CRT     */
-    8,  /* Dark           -> Slate         */
-    13, /* Arctic         -> Arctic        */
-    12, /* Neon           -> Neon          */
-    5,  /* Mint           -> Forest        */
-    6,  /* Sunset         -> Sunset        */
-    10, /* Retro          -> Retro         */
-    14, /* Blood          -> Volcano       */
-    17, /* Monochrome     -> Mono          */
-    4,  /* Ocean          -> Ocean         */
-    7,  /* Purple Haze    -> Grape         */
-    11, /* Ghost          -> High Contrast */
-    15, /* Desert         -> Desert        */
-    18, /* Sapphire       -> Royal         */
-    2,  /* Matrix Gold    -> Terminal      */
-    14, /* Volcano        -> Volcano       */
-    13, /* Ice            -> Arctic        */
+    2,  /* Midnight Cyan  -> Midnight      */
+    1,  /* Classic Blue   -> Haven         */
+    3,  /* Terminal Green -> Terminal      */
+    4,  /* Amber          -> Amber CRT     */
+    9,  /* Dark           -> Slate         */
+    14, /* Arctic         -> Arctic        */
+    13, /* Neon           -> Neon          */
+    6,  /* Mint           -> Forest        */
+    7,  /* Sunset         -> Sunset        */
+    11, /* Retro          -> Retro         */
+    15, /* Blood          -> Volcano       */
+    18, /* Monochrome     -> Mono          */
+    5,  /* Ocean          -> Ocean         */
+    8,  /* Purple Haze    -> Grape         */
+    12, /* Ghost          -> High Contrast */
+    16, /* Desert         -> Desert        */
+    19, /* Sapphire       -> Royal         */
+    3,  /* Matrix Gold    -> Terminal      */
+    15, /* Volcano        -> Volcano       */
+    14, /* Ice            -> Arctic        */
 };
 
 extern int vfs_write(const char*, const char*, uint32_t);
@@ -130,10 +168,16 @@ theme_t    *ui_theme(void)          { return &themes[cur_theme]; }
 const theme_t *ui_theme_get(int n)  { return (n>=0&&n<NTHEMES_ALL)?&themes[n]:&themes[0]; }
 int         ui_theme_base_count(void){ return NTHEMES_BASE; }
 int         ui_theme_total(void)     { return NTHEMES_ALL; }
+/* v0.9.7.8: the current theme's own colours, or the standard ones. */
+void ui_theme_apply_palette(void){
+    const theme_t *t=&themes[cur_theme];
+    vga_set_palette(t->pal, t->grad_top, t->grad_bot);
+}
 void        ui_set_theme(int n)     {
     int max = nthemes_active();
     if(n>=0&&n<max){
         cur_theme=n;
+        ui_theme_apply_palette();
         const char *nm=themes[n].name;
         char buf[32]; int k=0;
         while(nm[k]&&k<30){ buf[k]=nm[k]; k++; }
@@ -195,7 +239,9 @@ void ui_load_theme(void){
     g_pattern_on = cfg_desk_pattern();
     char buf[40];
     int r=vfs_read(THEME_FILE, buf, sizeof(buf)-1);
-    if(r<=0) return;
+    if(r<=0){                       /* no choice made: the default, Studio */
+        cur_theme=0; ui_theme_apply_palette(); return;
+    }
     buf[r]=0;
     while(r>0&&(buf[r-1]=='\n'||buf[r-1]=='\r'||buf[r-1]==' ')) buf[--r]=0;
     int max=nthemes_active();
@@ -204,12 +250,13 @@ void ui_load_theme(void){
         int n=buf[0]-'0';
         if(buf[1]>='0'&&buf[1]<='9') n=n*10+(buf[1]-'0');
         int m=(n>=0&&n<20)?legacy_map[n]:0;
-        if(m>=max) m=(n==5)?0:1;   /* an extra the package no longer unlocks */
+        if(m>=max) m=(n==5)?1:2;   /* an extra the package no longer unlocks: Haven, Midnight */
         ui_set_theme(m);           /* rewrite it by name, once */
         return;
     }
     for(int i=0;i<max;i++)
-        if(strcmp(themes[i].name,buf)==0){ cur_theme=i; return; }
+        if(strcmp(themes[i].name,buf)==0){ cur_theme=i; break; }
+    ui_theme_apply_palette();
 }
 
 /* Preview a theme in-memory only — no disk write; used by Settings live preview
@@ -231,7 +278,7 @@ void ui_load_theme(void){
  * them instead.
  */
 void ui_load_preview(int n){
-    if(n>=0&&n<nthemes_active()) cur_theme=n;
+    if(n>=0&&n<nthemes_active()){ cur_theme=n; ui_theme_apply_palette(); }
 }
 
 /* ================================================================

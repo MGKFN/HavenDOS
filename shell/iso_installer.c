@@ -640,7 +640,7 @@ static int screen_additive_preview(int drive, int writable)
                 row,VGA_LIGHT_GREY,BODY_BG);
     row++;
     /* v0.9.3: the type the install will actually make, from the plan --
-       FAT32 above 2047 MB. A preview that said FAT16 over a FAT32 plan
+       FAT32 from 64 MB since 0.9.7.8. A preview that said FAT16 over a FAT32 plan
        would be the one sentence on this screen that is not true. */
     vga_puts_at(pl->fs_type == 32
                 ? "formatted FAT32, labelled HAVENDOS, holding the kernel"

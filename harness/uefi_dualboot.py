@@ -266,10 +266,10 @@ def main():
         gaps.append((tail_lo, tail_hi))
     for lo, hi in gaps:
         print("  free  %10d..%-10d  %d MB" % (lo, hi, (hi - lo + 1) // 2048))
-    # FAT32 when the volume will be over 2047 MB -- the installer's rule,
-    # include/install_add.h, restated here as what to EXPECT.
+    # FAT32 from 64 MB (0.9.7.8; it was "over 2047 MB") -- the installer's
+    # rule, include/install_add.h, restated here as what to EXPECT.
     big = max((hi - lo + 1) for lo, hi in gaps) if gaps else 0
-    want_fat = 32 if big - 4096 > 4192256 else 16
+    want_fat = 32 if big - 4096 >= 131072 else 16
     print("  expecting a FAT%d volume" % want_fat)
 
     print("Hashing every allocated sector outside the free space")

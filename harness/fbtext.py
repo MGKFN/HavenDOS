@@ -117,10 +117,32 @@ def decode(path, cols=80, rows=25):
             if len(seen) == 1:
                 line.append(" ")
                 continue
+            # v0.9.7.8: the Studio theme draws background 0 as a fade, one
+            # colour per pixel ROW. A cell whose every row is one colour is
+            # blank, however many rows there are; and the ink is the one
+            # colour that is NOT the row's background, so each seen colour
+            # is also tried as the foreground.
+            if all(len(set(row)) == 1 for row in samp):
+                line.append(" ")
+                continue
             best, bestd = 32, 999
-            for bg in seen[:4]:
-                bits = tuple(sum((1 << (FONT_W - 1 - i)) for i in range(FONT_W)
-                                 if samp[j][i] != bg) for j in range(FONT_H))
+            # Background first, as before: one exact match ends the cell.
+            # Only a cell that did not match exactly -- in practice one on
+            # the fade -- pays for trying every colour as the ink, so the
+            # reader stays as fast as it was on a flat background (a harness
+            # watching the boot splash polls for lines shown for a moment).
+            tries = [("bg", c) for c in seen[:4]]
+            if len(seen) > 2:
+                tries += [("fg", c) for c in seen[:24]]
+            for kind, col in tries:
+                if bestd == 0:
+                    break
+                if kind == "bg":
+                    bits = tuple(sum((1 << (FONT_W - 1 - i)) for i in range(FONT_W)
+                                     if samp[j][i] != col) for j in range(FONT_H))
+                else:
+                    bits = tuple(sum((1 << (FONT_W - 1 - i)) for i in range(FONT_W)
+                                     if samp[j][i] == col) for j in range(FONT_H))
                 if bits in glyphs:
                     g, d = _printable(glyphs[bits]), 0
                 else:

@@ -668,6 +668,18 @@ const cmddoc_t cmddb[] = {
       "theme 3\tswitch to theme 3",
       "settings color" },
 
+    { "font", NULL, CDB_SYSTEM,
+      "font\nfont smooth|classic",
+      "Smooth or classic console font",
+      "smooth (the default since 0.9.7.10) draws every letter in IBM Plex "
+      "Mono, the Tech Haven Studios face, with soft edges, sized to the "
+      "screen. classic is the 8x16 bitmap font of earlier releases, scaled "
+      "up. The choice is saved. On a small grid, or on real VGA text, the "
+      "classic font is used either way.",
+      "font\twhich one is in use\n"
+      "font classic\tthe old blocky font",
+      "theme resolution" },
+
     { "resolution", "res", CDB_SYSTEM,
       "resolution\nresolution fit|max|reset\nresolution <cols>x<rows>",
       "Console size in characters",

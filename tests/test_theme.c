@@ -104,6 +104,15 @@ void cfg_save(void){ g_cfg_saves++; }
 /* v0.9.7.8: the palette a theme sets, recorded */
 static const uint32_t *g_pal; static uint32_t g_gtop, g_gbot; static int g_pal_sets;
 void vga_set_palette(const uint32_t *p, uint32_t t, uint32_t b){ g_pal=p; g_gtop=t; g_gbot=b; g_pal_sets++; }
+/* v0.9.7.10: the pointer and the font, not under test here */
+int  vga_pointer_pixels(void){ return 0; }
+int  vga_pointer_show(int c, int r, int fx, int fy, int d){ (void)c;(void)r;(void)fx;(void)fy;(void)d; return 0; }
+void vga_pointer_hide(void){}
+void mouse_get_phys(int *x, int *y){ *x = *y = 0; }
+void mouse_get_frac(int *x, int *y){ *x = *y = 0; }
+int  mouse_pointer_wanted(void){ return 1; }
+static int g_smooth = 1;
+void vga_set_font_smooth(int on){ g_smooth = on; }
 
 /* ── the code under test, as it ships ─────────────────────────────── */
 #include "taskstub.inc"     /* v0.9.6: tasks off */

@@ -160,9 +160,19 @@ static void mouse_ratio(int *num_x, int *den_x, int *num_y, int *den_y)
     if (*den_y < 1) *den_y = 1;
 }
 
+/* v0.9.7.10: the arrow shows once the mouse is used, and hides again
+   when somebody types -- as on any desktop: a pointer parked over the
+   text being typed is in the way. Cleared by a real key press
+   (drivers/keyboard.c, usb/hid.c), never by a key a click injects. */
+static int g_ptr_wanted;
+void mouse_note_typing(void){ g_ptr_wanted = 0; }
+int  mouse_pointer_wanted(void){ return g_ptr_wanted; }
+
 static void mouse_apply(int raw_dx, int raw_dy, int new_btn)
 {
     int dx, dy, nx, dnx, ny, dny;
+
+    if(raw_dx || raw_dy || new_btn != mouse_btn_prev) g_ptr_wanted = 1;
 
     mouse_ratio(&nx, &dnx, &ny, &dny);
     accum_x += accelerate(raw_dx) * nx;
@@ -421,6 +431,22 @@ void mouse_get(int *x,int *y,int *btn){
     *btn = (mouse_mine() && !outside_box()) ? mouse_btn : 0;
 }
 void mouse_get_phys(int *x, int *y){ mouse_sync(); *x = mouse_x; *y = mouse_y; }
+
+/* v0.9.7.10: how far INTO its cell the pointer is, in pixels, for the
+   arrow -- the movement the cell position has not used up yet. Never
+   outside the cell, so the arrow's tip is always over the cell a click
+   goes to. */
+void mouse_get_frac(int *fx, int *fy)
+{
+    int nx, dnx, ny, dny, cw = 8, ch = 16;
+    mouse_sync();
+    mouse_ratio(&nx, &dnx, &ny, &dny);
+    vga_cell_px(&cw, &ch);
+    *fx = (int)((long)(accum_x > 0 ? accum_x : 0) * cw / (dnx > 0 ? dnx : 1));
+    *fy = (int)((long)(accum_y > 0 ? accum_y : 0) * ch / (dny > 0 ? dny : 1));
+    if (*fx >= cw) *fx = cw - 1;
+    if (*fy >= ch) *fy = ch - 1;
+}
 
 /* ── pull the pointer back onto the current LOGICAL grid ──────────────
    The clamp in mouse_feed() runs when a packet arrives, so it is the

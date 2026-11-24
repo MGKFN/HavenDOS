@@ -238,6 +238,9 @@ void ui_load_theme(void){
     if(bpkg_is_installed("themes-extra")) g_extra_themes=1;
     g_pattern_on = cfg_desk_pattern();
     char buf[40];
+    /* v0.9.7.10: the font choice is loaded with the theme */
+    { char fb[16]; int fr=vfs_read(".font", fb, sizeof(fb)-1);
+      vga_set_font_smooth(!(fr>0 && fb[0]=='c')); }
     int r=vfs_read(THEME_FILE, buf, sizeof(buf)-1);
     if(r<=0){                       /* no choice made: the default, Studio */
         cur_theme=0; ui_theme_apply_palette(); return;
@@ -545,6 +548,21 @@ static uint16_t saved_char=0;
 
 void ui_draw_cursor(void){
     if(!mouse_is_ready())return;
+    /* v0.9.7.10: on a framebuffer the pointer is an arrow in pixels, on the
+       whole screen, over whatever is there -- nothing is written into the
+       console's cells, so there is nothing to restore. The cell pointer
+       below stays for a real VGA text mode. */
+    if(vga_pointer_pixels()){
+        extern void mouse_get_phys(int*,int*);
+        extern void mouse_get_frac(int*,int*);
+        extern int  mouse_pointer_wanted(void);
+        int px,py,fx,fy,mx2,my2,mb2;
+        if(!mouse_pointer_wanted()){ vga_pointer_hide(); return; }   /* typing, or never moved */
+        if(last_mx>=0){ vga_shadow_write(last_mx,last_my,saved_char); last_mx=-1; last_my=-1; }
+        mouse_get(&mx2,&my2,&mb2);
+        mouse_get_phys(&px,&py); mouse_get_frac(&fx,&fy);
+        if(vga_pointer_show(px,py,fx,fy,mb2!=0)) return;
+    }
     { extern int mouse_outside(void);
       if(mouse_outside()){ ui_erase_cursor(); return; } }   /* v0.9.6.5: the window's */
     int mx,my,mb; mouse_get(&mx,&my,&mb);
@@ -574,6 +592,7 @@ void ui_draw_cursor(void){
 }
 
 void ui_erase_cursor(void){
+    vga_pointer_hide();                       /* v0.9.7.10: the arrow */
     if(last_mx<0||last_my<0)return;
     vga_shadow_write(last_mx,last_my,saved_char);
     last_mx=-1; last_my=-1;

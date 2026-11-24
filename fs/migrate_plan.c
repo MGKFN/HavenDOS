@@ -31,6 +31,7 @@ const char *const MIG_LONG_NAMES[] = {
     ".havendos_config",   /* kernel/config.c                               */
     ".pairrec",           /* usb/pair.c            -- the iPhone's pairing */
     ".desktop",           /* older desktops, read once and moved           */
+    ".font",              /* shell/themecmd.c      -- v0.9.7.10, the font  */
     0
 };
 

@@ -50,6 +50,87 @@ def _printable(cands):
     return cands[0]
 
 
+# ── v0.9.7.10: THE SMOOTH FONT ─────────────────────────────────────────
+# drivers/vga.c draws cells of 12x24 and up from include/font_aa.h's 32x64
+# master, shrunk to the cell by averaging and blended between ink and
+# background. Such a cell is read by estimating, per pixel, how much of it
+# is ink -- its position between the cell's two extreme colours -- and
+# taking the glyph whose template, made the kernel's way from the same
+# master (harness/font_aa.bin), is nearest. Both ways round, so a
+# selection bar's inverted text reads too.
+AA_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "font_aa.bin")
+
+
+@functools.lru_cache(maxsize=8)
+def _aa_templates(cw, ch):
+    import numpy as np
+    raw = np.frombuffer(open(AA_BIN, "rb").read(), dtype=np.uint8)
+    nib = np.empty(raw.size * 2, dtype=np.int32)
+    nib[0::2] = raw >> 4
+    nib[1::2] = raw & 15
+    m = nib.reshape(256, 64, 32)
+    out = np.empty((256, ch, cw), dtype=np.float32)
+    for y in range(ch):
+        y0 = y * 64 // ch
+        y1 = max((y + 1) * 64 // ch, y0 + 1)
+        for x in range(cw):
+            x0 = x * 32 // cw
+            x1 = max((x + 1) * 32 // cw, x0 + 1)
+            blk = m[:, y0:y1, x0:x1]
+            n = (y1 - y0) * (x1 - x0)
+            out[:, y, x] = (blk.sum(axis=(1, 2)) * 17 + n // 2) // n
+    return (out / 255.0).reshape(256, ch * cw)
+
+
+def _decode_smooth(im, cols, rows, cw, ch, ox, oy):
+    import numpy as np
+    a = np.asarray(im, dtype=np.float32)
+    T = _aa_templates(cw, ch)                         # (256, P)
+    order = list(range(32, 127)) + [c for c in range(256) if not 32 <= c < 127]
+    T = T[order]
+    tt = (T * T).sum(axis=1)                          # |t|^2
+    cells = a[oy:oy + rows * ch, ox:ox + cols * cw].reshape(rows, ch, cols, cw, 3)
+    cells = cells.transpose(0, 2, 1, 3, 4).reshape(rows * cols, ch * cw, 3)
+    lum = cells @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    lo = lum.argmin(axis=1)
+    hi = lum.argmax(axis=1)
+    idx = np.arange(rows * cols)
+    c_lo = cells[idx, lo]                             # (N, 3)
+    c_hi = cells[idx, hi]
+    d = c_hi - c_lo
+    dd = (d * d).sum(axis=1)
+    blank = dd < 600.0                                # about 14 levels apart
+    dd[blank] = 1.0
+    A = ((cells - c_lo[:, None, :]) * d[:, None, :]).sum(axis=2) / dd[:, None]
+    A = np.clip(A, 0.0, 1.0)                          # ink = the light colour
+    B = 1.0 - A                                       # ink = the dark colour
+    best_err = np.full(rows * cols, np.inf, dtype=np.float32)
+    best_g = np.zeros(rows * cols, dtype=np.int32)
+    for X in (A, B):
+        err = (X * X).sum(axis=1)[:, None] + tt[None, :] - 2.0 * (X @ T.T)
+        g = err.argmin(axis=1)
+        e = err[idx, g]
+        better = e < best_err
+        best_err[better] = e[better]
+        best_g[better] = g[better]
+    P = ch * cw
+    out = []
+    for r in range(rows):
+        line = []
+        for c in range(cols):
+            k = r * cols + c
+            if blank[k]:
+                line.append(" ")
+                continue
+            code = order[best_g[k]]
+            # mean squared error per pixel; a clean glyph is near 0, a
+            # pointer or a shadow over one stays well under 0.05
+            ch_ = chr(code) if 32 <= code < 127 else ("?" if code > 127 else " ")
+            line.append(ch_ if best_err[k] / P < 0.06 else "?")
+        out.append("".join(line).rstrip())
+    return out
+
+
 def decode(path, cols=80, rows=25):
     """Return the screen as a list of `rows` strings, `cols` wide.
 
@@ -95,6 +176,15 @@ def decode(path, cols=80, rows=25):
     sx = sy = s_
     cw, ch = FONT_W * sx, FONT_H * sy
     ox, oy = (W - cols * cw) // 2, (H - rows * ch) // 2
+    if cw >= 12 and ch >= 24 and os.path.exists(AA_BIN):
+        out = _decode_smooth(im, cols, rows, cw, ch, ox, oy)
+        # A screen drawn in the classic font -- `font classic`, or a
+        # release before 0.9.7.10 (migrate_fat32 installs with 0.9.7.7) --
+        # matches the smooth templates badly. Mostly '?' means read it the
+        # old way.
+        txt = "".join(out).replace(" ", "")
+        if not txt or txt.count("?") * 4 < len(txt):
+            return out
     px = im.load()
     vals, glyphs = _font()
 

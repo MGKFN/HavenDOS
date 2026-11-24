@@ -412,7 +412,7 @@ static const char *shell_cmds[]={
     "reboot","rename","repeat","res","resolution","retro","rm","rollback","rsa","run",
     "screensaver","script","selftest","seq","set","settings","shutdown","snake","sort",
     "source","stars","stat","sysinfo","sysinfo-plus","sysmon","system","tail","tcpsend","tcptest",
-    "tee","theme","time","timer","tls","tlsinfo","todo","touch",
+    "tee","theme","font","time","timer","tls","tlsinfo","todo","touch",
     "tree","type","udpsend","unalias","uniq","unset","unzip","update",
     "lockdown","uptime","usb","users","ver","version","watch","wc","wget",
     "which","whoami","write","yes","zip",
@@ -3185,6 +3185,11 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"theme")){
         extern void cmd_theme(const char*);
         cmd_theme(arg1);
+    }
+
+    else if(!strcmp(cmd,"font")){              /* v0.9.7.10 */
+        extern void cmd_font(const char*);
+        cmd_font(arg1);
     }
 
     else if(!strcmp(cmd,"whoami"))

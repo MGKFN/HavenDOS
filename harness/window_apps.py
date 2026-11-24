@@ -69,17 +69,20 @@ def corner(q):
 
 
 def place(q, x, y):
+    from PIL import Image
+    from arrowfind import tip_cell
     corner(q)
-    ref = cells(q)
+    q.shot("/tmp/window_apps_ref.ppm"); time.sleep(0.25)
+    ref = Image.open("/tmp/window_apps_ref.ppm").copy()
     for _ in range(int(round(x * CX + CX / 2))):
         rel(q, "x", 1)
     for _ in range(int(round(y * CY + CY / 2))):
         rel(q, "y", 1)
     time.sleep(0.4)
     for _ in range(4):
-        now = cells(q)
-        diff = [c for c in now if now[c] != ref.get(c) and c != (0, 0)]
-        at = diff[0] if len(diff) == 1 else None
+        # v0.9.7.10: the pointer is an arrow; find its tip (arrowfind.py)
+        q.shot("/tmp/window_apps_now.ppm"); time.sleep(0.25)
+        at = tip_cell(Image.open("/tmp/window_apps_now.ppm"), ref, X0, 0, CW, CH)
         if at is None or at == (x, y):
             return at
         for _ in range(int(round(abs(x - at[0]) * CX))):

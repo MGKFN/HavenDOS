@@ -240,6 +240,11 @@ static void paint(ch_task_t *t)
     if(L.boxed && g_surround) g_surround(L.vx, L.vy, L.vw, L.vh, t->name);
     draw_title(&L, t->name);
     draw_bar(L.bar_y);
+    /* v0.9.7.10: a boxed app is a window: shadow and round corners */
+    if(L.boxed && L.title_y >= 0)
+        vga_deco_window(0, L.title_x0, L.title_y, L.title_x1, L.vy + L.vh - 1);
+    else
+        vga_deco_clear(0);
     if(act) vga_viewport_set(vx, vy, vw, vh);
     t->sig = bar_sig();
 }
@@ -364,6 +369,7 @@ int chrome_on(void){ ch_task_t *t = me(); return t && t->on; }
 void chrome_end(void)
 {
     ch_task_t *t = me();
+    vga_deco_clear(0);                     /* v0.9.7.10: the window is gone */
     if(t && t->grown) shrink(t, 0);        /* v0.9.6.6: the grid the person chose */
     if(t) t->on = 0;
     vga_viewport_clear();
@@ -373,8 +379,14 @@ void chrome_end(void)
 /* ── the pointer outside the box ─────────────────────────────────────── */
 static int      p_x = -1, p_y = -1;
 static uint16_t p_saved, p_drawn;
+static int      p_arrow;              /* v0.9.7.10: this code put the arrow up */
 static void ptr_hide(void)
 {
+    /* v0.9.7.10: only an arrow THIS code showed. The hook runs for
+       every keyboard poll, also where nothing here is tracking the
+       mouse (the desktop), and hiding unconditionally took the
+       desktop's own arrow away as fast as it was drawn. */
+    if(p_arrow){ p_arrow = 0; vga_pointer_hide(); }
     if(p_x < 0) return;
     if(vga_phys_read(p_x, p_y) == p_drawn) vga_phys_write(p_x, p_y, p_saved);
     p_x = p_y = -1;
@@ -382,6 +394,16 @@ static void ptr_hide(void)
 static void ptr_show(int x, int y)
 {
     uint16_t c; uint8_t a, inv;
+    /* v0.9.7.10: the arrow, on a framebuffer */
+    if(vga_pointer_pixels()){
+        extern void mouse_get_frac(int*,int*);
+        extern int  mouse_pointer_wanted(void);
+        int px, py, fx, fy;
+        if(p_x >= 0){ if(vga_phys_read(p_x, p_y) == p_drawn) vga_phys_write(p_x, p_y, p_saved); p_x = p_y = -1; }
+        if(!mouse_pointer_wanted()){ ptr_hide(); return; }
+        mouse_get_phys(&px, &py); mouse_get_frac(&fx, &fy);
+        if(vga_pointer_show(px, py, fx, fy, 0)){ p_arrow = 1; return; }
+    }
     if(x == p_x && y == p_y && vga_phys_read(x, y) == p_drawn) return;
     ptr_hide();
     c = vga_phys_read(x, y); a = (uint8_t)(c >> 8);

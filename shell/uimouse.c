@@ -274,8 +274,14 @@ int um_click_keys(int x, int y, const char *line, int len, int *out, int max)
 static int      p_x = -1, p_y = -1;
 static uint16_t p_saved, p_drawn;
 
+static int      p_arrow;              /* v0.9.7.10: this code put the arrow up */
 static void pointer_hide(void)
 {
+    /* v0.9.7.10: only an arrow THIS code showed. The hook runs for
+       every keyboard poll, also where nothing here is tracking the
+       mouse (the desktop), and hiding unconditionally took the
+       desktop's own arrow away as fast as it was drawn. */
+    if(p_arrow){ p_arrow = 0; vga_pointer_hide(); }
     if(p_x < 0) return;
     /* Only if the cell still holds the pointer: an app that drew over it
        has the right cell there already, and putting the old one back
@@ -287,6 +293,18 @@ static void pointer_hide(void)
 static void pointer_show(int x, int y)
 {
     uint16_t c;
+    /* v0.9.7.10: on a framebuffer, the arrow (drivers/vga.c), drawn in
+       pixels over the screen; no cell is touched. */
+    if(vga_pointer_pixels()){
+        extern void mouse_get_phys(int*,int*);
+        extern void mouse_get_frac(int*,int*);
+        extern int  mouse_pointer_wanted(void);
+        int px, py, fx, fy;
+        if(p_x >= 0){ if(vga_shadow_read(p_x, p_y) == p_drawn) vga_shadow_write(p_x, p_y, p_saved); p_x = p_y = -1; }
+        if(!mouse_pointer_wanted()){ pointer_hide(); return; }
+        mouse_get_phys(&px, &py); mouse_get_frac(&fx, &fy);
+        if(vga_pointer_show(px, py, fx, fy, 0)){ p_arrow = 1; return; }
+    }
     if(x == p_x && y == p_y && vga_shadow_read(x, y) == p_drawn) return;
     pointer_hide();
     if(x < 0 || y < 0 || x >= vga_cols() || y >= vga_rows()) return;

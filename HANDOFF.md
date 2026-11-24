@@ -1,6 +1,6 @@
-# HavenDOS — handoff, 23 November 2026
+# HavenDOS — handoff, 24 November 2026
 
-Current release: **v0.9.7.9** (Stable, a full GitHub release) (codename "Mnemosyne"),
+Current release: **v0.9.7.10** (Stable, a full GitHub release) (codename "Mnemosyne"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -51,7 +51,29 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## START HERE: 0.9.7.9 (24 Nov) — THE INSTALLER ASKS WHICH FREE SPACE
+## START HERE: 0.9.7.10 (24 Nov) — THE FINISHED LOOK
+
+Kyan: complaints that HavenDOS "is still text mode and outdated in 2026";
+"0.9.7.10 bc then we have an full finished look if i agree with the look".
+Waiting on his verdict on the look. Pixel icons were deferred (not built).
+- Smooth font: tools/make_font_aa.py renders IBM Plex Mono Medium (size 46)
+  into include/font_aa.h (32x64 4-bit masters; non-ASCII/box-drawing = the
+  8x16 bitmap x4). drivers/vga.c fbc_aa_build() area-averages to the cell
+  size; used when cells >= 12x24. `font smooth|classic` (shell/themecmd.c,
+  saved as .font, in MIG_LONG_NAMES).
+- Arrow pointer: vga_pointer_show/hide/pixels; drawn by fbc_ptr_over after
+  every cell paint; tip = phys cell + mouse_get_frac(). Hidden while typing
+  (mouse_note_typing from keyboard.c/hid.c; mouse_pointer_wanted()).
+  uimouse.c/chrome.c hide only an arrow THEY showed (p_arrow): um_hook runs
+  on every keyboard poll and used to hide the desktop's arrow.
+- Window deco: vga_deco_window(slot, cells) -- shadow, 1-px outline, round
+  corners; chrome.c paint() registers slot 0; vga_clear() drops them.
+- Harness: fbtext.py reads the smooth font (numpy templates; falls back to the
+  bitmap reader when >=25% '?'); arrowfind.py finds the arrow by SHAPE (edge
+  0x13161c, fill 0xe8e4da / 0xe2673f), diff as fallback.
+- test_console 359.
+
+## 0.9.7.9 (24 Nov) — THE INSTALLER ASKS WHICH FREE SPACE
 
 Kyan installed 0.9.7.8 on the HP: the disk had 34 GB free (for a hackintosh)
 before the 2 GB he made for HavenDOS; havendos_install_additive took

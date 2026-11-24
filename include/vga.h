@@ -299,3 +299,14 @@ void     vga_set_palette(const uint32_t *rgb16, uint32_t grad_top, uint32_t grad
 int      vga_palette_custom(void);
 uint32_t vga_palette_rgb(int i);
 
+/* v0.9.7.10: the smooth font and the arrow pointer (framebuffer only). */
+int  vga_font_smooth(void);
+int  vga_font_smooth_on(void);
+void vga_set_font_smooth(int on);
+int  vga_pointer_show(int col, int row, int fx, int fy, int down);
+void vga_pointer_hide(void);
+int  vga_pointer_pixels(void);
+/* A window's shadow and round corners, in cells, inclusive. Slots 0-3. */
+void vga_deco_window(int slot, int x0, int y0, int x1, int y1);
+void vga_deco_clear(int slot);        /* -1: all of them */
+

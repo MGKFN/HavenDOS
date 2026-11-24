@@ -86,15 +86,17 @@
    v0.9.7.8: FAT32 from 64 MB; Notepad's Ctrl+A/X, wrap and 4000 lines; the
    THS look -- a themed boot menu and Studio, the default theme.
    v0.9.7.9: the installer asks which free space when there is more than
-   one, and with none chosen takes the smallest that fits, not the first. */
-#define HAVENDOS_VER_BUILD  9
+   one, and with none chosen takes the smallest that fits, not the first.
+   v0.9.7.10: the finished look -- a smooth font in IBM Plex Mono, an arrow
+   pointer, window shadows and rounded corners. */
+#define HAVENDOS_VER_BUILD  10
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.7.9"
+#define HAVENDOS_VER_NUM    "0.9.7.10"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Stable"

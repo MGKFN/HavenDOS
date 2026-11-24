@@ -77,6 +77,7 @@ static void process_sc(uint8_t sc){
        so we must NOT discard it here - it falls through to rel logic. */
     if(sc==0xFA||sc==0xFF||sc==0x00)return;
     int rel=(sc&0x80); sc&=0x7F;
+    { extern void mouse_note_typing(void); if(!rel) mouse_note_typing(); }   /* v0.9.7.10 */
     if(e0){
         e0=0;   /* always clear - even if we don't handle this e0 sequence */
         if(!rel){

@@ -63,6 +63,7 @@ static int g_wheel_fed;
 void mouse_wheel_add(int n){ g_wheel_fed += n; }
 void mouse_usb_attach(void){ g_mouse_attach++; }
 void mouse_usb_forget_all(void){ g_mouse_attach = 0; }
+void mouse_note_typing(void){}
 
 /* ════════════════════════════════════════════════════════════════════
    The devices

@@ -88,12 +88,13 @@ def _cells(q):
 
 
 def find_pointer(q, ref):
-    """Where the pointer is: the cells that differ from `ref`, a
-    screenshot taken with the pointer in the corner, other than the
-    corner itself."""
-    now = _cells(q)
-    diff = [c for c in now if now[c] != ref.get(c) and c != (0, 0)]
-    return diff[0] if len(diff) == 1 else None
+    """Where the pointer is. v0.9.7.10: an arrow in pixels, found by its
+    tip -- the top-left-most pixel that differs from `ref`, a screenshot
+    taken with the pointer in the corner (harness/arrowfind.py)."""
+    from PIL import Image
+    from arrowfind import tip_cell
+    q.shot("/tmp/mouse_apps_now.ppm"); time.sleep(0.25)
+    return tip_cell(Image.open("/tmp/mouse_apps_now.ppm"), ref, 0, 0, 16, 32)
 
 
 def place(q, x, y, tries=4):
@@ -101,7 +102,9 @@ def place(q, x, y, tries=4):
     fills, so a count-out lands a row or a column short now and then.
     Measure where the pointer went and nudge it by the difference."""
     park(q, 0, 0)
-    ref = _cells(q)
+    from PIL import Image
+    q.shot("/tmp/mouse_apps_ref.ppm"); time.sleep(0.25)
+    ref = Image.open("/tmp/mouse_apps_ref.ppm").copy()
     for _ in range(x * CX):
         rel(q, "x", 1)
     for _ in range(y * CY):
@@ -146,10 +149,23 @@ def boot_to_shell(q):
     time.sleep(1.0)
 
 
+def _fuzzy(needle):
+    # v0.9.7.10: the pointer is an arrow drawn over the text, and the cells
+    # under it read back as '?'. Any character of the label may be one.
+    return re.compile("".join("(?:%s|\\?)" % re.escape(c) for c in needle))
+
+
 def row_of(s, needle):
+    """The row holding `needle`, with the label put back where the arrow
+    covered it, so the checks can read the value beside it."""
+    pat = _fuzzy(needle)
     for i, l in enumerate(s.splitlines()):
         if needle in l:
             return i, l
+    for i, l in enumerate(s.splitlines()):
+        m = pat.search(l)
+        if m:
+            return i, l[:m.start()] + needle + l[m.end():]
     return -1, ""
 
 
@@ -174,7 +190,7 @@ def main():
         click(q, 4, r)
         s = q.screen(80, 25)
         check("click 'Display' in the sidebar: the Display page opens",
-              "Shell console" in s and "Light it by itself" in s, s)
+              "Shell console" in s and row_of(s, "Light it by itself")[0] >= 0, s)
 
         r, line = row_of(s, "Light it by itself")
         before = "on" if re.search(r"Light it by itself\s+on", line) else "off"

@@ -17,6 +17,13 @@ static int g_rows = H, g_cols = W;
 int  vga_rows(void){ return g_rows; }
 int  vga_cols(void){ return g_cols; }
 uint16_t vga_shadow_read(int x, int y){ return (x < 0 || y < 0 || x >= W || y >= H) ? 0x0720 : scr[y * W + x]; }
+/* v0.9.7.10: no framebuffer here, so the cell pointer this suite checks */
+int  vga_pointer_pixels(void){ return 0; }
+int  vga_pointer_show(int c, int r, int fx, int fy, int d){ (void)c;(void)r;(void)fx;(void)fy;(void)d; return 0; }
+void vga_pointer_hide(void){}
+void mouse_get_phys(int *x, int *y){ *x = 0; *y = 0; }
+void mouse_get_frac(int *x, int *y){ *x = 0; *y = 0; }
+int  mouse_pointer_wanted(void){ return 1; }
 void vga_shadow_write(int x, int y, uint16_t v){ if(x >= 0 && y >= 0 && x < W && y < H) scr[y * W + x] = v; }
 static void (*g_clear)(void);
 void vga_set_clear_hook(void (*fn)(void)){ g_clear = fn; }

@@ -39,6 +39,14 @@ void vga_viewport_get(int *x, int *y, int *w, int *h){ *x = *y = *w = *h = 0; }
 int vga_viewport_set(int x, int y, int w, int h){ (void)x; (void)y; (void)w; (void)h; return 1; }
 void vga_viewport_clear(void){}
 void mouse_get_phys(int *x, int *y){ *x = *y = 0; }
+/* v0.9.7.10: no framebuffer here -- the cell pointer, no decoration */
+void mouse_get_frac(int *x, int *y){ *x = *y = 0; }
+int  mouse_pointer_wanted(void){ return 1; }
+int  vga_pointer_pixels(void){ return 0; }
+int  vga_pointer_show(int c, int r, int fx, int fy, int d){ (void)c;(void)r;(void)fx;(void)fy;(void)d; return 0; }
+void vga_pointer_hide(void){}
+void vga_deco_window(int s, int a, int b, int c, int d){ (void)s;(void)a;(void)b;(void)c;(void)d; }
+void vga_deco_clear(int s){ (void)s; }
 int mouse_outside(void){ return 0; }
 int mouse_is_ready(void){ return 0; }
 int mouse_take_clicks(void){ return 0; }

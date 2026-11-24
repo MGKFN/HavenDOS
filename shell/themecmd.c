@@ -112,3 +112,21 @@ void cmd_theme(const char *arg){
                ui_desk_pattern()?"on":"off", ui_desk_pattern()?"off":"on");
     vga_set_color(VGA_WHITE,VGA_BLACK);
 }
+
+/* ── v0.9.7.10: font smooth | classic ───────────────────────────────── */
+#define FONT_FILE ".font"
+extern int vfs_write(const char*, const char*, uint32_t);
+void cmd_font(const char *arg){
+    if(arg && (!strcmp(arg,"smooth") || !strcmp(arg,"classic"))){
+        int on = arg[0]=='s';
+        vga_set_font_smooth(on);
+        vfs_write(FONT_FILE, on ? "smooth\n" : "classic\n", on ? 7u : 8u);
+    } else if(arg && arg[0]){
+        vga_puts("font: smooth or classic\n");
+        return;
+    }
+    vga_printf("  Font: %s", vga_font_smooth() ? "smooth (IBM Plex Mono)" : "classic (8x16)");
+    if(vga_font_smooth() && !vga_font_smooth_on())
+        vga_puts(" -- this grid's cells are too small; classic is drawn");
+    vga_putchar('\n');
+}

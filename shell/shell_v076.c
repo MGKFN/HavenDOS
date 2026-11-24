@@ -567,8 +567,9 @@ void cmd_resolution_v6(const char *arg1){
               } }
             vga_set_color(VGA_DARK_GREY,VGA_BLACK);
             vga_puts("\n  Any grid up to 240x135 and 32400 cells, as long\n");
-            vga_puts("  as it fits the panel.  Glyphs are 8x8 scaled by a\n");
-            vga_puts("  whole number, so fewer cells means bigger text.\n");
+            vga_puts("  as it fits the panel.  A cell is 8x16 times a whole\n");
+            vga_puts("  number, so fewer cells means bigger text; from 16x32\n");
+            vga_puts("  up the letters are smooth (see 'font').\n");
             vga_puts("\n  Usage: resolution fit | max | 160x50 | reset\n");
             vga_puts("  'fit' keeps the text about the size a console font\n");
             vga_puts("  is anywhere else; 'max' is every cell the panel\n");

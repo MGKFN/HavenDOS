@@ -950,6 +950,7 @@ int main(void)
     vga_flush();
     ck("80x25 at a whole scale is 8x16 cells here", fbc_cwp == 8 && fbc_chp == 16,
        (long)(fbc_cwp * 100 + fbc_chp));
+    vga_set_font_smooth(0);   /* v0.9.7.10: this is the CLASSIC path at 12x24; the smooth one is below */
     ck("vga_set_mode_fill(80,25) is accepted", vga_set_mode_fill(80, 25) == 1, 0);
     ck("  ... the cell is 12x24, the glyph's shape kept",
        fbc_cwp == 12 && fbc_chp == 24 && vga_fill_active(), (long)(fbc_cwp * 100 + fbc_chp));
@@ -985,6 +986,90 @@ int main(void)
     vga_fb_init((uint32_t)(uintptr_t)fb, 1280, 800, 1280*4, 32);
     ck("where a whole scale already fills (QEMU's 1280x800), nothing changes",
        vga_set_mode_fill(80, 25) == 1 && !vga_fill_active() && fbc_cwp == 16, (long)fbc_cwp);
+    vga_set_font_smooth(1);
+
+    /* ── v0.9.7.10: the smooth font, the arrow, a window's edges ──────── */
+    head("v0.9.7.10: the smooth font");
+    {
+        vga_set_mode(80, 25);                       /* 1280x800: 16x32 cells */
+        ck("80x25 on 1280x800 draws smooth (16x32 cells)", fbc_aa_on && fbc_cwp == 16, fbc_aa_on);
+        vga_putchar_at('H', 0, 0, VGA_WHITE, VGA_BLACK);
+        vga_flush();
+        int ink = 0, part = 0, offline = 0;
+        for(uint32_t py = 0; py < 32; py++)
+            for(uint32_t px = 0; px < 16; px++){
+                uint32_t c = fb_at(fbc_ox + px, fbc_oy + py);
+                uint32_t r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+                if(r != g || g != b) offline++;     /* white on black: greys only */
+                if(r == 255) ink++;
+                else if(r) part++;
+            }
+        ck("  ... an 'H' has solid ink", ink > 30, ink);
+        ck("  ... and soft edges: pixels between ink and background", part > 4, part);
+        ck("  ... every pixel is a mix of the two colours, nothing else", offline == 0, offline);
+        vga_set_font_smooth(0);
+        vga_flush();
+        {
+            int stillpart = 0;
+            for(uint32_t py = 0; py < 32; py++)
+                for(uint32_t px = 0; px < 16; px++){
+                    uint32_t c = fb_at(fbc_ox + px, fbc_oy + py) & 0xFF;
+                    if(c && c != 0xFF) stillpart++;
+                }
+            ck("`font classic`: the same cell, hard edges again, at once", stillpart == 0 && !fbc_aa_on, stillpart);
+        }
+        vga_set_font_smooth(1);
+        ck("  ... and `font smooth` back", fbc_aa_on, fbc_aa_on);
+        vga_set_mode(160, 50);                      /* 8x16 cells */
+        ck("8x16 cells are too small to smooth: the bitmap is drawn", !fbc_aa_on && fbc_cwp == 8, fbc_aa_on);
+        vga_set_mode(80, 25);
+    }
+
+    head("v0.9.7.10: the pointer is an arrow, and leaves no trace");
+    {
+        vga_clear(); vga_flush();
+        uint32_t before = fb_at(fbc_ox + 5 * 16 + 2, fbc_oy + 5 * 32 + 6);
+        ck("vga_pointer_show draws on a framebuffer", vga_pointer_show(5, 5, 2, 2, 0) == 1, 0);
+        ck("  ... its tip is at the cell + offset, in the outline colour",
+           fb_at(fbc_ox + 5 * 16 + 2, fbc_oy + 5 * 32 + 2) == 0x13161cu,
+           (long)fb_at(fbc_ox + 5 * 16 + 2, fbc_oy + 5 * 32 + 2));
+        ck("  ... and paper-white inside it",
+           fb_at(fbc_ox + 5 * 16 + 2 + 2, fbc_oy + 5 * 32 + 2 + 6) == 0xe8e4dau,
+           (long)fb_at(fbc_ox + 5 * 16 + 4, fbc_oy + 5 * 32 + 8));
+        vga_putchar_at('Z', 5, 5, VGA_WHITE, VGA_BLACK); vga_flush();
+        ck("a cell painted under it keeps the arrow on top",
+           fb_at(fbc_ox + 5 * 16 + 2, fbc_oy + 5 * 32 + 2) == 0x13161cu, 0);
+        vga_pointer_hide();
+        vga_putchar_at(' ', 5, 5, VGA_WHITE, VGA_BLACK); vga_flush();
+        ck("hidden, the cell is exactly the cell again",
+           fb_at(fbc_ox + 5 * 16 + 2, fbc_oy + 5 * 32 + 6) == before, (long)fb_at(fbc_ox + 5 * 16 + 2, fbc_oy + 5 * 32 + 6));
+    }
+
+    head("v0.9.7.10: a window has a shadow, an outline and round corners");
+    {
+        vga_set_color(VGA_WHITE, VGA_LIGHT_GREY); vga_clear(); vga_flush();
+        uint32_t grey = fbc_rgb[VGA_LIGHT_GREY];
+        for(int y = 5; y <= 15; y++) for(int x = 10; x <= 30; x++) vga_putchar_at(' ', x, y, VGA_WHITE, VGA_BLUE);
+        vga_flush();
+        vga_deco_window(0, 10, 5, 30, 15);
+        uint32_t X1 = fbc_ox + 31u * 16u, Y1 = fbc_oy + 16u * 32u, X0 = fbc_ox + 10u * 16u, Y0 = fbc_oy + 5u * 32u;
+        uint32_t sh = fb_at(X1 + 2, fbc_oy + 10u * 32u);
+        ck("the shadow darkens what is right of the window", (sh & 0xFF) < (grey & 0xFF), (long)sh);
+        ck("  ... and below it", (fb_at(fbc_ox + 20u * 16u, Y1 + 2) & 0xFF) < (grey & 0xFF), 0);
+        ck("  ... but not above it", fb_at(fbc_ox + 20u * 16u, Y0 - 2) == grey, 0);
+        ck("the outline runs along the top edge", fb_at(fbc_ox + 20u * 16u, Y0) == fbc_rgb[8], 0);
+        ck("the corner pixel is the colour behind the window", fb_at(X0, Y0) == grey, (long)fb_at(X0, Y0));
+        ck("  ... and the inside is the window's own", fb_at(fbc_ox + 20u * 16u, fbc_oy + 10u * 32u) == fbc_rgb[VGA_BLUE], 0);
+        vga_deco_clear(0);
+        ck("cleared, the shadow is gone", fb_at(X1 + 2, fbc_oy + 10u * 32u) == grey, 0);
+        ck("  ... and the corner is the window's again", fb_at(X0, Y0) == fbc_rgb[VGA_BLUE], (long)fb_at(X0, Y0));
+        vga_deco_window(1, 2, 2, 8, 8);
+        vga_set_color(VGA_WHITE, VGA_BLACK); vga_clear();
+        ck("a whole screen cleared drops every window", !fbc_deco[1].on, fbc_deco[1].on);
+        vga_flush();
+        fb_check_guard();
+        ck("nothing written past the panel", fb_escapes == 0, fb_escapes);
+    }
 
     head("fbc_fit's own clamps, reached directly");
     /* vga_set_mode() validates range, budget and panel BEFORE calling

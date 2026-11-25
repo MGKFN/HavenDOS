@@ -53,4 +53,11 @@ WM_W int  mouse_take_wm_clicks(int *x, int *y){ (void)x; (void)y; return 0; }
 WM_W void mouse_repost_clicks(int e){ (void)e; }
 #endif
 WM_W int  desktop_open_app(const char *id){ (void)id; return 0; }
+/* v0.9.9 */
+WM_W void vga_pointer_kind(int k){ (void)k; }
+WM_W void vga_wm_place(int s, int vx, int vy, int vw, int vh, int sk, int x, int y, int pw, int ph, int cw, int ch, int m)
+{ (void)s;(void)vx;(void)vy;(void)vw;(void)vh;(void)sk;(void)x;(void)y;(void)pw;(void)ph;(void)cw;(void)ch;(void)m; }
+WM_W void vga_wm_rect(int s, int *x, int *y, int *w, int *h){ (void)s; if(x)*x=0; if(y)*y=0; if(w)*w=0; if(h)*h=0; }
+WM_W void vga_wm_reach(int *x0, int *x1){ *x0 = 0; *x1 = 640; }
+WM_W int  vga_viewport_resize(int w, int h){ (void)w; (void)h; return 0; }
 #undef WM_W

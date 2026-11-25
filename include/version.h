@@ -34,7 +34,7 @@
 
 #define HAVENDOS_VER_MAJOR  0
 #define HAVENDOS_VER_MINOR  9
-#define HAVENDOS_VER_PATCH  8
+#define HAVENDOS_VER_PATCH  9
 /* A fourth number, for a patch release that fixes the release before it
    without adding a feature.  ver_cmp() in fs/update.c already parses four
    components, so 0.8.5.1 compares as newer than 0.8.5 and `update`
@@ -95,15 +95,18 @@
    desktop runs in its own console has the screen.
    v0.9.8.2: the Shell scrolls inside its window; maximise keeps the title
    bar and taskbar; power and notifications are flyouts; icons with their
-   names under them, and bigger. */
-#define HAVENDOS_VER_BUILD  1
+   names under them, and bigger.
+   v0.9.9: every window its own pixels, any size -- resized from its edges
+   and corners, snapped to half the screen; an 80x25 app zooms to fill its
+   window; the Shell is the Terminal; the boot screen in pixels. */
+#define HAVENDOS_VER_BUILD  0
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.8.2"
+#define HAVENDOS_VER_NUM    "0.9.9"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"
@@ -124,7 +127,9 @@
 /* "Hestia", v0.9.8: the hearth -- the home a desktop is. Kyan, 24 Nov:
    back to Beta until HavenDOS 1.0, the road to it re-planned around a
    pixel desktop (claude/havendos-road-to-1.0-pixel-desktop.md). */
-#define HAVENDOS_CODENAME   "Hestia"
+/* "Theia", v0.9.9: the titaness of sight, who gave light its shine -- the
+   release where every window is its own pixels, of any size. */
+#define HAVENDOS_CODENAME   "Theia"
 #define HAVENDOS_FULL       HAVENDOS_NAME " " HAVENDOS_VER " " HAVENDOS_CHANNEL \
                             " \"" HAVENDOS_CODENAME "\""
 

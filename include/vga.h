@@ -220,6 +220,7 @@ void vga_viewport_clear(void);
 int  vga_viewport_active(void);
 void vga_viewport_get(int *x, int *y, int *w, int *h);
 int  vga_viewport_set(int x, int y, int w, int h);     /* v0.9.6.5 */
+int  vga_viewport_resize(int w, int h);                /* v0.9.9: keeps the cursor line shown */
 uint16_t vga_phys_read(int x, int y);                   /* v0.9.6.5 */
 void vga_phys_write(int x, int y, uint16_t v);
 

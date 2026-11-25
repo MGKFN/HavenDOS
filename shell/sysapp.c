@@ -31,6 +31,7 @@
 #include "vga.h"
 #include "version.h"
 #include "keys.h"
+#include "chrome.h"
 #include "theme.h"
 #include "pci.h"
 #include "usb.h"
@@ -422,6 +423,7 @@ static void draw(int tab){
     for(int y=0;y<H;y++) vga_fill_row(y,' ',VGA_LIGHT_GREY,VGA_BLACK);
     vga_fill_row(0,' ',th->bar_fg,th->bar_bg);
     put(0,0," System",VGA_WHITE);
+    chrome_note_header();                       /* v0.9.9 */
     for(int x=0;x<W;x++) vga_putchar_at(x<7?" System"[x]:' ',x,0,th->bar_fg,th->bar_bg);
     {
         uint8_t h,m,s; rtc_get_time(&h,&m,&s);

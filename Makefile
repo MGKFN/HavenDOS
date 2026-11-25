@@ -633,7 +633,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -Wno-builtin-declaration-mismatch -Wno-unused-function \
 	           -Wno-int-to-pointer-cast \
 	           -o /tmp/hd_twm tests/test_wm.c && \
-	  python3 tools/run_suite.py --name test_wm --min 72 -- /tmp/hd_twm
+	  python3 tools/run_suite.py --name test_wm --min 100 -- /tmp/hd_twm
 	@echo "── test_der ───────────────────────────────"
 	@echo "  writing DER, checked against the bytes -- stage 3"
 	@# -fno-builtin and the kernel's own string.c: net/der.c net/x509.c's

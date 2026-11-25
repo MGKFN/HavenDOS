@@ -36,6 +36,7 @@
 #include "vga.h"
 #include "version.h"
 #include "keys.h"
+#include "chrome.h"
 #include "uimouse.h"
 #include "theme.h"
 #include "net.h"
@@ -97,7 +98,7 @@ static int PX, PW;          /* the page: first column and width       */
 enum { S_APPEAR, S_DISPLAY, S_DESKTOP, S_SHELL, S_ACCOUNTS, S_NETWORK,
        S_STARTUP, S_ABOUT, S_N };
 static const char *sect_names[S_N] = {
-    "Appearance","Display","Desktop","Shell","Accounts","Network","Startup","About"
+    "Appearance","Display","Desktop","Terminal","Accounts","Network","Startup","About"
 };
 static const char *sect_keys[S_N] = {
     "appearance","display","desktop","shell","accounts","network","startup","about"
@@ -175,6 +176,7 @@ static void frame(int sect, int focus_page, const char *keys){
         vga_fill_row(y,' ',VGA_LIGHT_GREY,VGA_BLACK);
     vga_fill_row(0,' ',th->bar_fg,th->bar_bg);
     put(1,0,"Settings",th->bar_fg,th->bar_bg);
+    chrome_note_header();                       /* v0.9.9: the window's title says it */
     if(W>=60) put(W-1-(int)strlen("HavenDOS " HAVENDOS_VER),0,"HavenDOS " HAVENDOS_VER,th->accent,th->bar_bg);
     vga_color_t sf, sb; sel_colors(&sf,&sb);
     for(int i=0;i<S_N && 2+i<H-2;i++){
@@ -726,6 +728,7 @@ void settings_open(const char *section){
         vga_flush();
 
         key=keyboard_waitchar();
+        if(key==KEY_RESIZE){ key=0; continue; }   /* v0.9.9: the window changed size: lay out again */
         if(!focus){
             g_msg[0]=0;
             if(key==27||key=='q'||key=='Q') break;

@@ -217,7 +217,11 @@ def main():
               not any("CLS-LEFTOVER" in l for l in L),
               "\n".join(l.rstrip() for l in L if "CLS-LEFTOVER" in l)[:400])
         prompt = [y for y, l in enumerate(L) if "@havendos" in l]
-        check("`cls`: the next prompt is at the top", prompt and prompt[0] <= 2, prompt)
+        # v0.9.9: the Terminal is a floating window -- its first line is
+        # a few rows down the screen, under its title bar; the prompt is
+        # that first line, and the only one
+        check("`cls`: the next prompt is the window's first line", prompt and prompt[0] <= 6
+              and len(prompt) == 1, prompt)
         q.line("lock"); time.sleep(3.0)
         L = lines(q)
         check("`lock`: the sign-in screen, whole-screen (its strip on the last row)",

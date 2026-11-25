@@ -20,7 +20,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 OUT = os.path.join(ROOT, "include", "font_ui.h")
 FACES = [("plexsans-400.ttf", 0, (12, 13, 14, 16, 18, 20, 24)),
-         ("plexsans-600.ttf", 1, (12, 13, 14, 16, 18, 20, 24))]
+         ("plexsans-600.ttf", 1, (12, 13, 14, 16, 18, 20, 24, 32, 48))]
+# v0.9.9: the two big sizes (the boot splash's wordmark, headings) carry
+# ASCII only -- 160..255 would add twice their size for letters no
+# heading uses; px_text() draws '?' for them.
+BIG = 32
 CHARS = list(range(32, 127)) + list(range(160, 256))
 
 
@@ -38,7 +42,7 @@ def main():
             asc, desc = font.getmetrics()
             data = bytearray(); glyphs = []
             for cp in range(32, 256):
-                if cp not in CHARS:
+                if cp not in CHARS or (px >= BIG and cp >= 127):
                     glyphs.append((0, 0, 0, 0, 0, 0)); continue
                 ch = chr(cp)
                 adv = int(round(font.getlength(ch)))

@@ -1769,6 +1769,31 @@ void kernel_main(uint32_t magic, uint32_t mb_info){
         } \
     } while(0)
 
+    /* ── v0.9.9: NO PIXELS, THE TERMINAL ───────────────────────────────
+       The desktop is pixels now: windows of any size, drawn by
+       drivers/wm_core.inc. A machine whose firmware gives no framebuffer
+       at all -- VGA text memory only, roughly older than 2000 -- cannot
+       show it, so it starts in the Terminal, which is all of HavenDOS's
+       commands and works the same anywhere; one HavenDOS for every
+       machine, with nothing frozen as "legacy" (Kyan, 25 Nov: "i dont
+       want legacy user to lack features"). `exit` still reaches the old
+       character desktop, exactly as Shell Mode does. */
+    if(boot_mode == MODE_DESKTOP && current_gfx == GFX_TEXT && !vga_fb_active()){
+        klog(KLOG_WARN, "display: no framebuffer -- starting in the Terminal");
+        if(first_boot) run_setup_wizard();
+        login_screen();
+        vga_clear();
+        vga_set_color(VGA_YELLOW,VGA_BLACK);
+        vga_puts("This screen has no pixel mode, so HavenDOS " HAVENDOS_VER " starts in the Terminal.\n");
+        vga_set_color(VGA_LIGHT_GREY,VGA_BLACK);
+        vga_puts("Every command works here. Type 'help' to begin, 'exit' for the character desktop.\n\n");
+        vga_set_color(VGA_WHITE,VGA_BLACK);
+        shell_run();
+        login_screen();
+        RUN_DESKTOP();
+        boot_mode = (boot_mode_t)-1;          /* done: the switch below has nothing left to run */
+    }
+
     switch(boot_mode){
         case MODE_DESKTOP:
             if(first_boot) run_setup_wizard();

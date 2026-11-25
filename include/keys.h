@@ -35,6 +35,10 @@
    laptop whose F11 is a media key. Taken by shell/chrome.c inside
    keyboard_getchar(); an app never sees it. */
 #define KEY_FULLSCREEN 0x1F0
+/* v0.9.9: the window changed size -- an app that lays itself out from
+   vga_cols()/vga_rows() draws again. Injected only into apps that asked
+   for it (chrome_begin_ex(..., CHF_RESIZE_KEY)). */
+#define KEY_RESIZE    0x1F2
 
 #define KEY_HOME      0x147
 #define KEY_UP        0x148

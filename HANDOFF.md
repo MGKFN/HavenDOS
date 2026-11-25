@@ -1,6 +1,6 @@
 # HavenDOS — handoff, 25 November 2026
 
-Current release: **v0.9.8.2** (Beta, a GitHub pre-release) (codename "Hestia"),
+Current release: **v0.9.9** (Beta, a GitHub pre-release) (codename "Theia"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -51,23 +51,72 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## OPEN QUESTIONS FROM KYAN (25 Nov, end of chat) -- answer these first
-He has NOT tested 0.9.8.2 yet. His words:
-1. *"what diffrent from windowd linux rederer like display and ours bc i dont that shit with rows grids"*
-   -- answered: the screen is pixels already, but apps still draw into a character grid that the WM
-   turns into pixels. Windows/Linux: each window its own pixel surface, apps use a toolkit, a compositor
-   stacks them. The grid goes in 0.9.9 (surfaces, resize), 0.9.10 (building blocks), 0.9.11-14 (apps).
-2. *"but if we transitioned to the pixels we have kinda our same system like windowds ormlinux??bc i want
-   smth like that"* -- yes, same model; differences left: CPU drawing, no app memory protection, no
-   third-party apps yet. He said **"sure" to starting 0.9.9 next.**
-3. *"why keep it light weight thats why the 32 bit version will get the old renderer legacy and 64 bit our
-   new system?? idk if possible?? bc i want to transition to more usbale keeping everything lightweight
-   makes it feel sluggish i aim for older PCs but that would be then with smth like editions idk?? whats
-   smart??"* -- recommended (NOT yet confirmed by him): one HavenDOS/one ISO; pixel desktop on 32-bit
-   too; a **Classic** boot entry = today's grid UI frozen as Legacy for machines with no framebuffer or
-   very little RAM; 64-bit after 1.0 with the same desktop; editions only later if there is a reason.
-   Full write-up: `claude/havendos-road-to-1.0-pixel-desktop.md` ("Open question"). Ask him to pick.
-4. Still open: pixel installer/boot screens before 0.9.9, or keep them at 0.9.13?
+## LATEST: 0.9.9 Beta "Theia" (25 Nov) — WINDOWS OF ANY SIZE
+
+**Kyan's decisions, 25 Nov (this chat):**
+- **One HavenDOS, one ISO, 32-bit and 64-bit, no Legacy/Classic edition.**
+  He wants both bitnesses but "i dont want legacy user to lack features".
+  So: both kernels built from the same source, the same desktop and apps;
+  GRUB picks by CPU (`cpuid -l`), BOOTIA32.EFI + BOOTX64.EFI both on the ESP.
+  The Classic boot entry idea is DROPPED. A machine with no framebuffer at
+  all starts in the Terminal (done in 0.9.9, kernel/main.c).
+- **64-bit BEFORE 1.0.** **HavenDOS 1.0 = 13 March 2027.** Slot: after 0.9.17
+  (languages), before the RCs (0.9.18 = the 64-bit kernel, RCs after).
+- **Pixel boot splash in 0.9.9** (done); installer/setup stay 0.9.13.
+- A "best performance" setting (no wallpaper/effects) for old PCs comes with
+  the 0.9.10 building blocks (it needs their Settings page).
+- He has NOT tested 0.9.8.2 or 0.9.9 on the HP yet. Ask: pointer copies
+  above the taskbar still? Resizing on the trackpad; snapping; F11.
+
+**What 0.9.9 is** (changelogs/CHANGELOG-v0.9.9.md):
+- drivers/wm_core.inc: `wm_win_t` gained cw/ch (the window's own cell size),
+  pw/ph (content px), padx/pady, skip (hidden header rows), `surf` (its
+  pixels, from `pmm_alloc_contig`, freed on close) and `gl` (a glyph
+  coverage table for a non-native cell size, area-averaged from font_aa).
+  `vga_wm_place()` is the full geometry call; `vga_wm_geometry()` is the
+  0.9.8 call kept (native cell). Cells render into the surface
+  (`surf_cell/surf_all/surf_sync`), the screen is copied from it in 64 px
+  tiles (`blit_surf`, fast path when `clear_above`). No surface (out of
+  memory) = cells straight to the screen (`win_paint_content`), same pixels
+  (test_wm checks). Gradient background inside a window is by the window's
+  own y (`win_grad_y`). The caret is `shown_entry()` -- part of how a cell is
+  drawn, so repaints keep it. Modes: WM_FLOAT, WM_MAXED (frame across
+  `vga_wm_reach`, not 0..fbc_w), WM_TILED (snapped halves), WM_FULL (front
+  full-screen window as an LT_WIN at layer 0). Resize bands: `resize_part`,
+  parts WMP_RS_* (wm.h). `wm_shade_ext()` = shadow depth + offset: use it for
+  every "repaint where a shadow was" (the old `wm_shadow()` left trails).
+- drivers/vga.c: 5 pointer shapes, 19x19, with hotspots (`vga_pointer_kind`);
+  `vga_viewport_resize()` (keeps the cursor line, scrolls up);
+  `vga_px_direct(1/0/2)` and `vga_px_read()` (the splash, no WM).
+- shell/chrome.c (WM path): `wm_sync()` computes the content rect from
+  state (solo/maxed/snap/float rect), cells via `wm_cells_for()` -- REFLOW
+  (native cell, more cells) or ZOOM (fixed grid, bigger cells, aspect of the
+  console's cell). `chrome_begin_ex(name, boxed, CHF_ZOOM|CHF_RESIZE_KEY)`.
+  boxed (80x25 apps) = zoom 80x25; Minefield = CHF_ZOOM at its first size;
+  Settings/System = CHF_RESIZE_KEY (KEY_RESIZE 0x1F2 injected after a size
+  change). `wm_drag` snaps at the reach edges/top; `wm_resize` follows the
+  pointer at 25 Hz, Terminal in whole cells. Double-click title = maximise.
+  `chrome_note_header()` (from ui_draw_taskbar, Settings, System) hides an
+  app's own title row (skip=1). The 0.9.6.6 grow/shrink (mode change for
+  full screen) is NOT used with the WM on any more.
+- Terminal: appreg name "Terminal" (id stays "shell"); in a WM window the
+  shell draws no bar of its own and says "HavenDOS Terminal". Shell Mode
+  keeps "Shell" (harnesses key on it).
+- kernel/bootsplash.c: pixel splash (Studio gradient, Plex Sans 48 bold
+  wordmark, oxide rule, ring of dots, caption); redraws itself if a mode set
+  clears it (sentinel pixel). font_ui.h: +SemiBold 32/48, ASCII only.
+- Tests: test_wm 100 (floor raised), make test green (78 suites).
+  harness/windows_099.py 14/14 at 1280x800 and 1024x768
+  (`HD_SCREEN=1024x768 HD_GRID=128x48`, a tree built with FB 1024x768 and
+  gfxmode=1024x768). harness/px_mouse.py: pointer to the pixel, drags.
+  redraw_hunt's cls check updated (prompt on the window's first line).
+
+**Next: 0.9.10** -- pixel building blocks drawing INTO the window surfaces
+(buttons, toggles, lists, scrollbars, text fields, dialogs, menus,
+tooltips, progress), theme colours, High Contrast, dirty rectangles; the
+"best performance" setting. Then 0.9.11-14 apps rebuilt on them (they stop
+zooming and lay out for any size), 0.9.15 games, 0.9.16 HTTPS, 0.9.17
+languages, **0.9.18 64-bit kernel**, RCs, **1.0 on 13 March 2027**.
 
 ## Retro PC
 - MGKFN/RetroPC v0.1.1 (23 Nov). Its roadmap: 0.2 one PC -> 0.3 disks/CD -> 0.4 graphics -> 0.5 486 ->
@@ -75,7 +124,7 @@ He has NOT tested 0.9.8.2 yet. His words:
 - Kyan: RetroPC is "fucking laggy". It interprets every instruction (~70 M/s); the GPU doesn't help.
   Realistic win before 2.0: a decoded-block cache in the interpreter. Next release: 0.2.
 
-## LATEST: 0.9.8.2 (25 Nov) — after four HP photos
+## 0.9.8.2 (25 Nov) — after four HP photos
 
 - **Fixed:** `vga_putchar` wrapped/scrolled on the whole grid, not the
   viewport, so a maximised Shell (44 of 48 rows) wrote below its window

@@ -29,6 +29,17 @@ int  chrome_hit(const ch_layout_t *L, int pw, int x, int y, int *chip);
 
 /* for shell/desktop.c */
 int  chrome_begin(const char *name, int boxed);   /* 1: the window is up  */
+/* v0.9.9: how a window's content follows its size.
+   CHF_ZOOM   the app keeps the grid it was opened with and its cells grow
+              and shrink with the window (every app laid out for 80x25,
+              and an app whose state is sized once, like Minefield's board)
+   CHF_RESIZE_KEY  the app is sent KEY_RESIZE after its window changes
+              size, and lays itself out again (Settings, System)
+   Neither: the app reflows -- more cells, the console's size (Terminal). */
+#define CHF_ZOOM        1
+#define CHF_RESIZE_KEY  2
+int  chrome_begin_ex(const char *name, int boxed, int flags);
+void chrome_note_header(void);  /* v0.9.9: row 0 is the app's own title */
 void chrome_end(void);
 int  chrome_on(void);
 void chrome_set_surround(void (*fn)(int vx, int vy, int vw, int vh, const char *name));

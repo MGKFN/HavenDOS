@@ -321,6 +321,8 @@ static void put_clip(const char *s, int x, int y, int maxx, vga_color_t fg, vga_
 /* The bar across the top of a full-screen app. */
 void ui_draw_taskbar(const char *title){
     theme_t *th=ui_theme();
+    /* v0.9.9: the window's title bar says it (weak: suites without shell/chrome.c) */
+    { extern void chrome_note_header(void) __attribute__((weak)); if(chrome_note_header) chrome_note_header(); }
     const int W=vga_cols();
     for(int x=0;x<W;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
     if(title&&title[0]) put_clip(title,1,0,W-20,th->bar_fg,th->bar_bg);

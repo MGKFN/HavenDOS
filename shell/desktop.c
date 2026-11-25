@@ -218,7 +218,10 @@ static const appreg_t appreg[]={
        vga_rows() -- "The shell's preferred row count" -- so it uses
        the whole panel and must not be boxed. It is the only one in
        this table that does. */
-    {"shell",     "Shell",            ">_", app_shell,          CAT_APPS, 1},
+    /* v0.9.9: the Shell is the Terminal -- a resizable window, any size,
+       a character grid inside like every terminal. Its id stays "shell"
+       (DESKTOP.CFG, pins, `open shell`); "terminal" finds it too. */
+    {"shell",     "Terminal",         ">_", app_shell,          CAT_APPS, 1},
     {"edit",      "Text Editor",      "Ed", app_texteditor,     CAT_APPS},
     {"calc",      "Calculator",       "c=", app_calculator,     CAT_APPS},
     {"files",     "File Manager",     "FM", app_filemanager,    CAT_APPS},
@@ -3859,7 +3862,11 @@ static void app_run_inline(void (*fn)(void), const char *name, int fits)
     {
         int want_box = !fits &&
             (vga_phys_cols() > APP_VIEW_COLS || vga_phys_rows() > APP_VIEW_ROWS);
-        if(chrome_begin(name ? name : "App", want_box)){
+        /* v0.9.9: how its window's content follows the window's size */
+        int cf = 0;
+        if(fn == app_mines) cf |= CHF_ZOOM;                       /* the board is sized once */
+        if(fn == app_settings_v2 || fn == app_system) cf |= CHF_RESIZE_KEY;
+        if(chrome_begin_ex(name ? name : "App", want_box, cf)){
             win = 1;
             boxed = vga_viewport_active() && want_box;
         }
@@ -4623,7 +4630,7 @@ void desktop_run(void){
             }
             else if(c=='\t')    { /* fits=1: the shell derives its layout from vga_rows(),
                            same as its registry entry says. */
-                        desktop_run_app(app_shell, "Shell", 1); needs_draw=1; }
+                        desktop_run_app(app_shell, "Terminal", 1); needs_draw=1; }
             else if(c=='n'||c=='N') { notif_open(); needs_draw=1; }
             else if(c=='m'||c=='M'){
                 /* The context menu had no keyboard route at all -- it was

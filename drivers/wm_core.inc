@@ -50,7 +50,21 @@ typedef struct {
     int       icon;
     int       hover, down;         /* WMP_* of the title bar               */
     int       full;                /* has the whole screen while in front   */
+    /* v0.9.9: THE WINDOW'S OWN PIXELS. Its content is pw x ph pixels at
+       (x,y); its cells are cw x ch pixels each (the console's cell, or
+       its own size when the app zooms), starting padx/pady into the
+       content. surf is that content, kept: cells are drawn into it when
+       they change, and the screen is copied from it -- a window moved,
+       uncovered or resized is a copy, not every glyph drawn again. No
+       surface (no memory for one) and the cells are drawn straight to
+       the screen, as in 0.9.8. */
+    int       cw, ch, pw, ph, padx, pady, skip;
+    uint32_t *surf;  uint32_t surf_pg;
+    uint8_t  *gl;    uint32_t gl_pg;   int gl_w, gl_h, gl_aa;
 } wm_win_t;
+
+extern void *pmm_alloc_contig(uint32_t nblocks);
+extern void  pmm_free_contig(void *p, uint32_t nblocks);
 
 static wm_win_t  wm_w[WM_SLOTS];
 static uint16_t  wm_painted[WM_SLOTS][VGA_CELLS_MAX];
@@ -77,6 +91,11 @@ int vga_wm_bar_h(void)
 int vga_wm_title_rows(void){ return fbc_chp >= 24u ? 1 : 2; }
 static int wm_radius(void){ int r = vga_wm_title_h() / 4; return r < 4 ? 4 : r; }
 static int wm_shadow(void){ int s = vga_wm_title_h() / 2; return s < 8 ? 8 : s; }
+/* v0.9.9: how far a shadow reaches past its layer -- its depth plus the
+   offset it is cast at (shadow_at). Every repaint of a layer that moved,
+   and the "nothing above" test, use this: with the depth alone, the last
+   few rows of an old shadow were left behind when a window moved. */
+static int wm_shade_ext(void){ int s = wm_shadow(); return s + s / 3 + 1; }
 int vga_wm_font_px(void)
 {
     int t = vga_wm_title_h() / 2;
@@ -107,17 +126,21 @@ static int        wm_nL;
 static void win_content(const wm_win_t *w, int *x0, int *y0, int *x1, int *y1)
 {
     *x0 = w->x; *y0 = w->y;
-    *x1 = w->x + w->vw * (int)fbc_cwp; *y1 = w->y + w->vh * (int)fbc_chp;
+    *x1 = w->x + w->pw; *y1 = w->y + w->ph;
 }
-static int win_border(const wm_win_t *w){ return w->mode == WM_MAXED ? 0 : 1; }
+static int win_border(const wm_win_t *w){ return w->mode == WM_FLOAT ? 1 : 0; }
 static void win_frame(const wm_win_t *w, int *x0, int *y0, int *x1, int *y1)
 {
     int b = win_border(w);
     win_content(w, x0, y0, x1, y1);
+    if (w->mode == WM_FULL) return;       /* v0.9.9: the content is all of it */
+    if (w->mode == WM_TILED) { *y0 -= vga_wm_title_h(); return; }   /* v0.9.9 */
     if (w->mode == WM_MAXED) {            /* edge to edge, from the top */
         /* v0.9.8.2: down to the taskbar, whatever size the content is --
            an 80x25 app maximised sits in the middle of it */
-        *x0 = 0; *x1 = (int)fbc_w; *y0 = 0;
+        /* v0.9.9: across as far as the pointer reaches -- its buttons must
+           be clickable where the grid does not fill the screen */
+        vga_wm_reach(x0, x1); *y0 = 0;
         if (wm_bar_fn && (int)fbc_h - vga_wm_bar_h() > *y1) *y1 = (int)fbc_h - vga_wm_bar_h();
         return;
     }
@@ -150,7 +173,13 @@ static void wm_rebuild(void)
         return;
     }
     if (front_full()) {           /* a window with the whole screen, in front */
-        wm_L[wm_nL++] = (wm_layer_t){ LT_SOLO, wm_front, 0, 0, (int)fbc_w, (int)fbc_h, 0, 0 };
+        /* v0.9.9: placed WM_FULL, it is a window the size of the screen --
+           its own pixels, its own cell size; otherwise, as in 0.9.8, its
+           console at the grid */
+        if (wm_w[wm_front].mode == WM_FULL)
+            wm_L[wm_nL++] = (wm_layer_t){ LT_WIN, wm_front, 0, 0, (int)fbc_w, (int)fbc_h, 0, 0 };
+        else
+            wm_L[wm_nL++] = (wm_layer_t){ LT_SOLO, wm_front, 0, 0, (int)fbc_w, (int)fbc_h, 0, 0 };
         return;
     }
     wm_L[wm_nL++] = (wm_layer_t){ LT_DESK, 0, 0, 0, (int)fbc_w, (int)fbc_h, 0, 0 };
@@ -159,8 +188,8 @@ static void wm_rebuild(void)
         if (!w->on || w->min || w->full) continue;
         wm_layer_t L; L.type = LT_WIN; L.slot = wm_z[k];
         win_frame(w, &L.x0, &L.y0, &L.x1, &L.y1);
-        L.r = w->mode == WM_MAXED ? 0 : wm_radius();
-        L.sh = w->mode == WM_MAXED ? 0 : 1;
+        L.r = w->mode == WM_FLOAT ? wm_radius() : 0;
+        L.sh = w->mode == WM_FLOAT ? 1 : 0;
         wm_L[wm_nL++] = L;
     }
     if (wm_bar_fn)
@@ -225,7 +254,7 @@ static uint32_t shade(int owner, int x, int y, uint32_t c)
    pixels can be written without asking each one who owns it. */
 static int clear_above(int i, int x0, int y0, int x1, int y1)
 {
-    int s = wm_shadow();
+    int s = wm_shade_ext();
     for (int j = i + 1; j < wm_nL; j++) {
         const wm_layer_t *L = &wm_L[j];
         int e = L->sh ? s : 0;
@@ -315,6 +344,215 @@ static void wm_cell(int i, uint16_t entry, int sx, int sy)
     }
     wm_fast = 0;
     if (wm_L[i].type == LT_DESK && wm_ndi) di_over(x0, y0, x1, y1);   /* the icons on it */
+}
+
+/* ── v0.9.9: a window's cells, at the window's own size ─────────────────
+   An app that reflows (the Terminal) gets more cells when its window
+   grows; an app laid out for 80x25 keeps its 80x25 and its cells grow
+   with the window instead -- it zooms. A cell the size of the console's
+   own is drawn by glyph_row(), byte for byte as before; any other size
+   from a coverage table built for this window from the smooth font's
+   32x64 master (or the 8x16 bitmap, nearest, with `font classic`).
+
+   Background 0 -- the theme's gradient -- runs from the top of the
+   window's content to the bottom, not the screen's: a window looks the
+   same wherever it is moved. */
+static int      wm_caret_idx = -1;
+static uint16_t *wm_caret_cells;
+static inline int win_native(const wm_win_t *w)
+{
+    return w->cw == (int)fbc_cwp && w->ch == (int)fbc_chp;
+}
+static inline uint32_t win_grad_y(const wm_win_t *w, int ly)
+{
+    if (ly < 0) ly = 0;
+    return w->ph > 1 ? (uint32_t)ly * (fbc_h - 1u) / (uint32_t)(w->ph - 1) : 0u;
+}
+static inline uint16_t caret_swap(uint16_t e)
+{
+    return (uint16_t)((e & 0x00FF) | ((uint16_t)(((e >> 12) & 0x0F) | (((e >> 8) & 0x0F) << 4)) << 8));
+}
+static inline uint16_t shown_entry(const uint16_t *cells, int idx, uint16_t e)
+{
+    return (cells == wm_caret_cells && idx == wm_caret_idx) ? caret_swap(e) : e;
+}
+
+static void win_glyphs(wm_win_t *w)
+{
+    if (win_native(w)) return;
+    int aa = fbc_smooth && w->cw >= 5 && w->ch >= 10;
+    if (w->gl && w->gl_w == w->cw && w->gl_h == w->ch && w->gl_aa == aa) return;
+    uint32_t cw = (uint32_t)w->cw, chh = (uint32_t)w->ch;
+    uint32_t pg = (256u * cw * chh + 4095u) / 4096u;
+    if (w->gl && w->gl_pg < pg) { pmm_free_contig(w->gl, w->gl_pg); w->gl = 0; w->gl_pg = 0; }
+    if (!w->gl) { w->gl = (uint8_t *)pmm_alloc_contig(pg); w->gl_pg = w->gl ? pg : 0; }
+    w->gl_w = w->gl_h = 0;
+    if (!w->gl) return;                          /* nearest from the bitmap, no table */
+    for (uint32_t g = 0; g < 256u; g++) {
+        uint8_t *out = &w->gl[g * cw * chh];
+        for (uint32_t y = 0; y < chh; y++) {
+            if (!aa) {
+                uint8_t bits = font8x16[g * FBC_CH + y * FBC_CH / chh];
+                for (uint32_t x = 0; x < cw; x++)
+                    *out++ = ((bits >> (FBC_CW - 1 - x * FBC_CW / cw)) & 1) ? 255u : 0u;
+                continue;
+            }
+            uint32_t y0 = y * FONT_AA_H_PX / chh, y1 = (y + 1u) * FONT_AA_H_PX / chh;
+            if (y1 <= y0) y1 = y0 + 1u;
+            for (uint32_t x = 0; x < cw; x++) {
+                uint32_t x0 = x * FONT_AA_W / cw, x1 = (x + 1u) * FONT_AA_W / cw, sum = 0, n = 0;
+                if (x1 <= x0) x1 = x0 + 1u;
+                for (uint32_t sy = y0; sy < y1; sy++)
+                    for (uint32_t sx = x0; sx < x1; sx++) { sum += aa_src(g, sx, sy); n++; }
+                *out++ = (uint8_t)((sum * 17u + n / 2u) / n);
+            }
+        }
+    }
+    w->gl_w = w->cw; w->gl_h = w->ch; w->gl_aa = aa;
+}
+
+/* One pixel row (py) of one cell at the window's size, into out[0..cw-1];
+   ly is the row's y inside the content, for the gradient. */
+static void win_row(const wm_win_t *w, uint16_t entry, int py, int ly, uint32_t *out)
+{
+    if (win_native(w)) { glyph_row(entry, (uint32_t)py, win_grad_y(w, ly), out); return; }
+    uint8_t ch = (uint8_t)(entry & 0xFF), attr = (uint8_t)(entry >> 8);
+    uint32_t fg = fbc_rgb[attr & 0x0F];
+    uint32_t bg = (fbc_grad_on && ((attr >> 4) & 0x0F) == 0) ? fbc_bg0(win_grad_y(w, ly))
+                                                            : fbc_rgb[(attr >> 4) & 0x0F];
+    if (w->gl && w->gl_w == w->cw && w->gl_h == w->ch) {
+        const uint8_t *a = &w->gl[((uint32_t)ch * (uint32_t)w->ch + (uint32_t)py) * (uint32_t)w->cw];
+        for (int px = 0; px < w->cw; px++) {
+            uint32_t v = a[px];
+            out[px] = !v ? bg : (v == 255u ? fg : aa_mix(fg, bg, v));
+        }
+        return;
+    }
+    uint8_t bits = font8x16[(uint32_t)ch * FBC_CH + (uint32_t)py * FBC_CH / (uint32_t)w->ch];
+    for (int px = 0; px < w->cw; px++)
+        out[px] = ((bits >> (FBC_CW - 1 - px * FBC_CW / w->cw)) & 1) ? fg : bg;
+}
+
+/* The content around the cells (what is left over when the window is not
+   a whole number of cells): the window's background. */
+static inline uint32_t win_pad_px(const wm_win_t *w, int ly)
+{
+    return fbc_grad_on ? fbc_bg0(win_grad_y(w, ly)) : fbc_rgb[0];
+}
+
+/* ── the surface ── */
+static void surf_cell(wm_win_t *w, int c, int r, uint16_t e)
+{
+    if (!w->surf) return;
+    int x0 = w->padx + c * w->cw, y0 = w->pady + r * w->ch;
+    if (x0 < 0 || y0 < 0 || x0 + w->cw > w->pw || y0 + w->ch > w->ph) return;
+    for (int py = 0; py < w->ch; py++)
+        win_row(w, e, py, y0 + py, w->surf + (uint32_t)(y0 + py) * (uint32_t)w->pw + (uint32_t)x0);
+}
+/* Everything again: the padding, every cell; the record says so. */
+static void surf_all(wm_win_t *w, uint16_t *painted)
+{
+    if (!w->surf) return;
+    int gx1 = w->padx + w->vw * w->cw, gy1 = w->pady + w->vh * w->ch;
+    for (int y = 0; y < w->ph; y++) {
+        uint32_t m = win_pad_px(w, y), *row = w->surf + (uint32_t)y * (uint32_t)w->pw;
+        int band = y < w->pady || y >= gy1;
+        for (int x = 0; x < w->pw; x++)
+            if (band || x < w->padx || x >= gx1) row[x] = m;
+    }
+    for (int r = 0; r < w->vh; r++)
+        for (int c = 0; c < w->vw; c++) {
+            int idx = (w->vy + r) * g_cols + w->vx + c;
+            if (idx < 0 || idx >= g_rows * g_cols) continue;
+            uint16_t e = w->cells[idx];
+            surf_cell(w, c, r, shown_entry(w->cells, idx, e));
+            painted[idx] = e;
+        }
+}
+/* Only the cells that changed since they were last drawn into it. */
+static void surf_sync(wm_win_t *w, uint16_t *painted)
+{
+    if (!w->surf) return;
+    for (int r = 0; r < w->vh; r++)
+        for (int c = 0; c < w->vw; c++) {
+            int idx = (w->vy + r) * g_cols + w->vx + c;
+            if (idx < 0 || idx >= g_rows * g_cols) continue;
+            uint16_t e = w->cells[idx];
+            if (painted[idx] == e) continue;
+            surf_cell(w, c, r, shown_entry(w->cells, idx, e));
+            painted[idx] = (w->cells == wm_caret_cells && idx == wm_caret_idx) ? 0xFFFF : e;
+        }
+}
+static void surf_drop(wm_win_t *w)
+{
+    if (w->surf) pmm_free_contig(w->surf, w->surf_pg);
+    if (w->gl)   pmm_free_contig(w->gl, w->gl_pg);
+    w->surf = 0; w->surf_pg = 0; w->gl = 0; w->gl_pg = 0; w->gl_w = w->gl_h = 0;
+}
+static void surf_make(wm_win_t *w)
+{
+    uint32_t pg = ((uint32_t)w->pw * (uint32_t)w->ph * 4u + 4095u) / 4096u;
+    if (w->surf && w->surf_pg >= pg) return;
+    if (w->surf) { pmm_free_contig(w->surf, w->surf_pg); w->surf = 0; w->surf_pg = 0; }
+    if (!pg) return;
+    w->surf = (uint32_t *)pmm_alloc_contig(pg);
+    w->surf_pg = w->surf ? pg : 0;
+}
+
+/* The window's content within the clip, onto the screen: from the
+   surface, in tiles, each the fast way when nothing lies over it. */
+static void blit_surf(int i, const wm_win_t *w)
+{
+    int x0 = wm_cx0 > w->x ? wm_cx0 : w->x, y0 = wm_cy0 > w->y ? wm_cy0 : w->y;
+    int x1 = wm_cx1 < w->x + w->pw ? wm_cx1 : w->x + w->pw;
+    int y1 = wm_cy1 < w->y + w->ph ? wm_cy1 : w->y + w->ph;
+    if (x0 >= x1 || y0 >= y1) return;
+    for (int ty = y0; ty < y1; ty += 64)
+        for (int tx = x0; tx < x1; tx += 64) {
+            int a = tx, b = ty, c = tx + 64 < x1 ? tx + 64 : x1, d = ty + 64 < y1 ? ty + 64 : y1;
+            if (covered_above(i, a, b, c, d)) continue;
+            /* the content is square to its last pixel, as wm_cell() draws it:
+               the frame's round corners are outside it */
+            int fast = clear_above(i, a, b, c, d);
+            wm_cl = i;
+            if (fast) {
+                for (int y = b; y < d; y++) {
+                    const uint32_t *src = w->surf + (uint32_t)(y - w->y) * (uint32_t)w->pw + (uint32_t)(a - w->x);
+                    uint32_t *dst = fbc_addr + (uint32_t)y * fbc_pitch + (uint32_t)a;
+                    for (int x = 0; x < c - a; x++) dst[x] = src[x];
+                }
+                continue;
+            }
+            wm_fast = 0;
+            int sx0 = wm_cx0, sy0 = wm_cy0, sx1 = wm_cx1, sy1 = wm_cy1;
+            clip_set(a, b, c, d);
+            for (int y = b; y < d; y++) {
+                const uint32_t *src = w->surf + (uint32_t)(y - w->y) * (uint32_t)w->pw + (uint32_t)(a - w->x);
+                for (int x = a; x < c; x++) wm_px(x, y, src[x - a]);
+            }
+            wm_cx0 = sx0; wm_cy0 = sy0; wm_cx1 = sx1; wm_cy1 = sy1;
+            wm_fast = 0;
+        }
+}
+
+/* No surface: one cell of a window straight onto the screen, at the
+   window's size (wm_cell() is the console's own size) */
+static void win_cell_px(int i, const wm_win_t *w, uint16_t entry, int sx, int sy)
+{
+    if (win_native(w)) { wm_cell(i, entry, sx, sy); return; }
+    int x0 = sx, y0 = sy, x1 = sx + w->cw, y1 = sy + w->ch;
+    if (x0 < wm_cx0) x0 = wm_cx0;
+    if (y0 < wm_cy0) y0 = wm_cy0;
+    if (x1 > wm_cx1) x1 = wm_cx1;
+    if (y1 > wm_cy1) y1 = wm_cy1;
+    if (x0 >= x1 || y0 >= y1 || covered_above(i, x0, y0, x1, y1)) return;
+    wm_cl = i;
+    wm_fast = clear_above(i, x0, y0, x1, y1);
+    for (int y = y0; y < y1; y++) {
+        win_row(w, entry, y - sy, y - w->y, g_rowbuf);
+        for (int x = x0; x < x1; x++) wm_px(x, y, g_rowbuf[x - sx]);
+    }
+    wm_fast = 0;
 }
 
 /* ── text and icons, for anything painting in pixels ────────────────── */
@@ -688,11 +926,60 @@ static void paint_cells(int i, uint16_t *cells, uint16_t *painted, int gx, int g
             if (painted && painted[idx] != e) {
                 /* a cell that changed is painted whole, never half old */
                 clip_set(sx, sy, sx + cw, sy + ch);
-                wm_cell(i, e, sx, sy);
+                wm_cell(i, shown_entry(cells, idx, e), sx, sy);
                 ptr_over_px(sx, sy, sx + cw, sy + ch);
                 painted[idx] = e;
                 wm_cx0 = sx0; wm_cy0 = sy0; wm_cx1 = sx1; wm_cy1 = sy1;
-            } else wm_cell(i, e, sx, sy);
+            } else wm_cell(i, shown_entry(cells, idx, e), sx, sy);
+        }
+}
+
+/* v0.9.9: a window's content within the clip -- from its surface, or
+   (no surface) its cells and the padding around them, drawn at its size */
+static void win_paint_content(int i, wm_win_t *w, int slot)
+{
+    if (w->surf) {
+        surf_sync(w, wm_painted[slot]);
+        blit_surf(i, w);
+        return;
+    }
+    int gx = w->x + w->padx, gy = w->y + w->pady;
+    if (win_native(w) && !w->padx && !w->pady) {
+        paint_cells(i, w->cells, wm_painted[slot], gx, gy, w->vx, w->vy, w->vw, w->vh);
+        return;
+    }
+    /* the padding */
+    {
+        int gx1 = gx + w->vw * w->cw, gy1 = gy + w->vh * w->ch;
+        int x0 = wm_cx0 > w->x ? wm_cx0 : w->x, y0 = wm_cy0 > w->y ? wm_cy0 : w->y;
+        int x1 = wm_cx1 < w->x + w->pw ? wm_cx1 : w->x + w->pw, y1 = wm_cy1 < w->y + w->ph ? wm_cy1 : w->y + w->ph;
+        wm_cl = i; wm_fast = 0;
+        for (int y = y0; y < y1; y++) {
+            uint32_t m = win_pad_px(w, y - w->y);
+            for (int x = x0; x < x1; x++)
+                if (y < gy || y >= gy1 || x < gx || x >= gx1) wm_px(x, y, m);
+        }
+    }
+    int c0 = (wm_cx0 - gx) / w->cw, c1 = (wm_cx1 - gx + w->cw - 1) / w->cw;
+    int r0 = (wm_cy0 - gy) / w->ch, r1 = (wm_cy1 - gy + w->ch - 1) / w->ch;
+    if (wm_cx0 < gx) c0 = 0;
+    if (wm_cy0 < gy) r0 = 0;
+    if (c1 > w->vw) c1 = w->vw;
+    if (r1 > w->vh) r1 = w->vh;
+    int sx0 = wm_cx0, sy0 = wm_cy0, sx1 = wm_cx1, sy1 = wm_cy1;
+    for (int r = r0; r < r1; r++)
+        for (int c = c0; c < c1; c++) {
+            int idx = (w->vy + r) * g_cols + w->vx + c;
+            if (idx < 0 || idx >= g_rows * g_cols) continue;
+            uint16_t e = w->cells[idx];
+            int sx = gx + c * w->cw, sy = gy + r * w->ch;
+            if (wm_painted[slot][idx] != e) {
+                clip_set(sx, sy, sx + w->cw, sy + w->ch);
+                win_cell_px(i, w, shown_entry(w->cells, idx, e), sx, sy);
+                ptr_over_px(sx, sy, sx + w->cw, sy + w->ch);
+                wm_painted[slot][idx] = e;
+                wm_cx0 = sx0; wm_cy0 = sy0; wm_cx1 = sx1; wm_cy1 = sy1;
+            } else win_cell_px(i, w, shown_entry(w->cells, idx, e), sx, sy);
         }
 }
 
@@ -731,10 +1018,9 @@ static void paint_layer(int i)
         break;
     case LT_WIN: {
         wm_win_t *w = &wm_w[L->slot];
-        uint16_t *cells = (w->cells == shadow) ? shadow : w->cells;
-        wm_paint_title(i, w, L->slot);
+        if (w->mode != WM_FULL) wm_paint_title(i, w, L->slot);
         wm_cl = i;
-        paint_cells(i, cells, wm_painted[L->slot], w->x, w->y, w->vx, w->vy, w->vw, w->vh);
+        win_paint_content(i, w, L->slot);
         break; }
     case LT_BAR:
     case LT_POP: {
@@ -768,7 +1054,7 @@ void vga_wm_repaint_all(void){ vga_wm_repaint_rect(0, 0, (int)fbc_w, (int)fbc_h)
 static void layer_rect(int i, int *x0, int *y0, int *x1, int *y1)
 {
     const wm_layer_t *L = &wm_L[i];
-    int e = L->sh ? wm_shadow() : 0;
+    int e = L->sh ? wm_shade_ext() : 0;
     *x0 = L->x0 - e; *y0 = L->y0 - e; *x1 = L->x1 + e; *y1 = L->y1 + e;
 }
 static void repaint_slot(int slot)
@@ -789,89 +1075,135 @@ void vga_wm_repaint_title(int slot)
 }
 
 /* ── the current console, as apps draw ──────────────────────────────── */
-/* Which layer the CURRENT console is, and its record of the screen. */
-static int cur_layer(uint16_t **painted, int *gx, int *gy, int *vx, int *vy, int *vw, int *vh)
+/* Where the CURRENT console is on the screen: 1 the grid (the desktop,
+   or a console that has the whole screen), with its layer and record of
+   the glass; 2 a window, with its slot (and its layer, or -1 when it is
+   not on the screen -- minimised); 0 nowhere. */
+static int cur_target(int *layer, uint16_t **painted, int *slot)
 {
+    *layer = -1; *slot = 0; *painted = 0;
     if (wm_nL && wm_L[0].type == LT_SOLO) {
         int sl = wm_L[0].slot;
-        if (shadow != (sl > 0 ? wm_w[sl].cells : wm_solo_cells)) return -1;
-        *painted = sl > 0 ? wm_painted[sl] : wm_solo_painted; *gx = (int)fbc_ox; *gy = (int)fbc_oy;
-        *vx = 0; *vy = 0; *vw = g_cols; *vh = g_rows;
-        return 0;
+        if (shadow != (sl > 0 ? wm_w[sl].cells : wm_solo_cells)) return 0;
+        *painted = sl > 0 ? wm_painted[sl] : wm_solo_painted; *layer = 0;
+        return 1;
     }
     if (shadow == shadow_boot) {
+        if (!wm_nL || wm_L[0].type != LT_DESK) return 0;      /* a full-screen window over it */
         if (!fbc_painted_valid) fbc_forget();
-        *painted = fbc_painted; *gx = (int)fbc_ox; *gy = (int)fbc_oy;
-        *vx = 0; *vy = 0; *vw = g_cols; *vh = g_rows;
-        return 0;
+        *painted = fbc_painted; *layer = 0;
+        return 1;
     }
-    for (int i = 1; i < wm_nL; i++)
-        if (wm_L[i].type == LT_WIN && wm_w[wm_L[i].slot].cells == shadow) {
-            wm_win_t *w = &wm_w[wm_L[i].slot];
-            *painted = wm_painted[wm_L[i].slot]; *gx = w->x; *gy = w->y;
-            *vx = w->vx; *vy = w->vy; *vw = w->vw; *vh = w->vh;
-            return i;
+    for (int k = 1; k < WM_SLOTS; k++)
+        if (wm_w[k].on && wm_w[k].cells == shadow) {
+            *slot = k; *painted = wm_painted[k];
+            for (int i = 0; i < wm_nL; i++)
+                if (wm_L[i].type == LT_WIN && wm_L[i].slot == k) { *layer = i; break; }
+            return 2;
         }
-    return -1;      /* not on the screen: a minimised window, a task with no window */
+    return 0;      /* a task with no window */
 }
 
+/* One cell of the current console that changed. */
 static void wm_put_cur(int idx, uint16_t entry)
 {
-    uint16_t *painted; int gx, gy, vx, vy, vw, vh;
-    int i = cur_layer(&painted, &gx, &gy, &vx, &vy, &vw, &vh);
-    if (i < 0) return;
+    uint16_t *painted; int i, slot;
+    int t = cur_target(&i, &painted, &slot);
+    if (!t) return;
+    if (t == 1) {
+        if (painted[idx] == entry) return;
+        painted[idx] = entry;
+        int sx = (int)fbc_ox + idx % g_cols * (int)fbc_cwp, sy = (int)fbc_oy + idx / g_cols * (int)fbc_chp;
+        clip_set(sx, sy, sx + (int)fbc_cwp, sy + (int)fbc_chp);
+        wm_cell(i, shown_entry(shadow, idx, entry), sx, sy);
+        ptr_over_px(sx, sy, sx + (int)fbc_cwp, sy + (int)fbc_chp);
+        return;
+    }
+    wm_win_t *w = &wm_w[slot];
+    int cx = idx % g_cols - w->vx, cy = idx / g_cols - w->vy;
+    if (cx < 0 || cy < 0 || cx >= w->vw || cy >= w->vh) return;
     if (painted[idx] == entry) return;
-    int cx = idx % g_cols - vx, cy = idx / g_cols - vy;
-    if (cx < 0 || cy < 0 || cx >= vw || cy >= vh) return;
-    painted[idx] = entry;
-    int sx = gx + cx * (int)fbc_cwp, sy = gy + cy * (int)fbc_chp;
-    clip_set(sx, sy, sx + (int)fbc_cwp, sy + (int)fbc_chp);
-    wm_cell(i, entry, sx, sy);
-    ptr_over_px(sx, sy, sx + (int)fbc_cwp, sy + (int)fbc_chp);
+    int sx = w->x + w->padx + cx * w->cw, sy = w->y + w->pady + cy * w->ch;
+    if (w->surf) {
+        surf_cell(w, cx, cy, shown_entry(shadow, idx, entry));
+        painted[idx] = (shadow == wm_caret_cells && idx == wm_caret_idx) ? 0xFFFF : entry;
+        if (i < 0 || (w->min)) return;
+        clip_set(sx, sy, sx + w->cw, sy + w->ch);
+        blit_surf(i, w);
+    } else {
+        if (i < 0) return;                 /* repainted whole when it comes back */
+        painted[idx] = entry;
+        clip_set(sx, sy, sx + w->cw, sy + w->ch);
+        win_cell_px(i, w, shown_entry(shadow, idx, entry), sx, sy);
+    }
+    ptr_over_px(sx, sy, sx + w->cw, sy + w->ch);
 }
 
 static void wm_flush_cur(void)
 {
-    uint16_t *painted; int gx, gy, vx, vy, vw, vh;
-    int i = cur_layer(&painted, &gx, &gy, &vx, &vy, &vw, &vh);
-    if (i < 0) return;
+    uint16_t *painted; int i, slot;
+    int t = cur_target(&i, &painted, &slot);
+    if (!t) return;
+    if (t == 2 && wm_w[slot].surf) {
+        /* everything that changed into the surface, then one copy of the
+           rectangle around it */
+        wm_win_t *w = &wm_w[slot];
+        int c0 = w->vw, r0 = w->vh, c1 = -1, r1 = -1;
+        for (int r = 0; r < w->vh; r++)
+            for (int c = 0; c < w->vw; c++) {
+                int idx = (w->vy + r) * g_cols + w->vx + c;
+                uint16_t e = shadow[idx];
+                if (painted[idx] == e) continue;
+                surf_cell(w, c, r, shown_entry(shadow, idx, e));
+                painted[idx] = (shadow == wm_caret_cells && idx == wm_caret_idx) ? 0xFFFF : e;
+                if (c < c0) c0 = c;
+                if (c > c1) c1 = c;
+                if (r < r0) r0 = r;
+                if (r > r1) r1 = r;
+            }
+        if (c1 < 0 || i < 0 || w->min) return;
+        int x0 = w->x + w->padx + c0 * w->cw, y0 = w->y + w->pady + r0 * w->ch;
+        int x1 = w->x + w->padx + (c1 + 1) * w->cw, y1 = w->y + w->pady + (r1 + 1) * w->ch;
+        clip_set(x0, y0, x1, y1);
+        blit_surf(i, w);
+        ptr_over_px(x0, y0, x1, y1);
+        return;
+    }
+    int vx = 0, vy = 0, vw = g_cols, vh = g_rows;
+    if (t == 2) { wm_win_t *w = &wm_w[slot]; vx = w->vx; vy = w->vy; vw = w->vw; vh = w->vh; if (i < 0) return; }
     for (int r = 0; r < vh; r++)
         for (int c = 0; c < vw; c++) {
             int idx = (vy + r) * g_cols + vx + c;
-            uint16_t e = shadow[idx];
-            if (painted[idx] == e) continue;
-            painted[idx] = e;
-            int sx = gx + c * (int)fbc_cwp, sy = gy + r * (int)fbc_chp;
-            clip_set(sx, sy, sx + (int)fbc_cwp, sy + (int)fbc_chp);
-            wm_cell(i, e, sx, sy);
-            ptr_over_px(sx, sy, sx + (int)fbc_cwp, sy + (int)fbc_chp);
+            if (painted[idx] == shadow[idx]) continue;
+            wm_put_cur(idx, shadow[idx]);
         }
 }
 
-/* The caret: the cell under it drawn with its colours swapped, and the
-   record told the cell is unknown, so the next write repaints it. */
-static int wm_caret_idx = -1;
-static uint16_t *wm_caret_cells;
+/* Draw cell idx of the current console again, whatever the record says
+   (the caret came or went). */
+static void wm_refresh_cur(int idx)
+{
+    uint16_t *painted; int i, slot;
+    if (idx < 0 || idx >= g_rows * g_cols) return;
+    if (!cur_target(&i, &painted, &slot)) return;
+    painted[idx] = 0xFFFE;
+    wm_put_cur(idx, shadow[idx]);
+}
+
+/* The caret: the cell under it drawn with its colours swapped. It is a
+   property of how a cell is SHOWN (shown_entry), so whatever repaints
+   the cell -- a write, an uncovering, a window moved -- keeps it. */
 static void wm_caret(int idx)
 {
-    uint16_t *painted; int gx, gy, vx, vy, vw, vh;
     if (wm_caret_cells == shadow && wm_caret_idx >= 0) {
-        int i0 = cur_layer(&painted, &gx, &gy, &vx, &vy, &vw, &vh);
-        if (i0 >= 0) { painted[wm_caret_idx] = 0xFFFF; wm_put_cur(wm_caret_idx, shadow[wm_caret_idx]); }
+        int old = wm_caret_idx;
+        wm_caret_idx = -1;
+        wm_refresh_cur(old);
     }
     wm_caret_idx = -1;
-    int i = cur_layer(&painted, &gx, &gy, &vx, &vy, &vw, &vh);
-    if (i < 0 || idx < 0 || idx >= g_rows * g_cols) return;
-    int cx = idx % g_cols - vx, cy = idx / g_cols - vy;
-    if (cx < 0 || cy < 0 || cx >= vw || cy >= vh) return;
-    uint16_t e = shadow[idx];
-    uint16_t sw = (uint16_t)((e & 0x00FF) | ((uint16_t)(((e >> 12) & 0x0F) | (((e >> 8) & 0x0F) << 4)) << 8));
-    int sx = gx + cx * (int)fbc_cwp, sy = gy + cy * (int)fbc_chp;
-    clip_set(sx, sy, sx + (int)fbc_cwp, sy + (int)fbc_chp);
-    wm_cell(i, sw, sx, sy);
-    ptr_over_px(sx, sy, sx + (int)fbc_cwp, sy + (int)fbc_chp);
-    painted[idx] = 0xFFFF;
+    if (idx < 0 || idx >= g_rows * g_cols) return;
     wm_caret_idx = idx; wm_caret_cells = shadow;
+    wm_refresh_cur(idx);
 }
 
 /* ── the pointer, in WM mode: what was under it repainted from layers ── */
@@ -913,8 +1245,10 @@ void vga_wm_open(int slot, const char *title, const char *icon)
 {
     if (slot <= 0 || slot >= WM_SLOTS) return;
     wm_win_t *w = &wm_w[slot];
+    surf_drop(w);
     memset(w, 0, sizeof *w);
     w->on = 1; w->cells = shadow;
+    w->cw = (int)fbc_cwp; w->ch = (int)fbc_chp;
     w->icon = icon ? wm_icon_find(icon) : -1;
     if (w->icon < 0) w->icon = wm_icon_find("_app");
     int n = 0;
@@ -929,10 +1263,12 @@ void vga_wm_open(int slot, const char *title, const char *icon)
 void vga_wm_close(int slot)
 {
     if (slot <= 0 || slot >= WM_SLOTS || !wm_w[slot].on) return;
-    int x0, y0, x1, y1, e = wm_shadow();
+    int x0, y0, x1, y1, e = wm_shade_ext();
     win_frame(&wm_w[slot], &x0, &y0, &x1, &y1);
     int was = !wm_w[slot].min, full = wm_w[slot].full && slot == wm_front;
     wm_w[slot].on = 0;
+    surf_drop(&wm_w[slot]);
+    if (wm_caret_cells == wm_w[slot].cells) { wm_caret_cells = 0; wm_caret_idx = -1; }
     int k = 0;
     for (int j = 0; j < wm_nz; j++) if (wm_z[j] != slot) wm_z[k++] = wm_z[j];
     wm_nz = k;
@@ -941,17 +1277,45 @@ void vga_wm_close(int slot)
     else if (was) vga_wm_repaint_rect(x0 - e, y0 - e, x1 + e, y1 + e);
 }
 
-/* The viewport the window shows (in its console's cells) and where. */
+/* The viewport the window shows (in its console's cells) and where, at
+   the console's own cell size -- 0.9.8's call, kept. */
 void vga_wm_geometry(int slot, int vx, int vy, int vw, int vh, int x, int y, int mode)
+{
+    vga_wm_place(slot, vx, vy, vw, vh, 0, x, y, vw * (int)fbc_cwp, vh * (int)fbc_chp,
+                 (int)fbc_cwp, (int)fbc_chp, mode);
+}
+
+/* v0.9.9: the whole of a window's geometry. */
+void vga_wm_place(int slot, int vx, int vy, int vw, int vh, int skip,
+                  int x, int y, int pw, int ph, int cw, int ch, int mode)
 {
     if (slot <= 0 || slot >= WM_SLOTS || !wm_w[slot].on) return;
     wm_win_t *w = &wm_w[slot];
-    int e = wm_shadow(), ox0, oy0, ox1, oy1, vis = !w->min && wm_is_on;
+    if (skip < 0) skip = 0;
+    if (skip >= vh) skip = vh > 0 ? vh - 1 : 0;
+    vy += skip; vh -= skip;
+    if (cw < 1) cw = 1;
+    if (ch < 1) ch = 1;
+    if (cw > (int)FBC_ROW_MAX) cw = (int)FBC_ROW_MAX;
+    if (pw < vw * cw) pw = vw * cw;
+    if (ph < vh * ch) ph = vh * ch;
+    int e = wm_shade_ext(), ox0, oy0, ox1, oy1, vis = !w->min && wm_is_on;
     win_frame(w, &ox0, &oy0, &ox1, &oy1);
-    int same = w->vx == vx && w->vy == vy && w->vw == vw && w->vh == vh && w->x == x && w->y == y && w->mode == mode;
+    int same = w->vx == vx && w->vy == vy && w->vw == vw && w->vh == vh && w->x == x && w->y == y
+            && w->mode == mode && w->pw == pw && w->ph == ph && w->cw == cw && w->ch == ch && w->skip == skip;
+    int resized = w->pw != pw || w->ph != ph || w->cw != cw || w->ch != ch
+               || w->vw != vw || w->vh != vh || w->vx != vx || w->vy != vy;
     w->vx = vx; w->vy = vy; w->vw = vw; w->vh = vh; w->x = x; w->y = y; w->mode = mode;
+    w->pw = pw; w->ph = ph; w->cw = cw; w->ch = ch; w->skip = skip;
+    w->padx = (pw - vw * cw) / 2; w->pady = (ph - vh * ch) / 2;
     w->cells = w->cells ? w->cells : shadow;
-    if (same) return;
+    if (same && (w->surf || !wm_is_on)) return;
+    if (resized || !w->surf) {
+        win_glyphs(w);
+        if (wm_is_on) surf_make(w);
+        if (w->surf) surf_all(w, wm_painted[slot]);
+        else for (int k = 0; k < VGA_CELLS_MAX; k++) wm_painted[slot][k] = 0xFFFF;
+    }
     wm_rebuild();
     if (!vis) return;
     int nx0, ny0, nx1, ny1;
@@ -965,9 +1329,12 @@ void vga_wm_get(int slot, int *x, int *y, int *w, int *h)
     wm_win_t *v = &wm_w[slot < 0 || slot >= WM_SLOTS ? 0 : slot];
     if (x) *x = v->x;
     if (y) *y = v->y;
-    if (w) *w = v->vw * (int)fbc_cwp;
-    if (h) *h = v->vh * (int)fbc_chp;
+    if (w) *w = v->pw;
+    if (h) *h = v->ph;
 }
+void vga_wm_rect(int slot, int *x, int *y, int *pw, int *ph){ vga_wm_get(slot, x, y, pw, ph); }
+int  vga_wm_mode_of(int slot){ return vga_wm_is_open(slot) ? wm_w[slot].mode : -1; }
+int  vga_wm_has_surface(int slot){ return vga_wm_is_open(slot) && wm_w[slot].surf != 0; }
 int vga_wm_is_open(int slot){ return slot > 0 && slot < WM_SLOTS && wm_w[slot].on; }
 int vga_wm_is_min(int slot) { return vga_wm_is_open(slot) && wm_w[slot].min; }
 
@@ -975,13 +1342,14 @@ void vga_wm_move(int slot, int x, int y)
 {
     if (!vga_wm_is_open(slot)) return;
     wm_win_t *w = &wm_w[slot];
-    vga_wm_geometry(slot, w->vx, w->vy, w->vw, w->vh, x, y, w->mode);
+    vga_wm_place(slot, w->vx, w->vy - w->skip, w->vw, w->vh + w->skip, w->skip, x, y, w->pw, w->ph,
+                 w->cw, w->ch, w->mode);
 }
 
 void vga_wm_minimize(int slot, int on)
 {
     if (!vga_wm_is_open(slot) || wm_w[slot].min == (on ? 1 : 0)) return;
-    int x0, y0, x1, y1, e = wm_shadow();
+    int x0, y0, x1, y1, e = wm_shade_ext();
     wm_win_t *w = &wm_w[slot];
     w->min = on ? 1 : 0;
     if (!on) for (int k = 0; k < VGA_CELLS_MAX; k++) wm_painted[slot][k] = 0xFFFF;
@@ -1086,7 +1454,7 @@ void vga_wm_repaint_bar(void)
 }
 void vga_wm_set_popup(int x, int y, int w, int h, wm_paint_fn fn)
 {
-    int e = wm_shadow();
+    int e = wm_shade_ext();
     int ox = wm_pop_x, oy = wm_pop_y, ow = wm_pop_w, oh = wm_pop_h, had = wm_pop_fn != 0;
     wm_pop_fn = fn; wm_pop_x = x; wm_pop_y = y; wm_pop_w = w; wm_pop_h = h;
     wm_rebuild();
@@ -1100,13 +1468,49 @@ void vga_wm_repaint_popup(int x0, int y0, int x1, int y1)
     if (wm_pop_fn) vga_wm_repaint_rect(x0, y0, x1, y1);
 }
 
+/* v0.9.9: the band around a floating window's outline that resizes it:
+   the outline, and a few pixels outside it -- outside, so a click at the
+   very edge of the app's content stays the app's. */
+static int wm_grab(void){ int g = vga_wm_title_h() / 4; return g < 6 ? 6 : g; }
+static int resize_part(const wm_win_t *w, int x, int y)
+{
+    int fx0, fy0, fx1, fy1, g = wm_grab(), k = g * 2;
+    win_frame(w, &fx0, &fy0, &fx1, &fy1);
+    if (x < fx0 - g || x >= fx1 + g || y < fy0 - g || y >= fy1 + g) return 0;
+    int inx = x >= fx0 + 1 && x < fx1 - 1, iny = y >= fy0 + 1 && y < fy1 - 1;
+    if (inx && iny) return 0;                     /* inside the outline */
+    int n = y < fy0 + 1, s = y >= fy1 - 1, wv = x < fx0 + 1, e = x >= fx1 - 1;
+    /* a corner is a little more than the band, along both edges */
+    if (!n && !s) { n = (wv || e) && y < fy0 + k; s = (wv || e) && y >= fy1 - k; }
+    if (!wv && !e) { wv = (n || s) && x < fx0 + k; e = (n || s) && x >= fx1 - k; }
+    if (n && wv) return WMP_RS_NW;
+    if (n && e)  return WMP_RS_NE;
+    if (s && wv) return WMP_RS_SW;
+    if (s && e)  return WMP_RS_SE;
+    if (n) return WMP_RS_N;
+    if (s) return WMP_RS_S;
+    if (wv) return WMP_RS_W;
+    if (e) return WMP_RS_E;
+    return 0;
+}
+
 /* What is under a pixel: the slot whose CONTENT is there (0 the desktop),
    or -1 for the window manager's own -- a title bar, an edge, the taskbar,
-   the popup -- with *part saying which. */
+   the popup -- with *part saying which. A floating window's resize band
+   gives its slot and a WMP_RS_* part. */
 int vga_wm_hit(int x, int y, int *slot, int *part)
 {
     int s = 0, p = WMP_NONE;
     if (!wm_is_on || (wm_nL && wm_L[0].type == LT_SOLO)) { if (slot) *slot = wm_front; if (part) *part = WMP_CONTENT; return 1; }
+    /* v0.9.9: the resize band, of the topmost window whose band it is --
+       unless something above that window has the pixel */
+    for (int j = wm_nL - 1; j > 0; j--) {
+        const wm_layer_t *L = &wm_L[j];
+        if (in_layer(L, x, y)) break;
+        if (L->type != LT_WIN || wm_w[L->slot].mode != WM_FLOAT) continue;
+        int rp = resize_part(&wm_w[L->slot], x, y);
+        if (rp) { if (slot) *slot = L->slot; if (part) *part = rp; return 0; }
+    }
     int i = wm_owner(x, y);
     const wm_layer_t *L = &wm_L[i];
     switch (L->type) {
@@ -1120,6 +1524,7 @@ int vga_wm_hit(int x, int y, int *slot, int *part)
         win_content(w, &cx0, &cy0, &cx1, &cy1);
         if (x >= cx0 && x < cx1 && y >= cy0 && y < cy1) { p = WMP_CONTENT; break; }
         p = WMP_EDGE;
+        if (w->mode == WM_FLOAT) { int rp = resize_part(w, x, y); if (rp) { p = rp; break; } }
         int tx0, ty0, tx1, ty1;
         win_title(w, &tx0, &ty0, &tx1, &ty1);
         if (y < ty1 && y >= ty0 && x >= tx0 && x < tx1) {
@@ -1139,7 +1544,8 @@ int vga_wm_hit(int x, int y, int *slot, int *part)
 
 /* For the mouse driver: is (x,y) in the CURRENT console's own content,
    and which of its cells? -1 when the window manager does not place the
-   current console (it is off, or this is the desktop's grid). */
+   current console (it is off, or this is the desktop's grid). The cell
+   is the app's: counted from its viewport's top, the hidden header too. */
 int vga_wm_cur_map(int x, int y, int *cx, int *cy)
 {
     int solo = wm_nL && wm_L[0].type == LT_SOLO;
@@ -1153,14 +1559,15 @@ int vga_wm_cur_map(int x, int y, int *cx, int *cy)
     for (int k = 1; k < WM_SLOTS; k++) {
         wm_win_t *w = &wm_w[k];
         if (!w->on || w->cells != shadow) continue;
-        int lx = (x - w->x) / (int)fbc_cwp, ly = (y - w->y) / (int)fbc_chp;
-        int in = x >= w->x && y >= w->y && lx < w->vw && ly < w->vh && !w->min;
+        int gx = w->x + w->padx, gy = w->y + w->pady;
+        int lx = x >= gx ? (x - gx) / w->cw : -1, ly = y >= gy ? (y - gy) / w->ch : -1;
+        int in = x >= gx && y >= gy && lx < w->vw && ly < w->vh && !w->min;
         if (in) { int s, p; vga_wm_hit(x, y, &s, &p); in = s == k && p == WMP_CONTENT; }
-        if (lx < 0 || x < w->x) lx = 0;
-        if (ly < 0 || y < w->y) ly = 0;
+        if (lx < 0) lx = 0;
+        if (ly < 0) ly = 0;
         if (lx > w->vw - 1) lx = w->vw - 1;
         if (ly > w->vh - 1) ly = w->vh - 1;
-        *cx = lx; *cy = ly;
+        *cx = lx; *cy = ly + w->skip;
         return in;
     }
     return 0;      /* a console with no window: nothing of it is on the screen */
@@ -1174,4 +1581,33 @@ int vga_wm_click_is_app(int x, int y)
     if (!wm_is_on || (wm_nL && wm_L[0].type == LT_SOLO)) return 1;
     vga_wm_hit(x, y, &s, &p);
     return p == WMP_CONTENT && s == wm_front;
+}
+
+/* v0.9.9: the primitives straight onto the screen, with no layers -- the
+   boot splash draws in pixels before there is a desktop. Off restores
+   the clip the window manager painted with. */
+void vga_px_direct(int on)
+{
+    static int sx0, sy0, sx1, sy1, sf;
+    if (!fbc_active || !fbc_addr) return;
+    if (on == 1) {
+        sx0 = wm_cx0; sy0 = wm_cy0; sx1 = wm_cx1; sy1 = wm_cy1; sf = wm_fast;
+        clip_set(0, 0, (int)fbc_w, (int)fbc_h);
+        wm_fast = 1;
+    } else {
+        wm_cx0 = sx0; wm_cy0 = sy0; wm_cx1 = sx1; wm_cy1 = sy1; wm_fast = sf;
+        if (on == 0) return;
+        /* 2: done with the pixels -- the cells take the screen back, every
+           one painted again, the margin cleared */
+        fbc_forget();
+        if (!wm_is_on) fbc_clear_margin();
+    }
+}
+
+/* v0.9.9: what is on the screen at a pixel (0 off it) -- the boot splash
+   asks whether its wordmark is still there */
+uint32_t vga_px_read(int x, int y)
+{
+    if (!fbc_active || !fbc_addr || x < 0 || y < 0 || x >= (int)fbc_w || y >= (int)fbc_h) return 0;
+    return fbc_addr[(uint32_t)y * fbc_pitch + (uint32_t)x] & 0xFFFFFFu;
 }

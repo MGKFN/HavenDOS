@@ -147,6 +147,15 @@ typedef struct {
     int         moved, wx, wy;  /* v0.9.8: where it was dragged to (px)    */
     int         solo;           /* v0.9.8: it has the whole screen         */
     int         maxed;          /* v0.9.8.2: maximised, title bar and taskbar kept */
+    /* v0.9.9: a window of any size */
+    int         flags;          /* CHF_*                                   */
+    int         zoom, gw, gh;   /* the grid a zooming app keeps            */
+    int         vx0, vy0;       /* where its viewport sits in its console  */
+    int         has_rect, rx, ry, rw, rh;   /* floating: content, px      */
+    int         snap;           /* 1 left half, 2 right half               */
+    int         skip;           /* rows of its own header not shown        */
+    int         lw, lh;         /* the size the app last laid out for      */
+    uint32_t    click_t;        /* a double click on the title bar         */
 } ch_task_t;
 static ch_task_t g_t[TASK_MAX];
 static void (*g_surround)(int vx, int vy, int vw, int vh, const char *name);
@@ -184,7 +193,7 @@ static void draw_title(const ch_layout_t *L, const char *name)
        v0.9.6.6: not for the Shell, whose ESC clears the line -- it closes
        with `exit` or the X, and the bar said otherwise on the HP. */
     if(btn_x(L, 0) - 12 > x0 + 4 + (name ? (int)strlen(name) : 3)){
-        int shell = name && !strcmp(name, "Shell");
+        int shell = name && (!strcmp(name, "Shell") || !strcmp(name, "Terminal"));
         put(btn_x(L, 0) - 12, y, shell ? "exit closes" : "ESC closes", VGA_BLACK, VGA_CYAN, 11);
     }
     put(btn_x(L, 0), y, " _ ", VGA_BLACK, VGA_LIGHT_GREY, 3);
@@ -249,35 +258,148 @@ static void current_layout(ch_task_t *t, ch_layout_t *L)
 /* ── v0.9.8: THE WINDOW, IN PIXELS ────────────────────────────────────
    With the window manager on, nothing of the window is drawn into the
    app's console any more: drivers/wm_core.inc draws the title bar, the
-   edge and the shadow, and shows the app's viewport -- its 80x25 box, or
-   the space between title bar and taskbar -- wherever the window is. The
-   layout above still decides the box; this tells the window manager. */
-static void wm_sync(ch_task_t *t)
+   edge and the shadow, and shows the app's viewport wherever the window
+   is.
+
+   ── v0.9.9: AND ANY SIZE ─────────────────────────────────────────────
+   Kyan, 25 Nov: "i want smth like windows or linux". A window's size is
+   no longer the app's: it is a rectangle of pixels the person drags out
+   of an edge or a corner, snaps to half the screen, maximises. What the
+   app sees follows one of two rules (include/chrome.h):
+     reflow  more or fewer cells, the console's own size -- the Terminal
+             gets more lines and columns, like any terminal;
+     zoom    the same grid (80x25 for every app laid out for it) with
+             bigger or smaller cells -- the app fills its window at any
+             size, until it is rebuilt to lay itself out (0.9.11-0.9.14).
+   80x25 is no longer a box in the middle of anything. */
+#define CH_MIN_COLS 40
+#define CH_MIN_ROWS 10
+/* The space windows have: above the taskbar, and across only as far as
+   the pointer reaches (drivers/wm_core.inc vga_wm_reach -- on a grid that
+   does not fill the screen's width, a maximised window's buttons in the
+   margin could not be clicked). */
+static void wm_work(int *x0, int *y0, int *x1, int *y1)
 {
-    ch_layout_t L; int x, y, s = task_current();
-    if(!vga_wm_on() || !vga_wm_is_open(s)) return;
-    current_layout(t, &L);
-    /* no title bar and taskbar fit (80x25), or full screen: the window has
-       the whole screen while it is in front */
-    vga_wm_full(s, !L.viewport || t->solo);
-    if(!L.viewport || t->solo) return;
-    vga_mouse_px(L.vx, L.vy, 0, 0, &x, &y);
-    if(t->moved && L.boxed){ x = t->wx; y = t->wy; }
-    if(L.boxed && t->maxed){
-        /* v0.9.8.2: maximised -- edge to edge between the title bar and
-           the taskbar, both kept (Kyan: "maximize should still let the
-           buttons and taskbar and all visible"). The app is still 80x25
-           until 0.9.9 makes windows resizable, so it sits in the middle. */
-        int cw = vga_cell_w() * L.vw, chh = vga_cell_h() * L.vh;
-        int top = vga_wm_title_rows() * vga_cell_h(), bot = vga_screen_h() - vga_wm_bar_h();
-        int gx, gy; vga_mouse_px(0, 0, 0, 0, &gx, &gy);
-        top += gy; if(top < vga_wm_title_h()) top = vga_wm_title_h();
-        x = (vga_screen_w() - cw) / 2;
-        y = top + (bot - top - chh) / 2; if(y < top) y = top;
-        vga_wm_geometry(s, L.vx, L.vy, L.vw, L.vh, x, y, WM_MAXED);
+    vga_wm_reach(x0, x1);
+    *y0 = 0; *y1 = vga_screen_h() - vga_wm_bar_h();
+}
+/* The rows the app's grid shows (its header hidden). */
+static int shown_rows(ch_task_t *t, int vh){ int r = vh - t->skip; return r < 1 ? 1 : r; }
+
+/* Cells for a content rectangle of pw x ph pixels. */
+static void wm_cells_for(ch_task_t *t, int pw, int ph, int *vw, int *vh, int *cw, int *ch)
+{
+    int c0 = vga_cell_w(), r0 = vga_cell_h();
+    if(t->zoom){
+        int sh = shown_rows(t, t->gh), h = ph / sh, wlim = pw * r0 / (t->gw * c0);
+        if(wlim < h) h = wlim;                     /* the console's cell shape, 1:2 */
+        if(h < 2) h = 2;
+        *ch = h; *cw = h * c0 / r0;
+        if(*cw < 1) *cw = 1;
+        *vw = t->gw; *vh = t->gh;
         return;
     }
-    vga_wm_geometry(s, L.vx, L.vy, L.vw, L.vh, x, y, L.boxed ? WM_FLOAT : WM_MAXED);
+    *cw = c0; *ch = r0;
+    *vw = pw / c0; *vh = ph / r0 + t->skip;
+    if(*vw > vga_phys_cols() - t->vx0) *vw = vga_phys_cols() - t->vx0;
+    if(*vh > vga_phys_rows() - t->vy0) *vh = vga_phys_rows() - t->vy0;
+    if(*vw < 1) *vw = 1;
+    if(*vh < 1 + t->skip) *vh = 1 + t->skip;
+}
+/* The smallest content a window may be dragged down to. */
+static void wm_min_size(ch_task_t *t, int *mw, int *mh)
+{
+    if(t->zoom){ *mw = t->gw * 5; *mh = shown_rows(t, t->gh) * 10; }
+    else { *mw = CH_MIN_COLS * vga_cell_w(); *mh = CH_MIN_ROWS * vga_cell_h(); }
+}
+/* The biggest: a frame that fits above the taskbar. */
+static void wm_max_size(ch_task_t *t, int *mw, int *mh)
+{
+    int x0, y0, x1, y1; wm_work(&x0, &y0, &x1, &y1);
+    *mw = x1 - x0 - 2; *mh = y1 - y0 - vga_wm_title_h() - 2;
+    if(!t->zoom){
+        int gw = (vga_phys_cols() - t->vx0) * vga_cell_w(), gh = (vga_phys_rows() - t->vy0 - t->skip) * vga_cell_h();
+        if(*mw > gw) *mw = gw;
+        if(*mh > gh) *mh = gh;
+    }
+}
+
+/* Where a window opens: the app's own size, centred, each new one a
+   title bar further down and right of the last. */
+static int g_cascade;
+static void wm_first_rect(ch_task_t *t)
+{
+    int x0, y0, x1, y1, mw, mh, th = vga_wm_title_h();
+    wm_work(&x0, &y0, &x1, &y1);
+    wm_max_size(t, &mw, &mh);
+    if(t->zoom){
+        int sh = shown_rows(t, t->gh);
+        t->rw = t->gw * vga_cell_w(); t->rh = sh * vga_cell_h();
+        if(t->rw > mw || t->rh > mh){                       /* smaller cells to fit */
+            int vw, vh, cw, ch; wm_cells_for(t, mw, mh, &vw, &vh, &cw, &ch);
+            t->rw = vw * cw; t->rh = sh * ch;
+        }
+    } else {
+        int cols = vga_phys_cols() * 3 / 4, rows = (vga_phys_rows() - 2 * vga_wm_title_rows()) * 3 / 4;
+        if(cols < 80) cols = 80;
+        if(rows < 24) rows = 24;
+        t->rw = cols * vga_cell_w(); t->rh = rows * vga_cell_h();
+        if(t->rw > mw) t->rw = mw / vga_cell_w() * vga_cell_w();
+        if(t->rh > mh) t->rh = mh / vga_cell_h() * vga_cell_h();
+    }
+    int step = (g_cascade++ % 6) * th;
+    t->rx = x0 + (x1 - x0 - t->rw) / 2 - 2 * th + step;
+    t->ry = y0 + th + (y1 - y0 - th - t->rh) / 2 - 2 * th + step;
+    if(t->rx < x0 + 1) t->rx = x0 + 1;
+    if(t->ry < y0 + th + 1) t->ry = y0 + th + 1;
+    if(t->rx + t->rw > x1 - 1) t->rx = x1 - 1 - t->rw;
+    if(t->ry + t->rh > y1 - 1) t->ry = y1 - 1 - t->rh;
+    if(t->rx < 0) t->rx = 0;
+    if(t->ry < th) t->ry = th;
+    {
+        /* on the console's grid: its cells land where the grid's own
+           would, so a window that has not been dragged reads the same
+           as the screen it replaced (and QEMU harnesses read its text) */
+        int gx, gy, cw = vga_cell_w(), ch = vga_cell_h();
+        vga_mouse_px(0, 0, 0, 0, &gx, &gy);
+        t->rx = gx + (t->rx - gx + cw / 2) / cw * cw;
+        t->ry = gy + (t->ry - gy + ch / 2) / ch * ch;
+        if(t->ry < th) t->ry += ch;
+    }
+    t->has_rect = 1;
+}
+
+/* Tell the window manager -- and the app's console -- what the window is now. */
+static void wm_sync(ch_task_t *t)
+{
+    int s = task_current(), x, y, pw, ph, mode, vw, vh, cw, ch;
+    int x0, y0, x1, y1, th = vga_wm_title_h();
+    if(!vga_wm_on() || !vga_wm_is_open(s)) return;
+    if(!t->has_rect) wm_first_rect(t);
+    wm_work(&x0, &y0, &x1, &y1);
+    if(t->solo){ x = 0; y = 0; pw = vga_screen_w(); ph = vga_screen_h(); mode = WM_FULL; }
+    else if(t->maxed){ x = x0; y = y0 + th; pw = x1 - x0; ph = y1 - y0 - th; mode = WM_MAXED; }
+    else if(t->snap){
+        int half = (x1 - x0) / 2;
+        x = t->snap == 1 ? x0 : x0 + half; y = y0 + th;
+        pw = t->snap == 1 ? half : x1 - x0 - half; ph = y1 - y0 - th; mode = WM_TILED;
+    } else { x = t->rx; y = t->ry; pw = t->rw; ph = t->rh; mode = WM_FLOAT; }
+    wm_cells_for(t, pw, ph, &vw, &vh, &cw, &ch);
+    /* the app's console: its viewport is the grid the window shows */
+    if(t->zoom) vga_viewport_set(t->vx0, t->vy0, vw, vh);
+    else if(!vga_viewport_active() || !vga_viewport_resize(vw, vh)) vga_viewport_set(t->vx0, t->vy0, vw, vh);
+    {
+        int ax, ay, aw, ah; vga_viewport_get(&ax, &ay, &aw, &ah);
+        vw = aw; vh = ah;
+    }
+    vga_wm_place(s, t->vx0, t->vy0, vw, vh, t->skip, x, y, pw, ph, cw, ch, mode);
+    vga_wm_full(s, t->solo);
+    mouse_clamp_to_grid();
+    if(vw != t->lw || vh != t->lh){
+        int first = t->lw == 0;
+        t->lw = vw; t->lh = vh;
+        if(!first && (t->flags & CHF_RESIZE_KEY)) keyboard_inject(KEY_RESIZE);
+    }
 }
 
 /* Paint everything outside the app's box. With the viewport cleared,
@@ -322,6 +444,7 @@ static void move_box(int ox, int oy, int ow, int oh, int nx, int ny, int nw, int
 static void apply_layout(ch_task_t *t, int repaint_from_old)
 {
     ch_layout_t L; int ox, oy, ow, oh, had = vga_viewport_active();
+    if(wm_managed()){ wm_sync(t); return; }          /* v0.9.9: any size, in pixels */
     vga_viewport_get(&ox, &oy, &ow, &oh);
     if(!had){ ox = 0; oy = 0; ow = vga_phys_cols(); oh = vga_phys_rows(); }
     current_layout(t, &L);
@@ -406,7 +529,7 @@ static void wm_full_leave(ch_task_t *t)
     if(!t->solo) return;
     t->solo = 0;
     if(t->grown) shrink(t, 1);
-    else { t->full = 0; apply_layout(t, 1); }
+    t->full = 0;
     wm_sync(t);
 }
 
@@ -414,12 +537,12 @@ static void toggle_full(ch_task_t *t)
 {
     /* v0.9.8: full screen is the window having the whole screen */
     if(wm_managed()){
+        /* v0.9.9: the window, the size of the screen -- an 80x25 app zooms
+           to fill it, a Terminal gets the screen's cells. No mode change. */
         if(t->solo){ wm_full_leave(t); return; }
         t->solo = 1;
-        vga_wm_full(task_current(), 1);
-        if(t->boxed && grow(t)) return;
-        t->full = 1; apply_layout(t, 1);
-        if(!t->boxed) toast_info("Full screen -- F11 or Alt+Enter brings the window back");
+        wm_sync(t);
+        toast_info("Full screen -- F11 or Alt+Enter brings the window back");
         return;
     }
     if(t->grown){ shrink(t, 1); return; }
@@ -430,18 +553,50 @@ static void toggle_full(ch_task_t *t)
 }
 
 /* ── for app_run_inline() ────────────────────────────────────────────── */
-int chrome_begin(const char *name, int boxed)
+int chrome_begin(const char *name, int boxed){ return chrome_begin_ex(name, boxed, 0); }
+
+int chrome_begin_ex(const char *name, int boxed, int flags)
 {
     ch_task_t *t = me();
     if(!t || !task_ready()) return 0;
     t->on = 1; t->boxed = boxed; t->full = 0; t->name = name;
     t->moved = 0; t->solo = 0; t->maxed = 0;
+    t->flags = flags; t->has_rect = 0; t->snap = 0; t->skip = 0; t->lw = t->lh = 0;
+    t->zoom = 0; t->vx0 = t->vy0 = 0; t->click_t = 0;
     if(wm_managed()){                       /* v0.9.8: a window of pixels */
         extern const char *desktop_app_icon_id(const char *name);
+        if(boxed){
+            /* laid out for 80x25: it keeps 80x25 and zooms */
+            t->zoom = 1; t->gw = 80; t->gh = 25;
+            if(t->gw > vga_phys_cols()) t->gw = vga_phys_cols();
+            if(t->gh > vga_phys_rows()) t->gh = vga_phys_rows();
+            t->vx0 = (vga_phys_cols() - t->gw) / 2; t->vy0 = (vga_phys_rows() - t->gh) / 2;
+        } else if(flags & CHF_ZOOM){
+            /* sized once from vga_cols()/vga_rows(): the grid a window of
+               its first size would have, kept, zoomed */
+            int vw, vh, cw, ch;
+            t->zoom = 0; wm_first_rect(t);
+            wm_cells_for(t, t->rw, t->rh, &vw, &vh, &cw, &ch);
+            t->zoom = 1; t->gw = vw; t->gh = vh; t->has_rect = 0;
+            g_cascade--;
+        }
         vga_wm_open(task_current(), name, desktop_app_icon_id(name));
     }
     apply_layout(t, 0);
     return 1;
+}
+
+/* v0.9.9: an app drew its own title row at the top -- ui_draw_taskbar(),
+   or Settings' and System's own. The window's title bar says the same
+   thing, so the row is not shown (Kyan, 24 Nov: "apps show their own
+   header too"). The app still has it: nothing moves under its feet. */
+void chrome_note_header(void)
+{
+    ch_task_t *t = me();
+    if(!t || !t->on || !wm_managed() || t->skip) return;
+    t->skip = 1;
+    if(t->has_rect) t->rh -= t->zoom ? t->rh / (t->gh > 1 ? t->gh : 1) : vga_cell_h();   /* one row less */
+    wm_sync(t);
 }
 
 int chrome_on(void){ ch_task_t *t = me(); return t && t->on; }
@@ -602,11 +757,6 @@ void wm_pointer_update(void)
     vga_pointer_show(px, py, fx, fy, mouse_buttons_raw() & 1);
 }
 
-static ch_task_t *slot_task(int s)
-{
-    if(s < 0 || s >= TASK_MAX || g_t[s].id != task_id(s)) return 0;
-    return &g_t[s];
-}
 
 static void wm_bring(int slot)
 {
@@ -615,13 +765,39 @@ static void wm_bring(int slot)
     if(task_set_front(slot) == 0) task_wait_front();
 }
 
-/* Drag window s by its title bar until the button comes up. */
-static void wm_drag(int s, int px0, int py0)
+/* v0.9.9: the content rectangle a window shows right now, whatever its
+   state -- what a drag or a resize starts from. */
+static void wm_now_rect(int s, int *x, int *y, int *w, int *h){ vga_wm_rect(s, x, y, w, h); }
+
+/* A maximised or snapped window dragged by its title bar comes off as
+   the floating window it was, under the pointer, at the same spot of
+   its title bar (as on any desktop). */
+static void wm_unstick(ch_task_t *t, int s, int px)
 {
-    int wx, wy, ww, wh, x, y, nx, ny, lx, ly;
+    int x, y, w, h;
+    if(!t->maxed && !t->snap) return;
+    wm_now_rect(s, &x, &y, &w, &h);
+    int frac = w > 0 ? (px - x) * 1000 / w : 500;
+    t->maxed = 0; t->snap = 0;
+    t->rx = px - t->rw * frac / 1000;
+    if(t->rx < 0) t->rx = 0;
+    wm_sync(t);
+}
+
+/* Drag window s by its title bar until the button comes up. Let go at
+   the left or right edge of the screen and it takes that half; at the
+   top, it is maximised. */
+static void wm_drag(ch_task_t *t, int s, int px0, int py0)
+{
+    int wx, wy, ww, wh, x, y, nx, ny, lx, ly, edge = 0;
     int sw = vga_screen_w(), sh = vga_screen_h(), th = vga_wm_title_h(), bh = vga_wm_bar_h();
+    int rx0, rx1, gx, gy0;
+    vga_wm_reach(&rx0, &rx1);
+    vga_mouse_px(0, 0, 0, 0, &gx, &gy0);
+    wm_unstick(t, s, px0);
     vga_wm_get(s, &wx, &wy, &ww, &wh);
     lx = wx; ly = wy;
+    vga_pointer_kind(PTR_ARROW);
     while(mouse_buttons_raw() & 1){
         mouse_get_px(&x, &y);
         nx = wx + (x - px0); ny = wy + (y - py0);
@@ -631,13 +807,79 @@ static void wm_drag(int s, int px0, int py0)
         if(nx > sw - 3 * th) nx = sw - 3 * th;
         if(nx + ww < 3 * th) nx = 3 * th - ww;
         if(nx != lx || ny != ly){ vga_wm_move(s, nx, ny); lx = nx; ly = ny; }
+        edge = x <= rx0 + 1 ? 1 : x >= rx1 - 2 ? 2 : y <= gy0 + 1 ? 3 : 0;
         wm_pointer_update();
         kpoll_sleep_ms(10);
     }
-    {
-        ch_task_t *t = slot_task(s);
-        if(t){ t->moved = 1; t->wx = lx; t->wy = ly; }
+    t->moved = 1; t->wx = lx; t->wy = ly;
+    t->rx = lx; t->ry = ly;
+    if(edge == 3){ t->maxed = 1; wm_sync(t); vga_wm_repaint_bar(); }
+    else if(edge){ t->snap = edge; wm_sync(t); }
+}
+
+/* Resize window s from an edge or a corner until the button comes up.
+   The window follows the pointer live; the app lays itself out again
+   once, at the end (KEY_RESIZE), the Terminal as it goes. */
+static int ptr_for(int part)
+{
+    switch(part){
+    case WMP_RS_W: case WMP_RS_E: return PTR_EW;
+    case WMP_RS_N: case WMP_RS_S: return PTR_NS;
+    case WMP_RS_NW: case WMP_RS_SE: return PTR_NWSE;
+    case WMP_RS_NE: case WMP_RS_SW: return PTR_NESW;
+    default: return PTR_ARROW;
     }
+}
+static void wm_resize(ch_task_t *t, int s, int part, int px0, int py0)
+{
+    int x, y, mw, mh, Mw, Mh, th = vga_wm_title_h(), lft, sw, bot;
+    { int t0, t1; wm_work(&lft, &t0, &sw, &bot); (void)t0; (void)t1; }
+    int x0 = t->rx, y0 = t->ry, x1 = t->rx + t->rw, y1 = t->ry + t->rh;
+    int L = part == WMP_RS_W || part == WMP_RS_NW || part == WMP_RS_SW;
+    int R = part == WMP_RS_E || part == WMP_RS_NE || part == WMP_RS_SE;
+    int T = part == WMP_RS_N || part == WMP_RS_NW || part == WMP_RS_NE;
+    int B = part == WMP_RS_S || part == WMP_RS_SW || part == WMP_RS_SE;
+    uint32_t next = 0;
+    wm_min_size(t, &mw, &mh);
+    wm_max_size(t, &Mw, &Mh);
+    vga_pointer_kind(ptr_for(part));
+    while(1){
+        int down = mouse_buttons_raw() & 1;
+        mouse_get_px(&x, &y);
+        int dx = x - px0, dy = y - py0;
+        int nx0 = x0, ny0 = y0, nx1 = x1, ny1 = y1;
+        if(L) nx0 = x0 + dx;
+        if(R) nx1 = x1 + dx;
+        if(T) ny0 = y0 + dy;
+        if(B) ny1 = y1 + dy;
+        /* never smaller than the app can use, never off the screen */
+        if(nx1 - nx0 < mw){ if(L) nx0 = nx1 - mw; else nx1 = nx0 + mw; }
+        if(ny1 - ny0 < mh){ if(T) ny0 = ny1 - mh; else ny1 = ny0 + mh; }
+        if(nx1 - nx0 > Mw){ if(L) nx0 = nx1 - Mw; else nx1 = nx0 + Mw; }
+        if(ny1 - ny0 > Mh){ if(T) ny0 = ny1 - Mh; else ny1 = ny0 + Mh; }
+        if(nx0 < lft + 1){ if(L) nx0 = lft + 1; }
+        if(nx1 > sw - 1){ if(R) nx1 = sw - 1; }
+        if(ny0 < th + 1){ if(T) ny0 = th + 1; }
+        if(ny1 > bot - 1){ if(B) ny1 = bot - 1; }
+        if(!t->zoom){
+            /* a Terminal is a whole number of cells */
+            int cw = vga_cell_w(), ch = vga_cell_h();
+            int w = (nx1 - nx0) / cw * cw, h = (ny1 - ny0) / ch * ch;
+            if(L) nx0 = nx1 - w; else nx1 = nx0 + w;
+            if(T) ny0 = ny1 - h; else ny1 = ny0 + h;
+        }
+        int changed = nx0 != t->rx || ny0 != t->ry || nx1 - nx0 != t->rw || ny1 - ny0 != t->rh;
+        /* no faster than the window can be drawn: 25 times a second */
+        if(changed && ((int32_t)(get_ticks() - next) >= 0 || !down)){
+            t->rx = nx0; t->ry = ny0; t->rw = nx1 - nx0; t->rh = ny1 - ny0;
+            wm_sync(t);
+            next = get_ticks() + 4;
+        }
+        if(!down) break;
+        wm_pointer_update();
+        kpoll_sleep_ms(10);
+    }
+    t->moved = 1;
 }
 
 static void wm_taskbar_click(int x, int y)
@@ -689,6 +931,8 @@ static int wm_hook(ch_task_t *t, int key)
 
     mouse_get_px(&x, &y);
     vga_wm_hit(x, y, &s, &part);
+    /* v0.9.9: over a window's edge, the pointer says it resizes */
+    vga_pointer_kind(WMP_IS_RESIZE(part) ? ptr_for(part) : PTR_ARROW);
     /* the title bar's buttons light up under the pointer */
     {
         int hs = (s > 0 && part >= WMP_MIN && part <= WMP_CLOSE) ? s : -1;
@@ -714,11 +958,31 @@ static int wm_hook(ch_task_t *t, int key)
         if(part == WMP_CONTENT && s != task_current()){ wm_bring(s); mouse_repost_clicks(c); }
         return -1;
     }
+    if(WMP_IS_RESIZE(part)){
+        /* v0.9.9: an edge or a corner -- of the window in front; another
+           window's comes forward first, and the next press resizes it */
+        if(s != task_current()){ wm_bring(s); return -1; }
+        if(t && t->on && !t->solo && !t->maxed && !t->snap) wm_resize(t, s, part, x, y);
+        vga_pointer_kind(PTR_ARROW);
+        return -1;
+    }
     switch(part){
     case WMP_TITLE:
     case WMP_EDGE:
         if(s != task_current()){ mouse_repost_clicks(0); wm_bring(s); break; }
-        if(part == WMP_TITLE && t && t->on && t->boxed && !t->solo && !t->maxed) wm_drag(s, x, y);
+        if(part == WMP_TITLE && t && t->on && !t->solo){
+            /* v0.9.9: a double click maximises, or puts it back */
+            uint32_t now = get_ticks();
+            if(t->click_t && now - t->click_t < 40u){
+                t->click_t = 0;
+                if(t->snap){ t->snap = 0; t->maxed = 0; }
+                else t->maxed = !t->maxed;
+                wm_sync(t); vga_wm_repaint_bar();
+                break;
+            }
+            t->click_t = now;
+            wm_drag(t, s, x, y);
+        }
         break;
     case WMP_MIN:
         vga_wm_buttons(s, 0, 0);
@@ -730,8 +994,10 @@ static int wm_hook(ch_task_t *t, int key)
            taskbar stay. Full screen is F11 or Alt+Enter. */
         if(s != task_current()){ wm_bring(s); break; }
         if(t && t->on){
-            if(t->boxed){ t->maxed = !t->maxed; wm_sync(t); vga_wm_repaint_bar(); }
-            else toast_info("Already as big as it gets -- F11 or Alt+Enter: full screen");
+            /* v0.9.9: any window -- a snapped one comes back first */
+            if(t->snap){ t->snap = 0; t->maxed = 0; }
+            else t->maxed = !t->maxed;
+            wm_sync(t); vga_wm_repaint_bar();
         }
         break;
     case WMP_CLOSE:

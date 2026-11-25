@@ -3626,6 +3626,20 @@ static void show_motd(void){
        dashed rules around it. */
     int W=vga_cols();
     vga_color_t sf, sb; ui_sel_colors(&sf,&sb);
+    /* v0.9.9: in a window on the desktop it is the Terminal, and the
+       window's title bar says so -- no bar of its own, the first line is
+       the window's first line. Shell Mode (the boot entry) keeps it. */
+    { extern int vga_wm_on(void); extern int chrome_on(void);
+      if(vga_wm_on() && chrome_on()){
+          int count=0; while(fortunes[count]) count++;
+          int idx=(int)(get_ticks()%count);
+          vga_set_cursor(0,0);
+          vga_set_color(VGA_DARK_GREY,VGA_BLACK);
+          vga_puts("  "); vga_puts(fortunes[idx]); vga_puts("\n\n");
+          vga_set_color(VGA_WHITE,VGA_BLACK);
+          (void)th; (void)sf; (void)sb;
+          return;
+      } }
     for(int x=0;x<W;x++) vga_putchar_at(' ',x,0,th->bar_fg,th->bar_bg);
     vga_puts_at(" HavenDOS ",0,0,sf,sb);
     vga_puts_at("Shell",11,0,th->bar_fg,th->bar_bg);
@@ -3655,7 +3669,9 @@ void shell_run(void){
     vga_clear(); vga_flush();
     show_motd();
     vga_set_color(VGA_LIGHT_GREEN,VGA_BLACK);
-    vga_printf("HavenDOS Shell " HAVENDOS_VER "  [user: %s]\n",current_username());
+    { extern int vga_wm_on(void); extern int chrome_on(void);
+      vga_printf("HavenDOS %s " HAVENDOS_VER "  [user: %s]\n",
+                 (vga_wm_on() && chrome_on()) ? "Terminal" : "Shell", current_username()); }
     vga_set_color(VGA_DARK_GREY,VGA_BLACK);
     vga_set_color(VGA_DARK_GREY,VGA_BLACK);
     vga_puts("  Tab=complete  Up/Dn=history  Left/Right/Home/End=edit  ^R=search\n");

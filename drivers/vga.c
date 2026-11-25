@@ -606,28 +606,121 @@ int vga_fb_init(uint32_t addr, uint32_t w, uint32_t h, uint32_t pitch_bytes,
    console that came from. The arrow's tip is where a click lands: in the
    cell the mouse driver says, at the pixel inside it the movement left.
    Paper-white with a graphite edge; oxide red while a button is down. */
-static const char *const ptr_shape[19] = {
-    "1           ",
-    "11          ",
-    "121         ",
-    "1221        ",
-    "12221       ",
-    "122221      ",
-    "1222221     ",
-    "12222221    ",
-    "122222221   ",
-    "1222222221  ",
-    "12222222221 ",
-    "122222211111",
-    "1222122 1   ",
-    "122 1222    ",
-    "12  12221   ",
-    "1    1222   ",
-    "     12221  ",
-    "      122   ",
-    "       1    ",
+/* v0.9.9: and when the pointer is over a window's edge, the double arrow
+   that says it can be dragged there to resize it. Every shape is 19x19;
+   (ptr_hot) is the pixel that is the pointer's position -- the arrow's
+   tip, the double arrows' middle. fbc_ptr_x/y are the shape's top-left. */
+static const char *const ptr_shapes[5][19] = {
+  { /* the arrow */
+    "1                  ",
+    "11                 ",
+    "121                ",
+    "1221               ",
+    "12221              ",
+    "122221             ",
+    "1222221            ",
+    "12222221           ",
+    "122222221          ",
+    "1222222221         ",
+    "12222222221        ",
+    "122222211111       ",
+    "1222122 1          ",
+    "122 1222           ",
+    "12  12221          ",
+    "1    1222          ",
+    "     12221         ",
+    "      122          ",
+    "       1           ",
+  },
+  { /* <-> */
+    "                   ",
+    "                   ",
+    "                   ",
+    "                   ",
+    "      1     1      ",
+    "     121   121     ",
+    "    1221   1221    ",
+    "   1222111112221   ",
+    "  122222222222221  ",
+    " 12222222222222221 ",
+    "  122222222222221  ",
+    "   1222111112221   ",
+    "    1221   1221    ",
+    "     121   121     ",
+    "      1     1      ",
+    "                   ",
+    "                   ",
+    "                   ",
+    "                   ",
+  },
+  { /* up-down */
+    "                   ",
+    "         1         ",
+    "        121        ",
+    "       12221       ",
+    "      1222221      ",
+    "     122222221     ",
+    "    12222222221    ",
+    "     111222111     ",
+    "       12221       ",
+    "       12221       ",
+    "       12221       ",
+    "     111222111     ",
+    "    12222222221    ",
+    "     122222221     ",
+    "      1222221      ",
+    "       12221       ",
+    "        121        ",
+    "         1         ",
+    "                   ",
+  },
+  { /* NW-SE */
+    "                   ",
+    "  111111           ",
+    " 12222221          ",
+    " 1222221           ",
+    " 122221            ",
+    " 1222221           ",
+    " 12212221          ",
+    " 121 12221         ",
+    "  1   12221        ",
+    "       12221       ",
+    "        12221   1  ",
+    "         12221 121 ",
+    "          12221221 ",
+    "           1222221 ",
+    "            122221 ",
+    "           1222221 ",
+    "          12222221 ",
+    "           111111  ",
+    "                   ",
+  },
+  { /* NE-SW */
+    "                   ",
+    "           111111  ",
+    "          12222221 ",
+    "           1222221 ",
+    "            122221 ",
+    "           1222221 ",
+    "          12221221 ",
+    "         12221 121 ",
+    "        12221   1  ",
+    "       12221       ",
+    "  1   12221        ",
+    " 121 12221         ",
+    " 12212221          ",
+    " 1222221           ",
+    " 122221            ",
+    " 1222221           ",
+    " 12222221          ",
+    "  111111           ",
+    "                   ",
+  },
 };
-#define PTR_W 12
+static const signed char ptr_hot[5][2] = { {0, 0}, {9, 9}, {9, 9}, {9, 9}, {9, 9} };
+static int ptr_kind;
+#define ptr_shape (ptr_shapes[ptr_kind])
+#define PTR_W 19
 #define PTR_H 19
 static int      fbc_ptr_on, fbc_ptr_x, fbc_ptr_y, fbc_ptr_down, fbc_ptr_s = 1;
 
@@ -817,6 +910,7 @@ int vga_pointer_show(int col, int row, int fx, int fy, int down)
     if (fy >= (int)fbc_chp) fy = (int)fbc_chp - 1;
     int nx = (int)fbc_ox + col * (int)fbc_cwp + fx, ny = (int)fbc_oy + row * (int)fbc_chp + fy;
     int ns = fbc_chp >= 32u ? 2 : 1;      /* about 38 px at 80x25 on 1280x800 or 1080p */
+    nx -= ptr_hot[ptr_kind][0] * ns; ny -= ptr_hot[ptr_kind][1] * ns;    /* v0.9.9 */
     if (fbc_ptr_on && nx == fbc_ptr_x && ny == fbc_ptr_y && down == fbc_ptr_down && ns == fbc_ptr_s)
         return 1;
     if (fbc_ptr_on) { fbc_ptr_on = 0; fbc_ptr_touch(); }
@@ -824,6 +918,24 @@ int vga_pointer_show(int col, int row, int fx, int fy, int down)
     fbc_ptr_on = 1;
     fbc_ptr_touch();
     return 1;
+}
+/* v0.9.9: which shape; the next vga_pointer_show() draws it */
+void vga_pointer_kind(int kind)
+{
+    if (kind < 0 || kind > 4) kind = 0;
+    if (kind == ptr_kind) return;
+    if (fbc_ptr_on) {
+        /* the same tip, the new shape: put back what the old one covered */
+        int s = fbc_ptr_s, tx = fbc_ptr_x + ptr_hot[ptr_kind][0] * s, ty = fbc_ptr_y + ptr_hot[ptr_kind][1] * s;
+        fbc_ptr_on = 0;
+        if (fbc_active && fbc_addr && (g_vis || wm_is_on)) fbc_ptr_touch();
+        ptr_kind = kind;
+        fbc_ptr_x = tx - ptr_hot[kind][0] * s; fbc_ptr_y = ty - ptr_hot[kind][1] * s;
+        fbc_ptr_on = 1;
+        if (fbc_active && fbc_addr && (g_vis || wm_is_on)) fbc_ptr_touch();
+        return;
+    }
+    ptr_kind = kind;
 }
 void vga_pointer_hide(void)
 {
@@ -1410,6 +1522,37 @@ int vga_viewport_set(int x, int y, int w, int h)
 {
     if(w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > g_cols || y + h > g_rows) return 0;
     g_vp_x = x; g_vp_y = y; g_vp_w = w; g_vp_h = h;
+    return 1;
+}
+
+/* v0.9.9: the viewport made bigger or smaller where it is -- a Terminal
+   window being resized. What was in it stays where it was; when it gets
+   shorter than the line the cursor is on, the lines scroll up so that
+   line stays the last one shown, as any terminal does. New space is
+   blank in the console's colours. Cells only: the window manager draws
+   the window again whole after a resize. */
+int vga_viewport_resize(int nw, int nh)
+{
+    if(!vga_viewport_active()) return 0;
+    if(nw > g_cols - g_vp_x) nw = g_cols - g_vp_x;
+    if(nh > g_rows - g_vp_y) nh = g_rows - g_vp_y;
+    if(nw < 1 || nh < 1) return 0;
+    int ow = g_vp_w, oh = g_vp_h, up = cur_y >= nh ? cur_y - nh + 1 : 0;
+    uint16_t blank = make_entry(' ', cur_fg, cur_bg);
+    if(nw == ow && nh == oh) return 1;
+    for(int r = 0; r < nh; r++){
+        int src = r + up;
+        uint16_t *dst = &shadow[(g_vp_y + r) * g_cols + g_vp_x];
+        for(int c = 0; c < nw; c++){
+            uint16_t v = blank;
+            if(src < oh && c < ow) v = shadow[(g_vp_y + src) * g_cols + g_vp_x + c];
+            dst[c] = v;
+        }
+    }
+    g_vp_w = nw; g_vp_h = nh;
+    cur_y -= up;
+    if(cur_x >= nw) cur_x = nw - 1;
+    if(cur_y < 0) cur_y = 0;
     return 1;
 }
 

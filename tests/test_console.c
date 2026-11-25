@@ -174,6 +174,7 @@ static uint32_t fb_at(uint32_t x, uint32_t y){
    its own copy -- tools/check_diskname_sync.py's whole subject. */
 #include "../kernel/string.c"
 
+#include "pmm_host.inc"
 #include "../drivers/vga.c"
 
 /* Count any store the driver made outside the visible rectangle.  The

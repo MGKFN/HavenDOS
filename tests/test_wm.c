@@ -55,6 +55,7 @@ static uint16_t sim_text[VGA_TEXT_COLS_MAX * VGA_TEXT_ROWS_MAX];
 #define GUARD 4
 static uint32_t *fb;
 #include "../kernel/string.c"
+#include "pmm_host.inc"
 #include "../drivers/vga.c"
 
 static uint32_t px(int x, int y){ return fb[(size_t)y * W + x]; }
@@ -86,6 +87,23 @@ static void bar_fn(int x0, int y0, int x1, int y1){ bar_painted++; px_fill(x0, y
 static void pop_fn(int x0, int y0, int x1, int y1){ px_fill(x0, y0, x1 - x0, y1 - y0, 0x00FEDCBAu); }
 
 static uint16_t cells1[VGA_CELLS_MAX], cells2[VGA_CELLS_MAX];
+/* v0.9.9: is what is on the panel what a repaint from scratch draws?
+   (the number of pixels that differ) */
+static long stale_px(const char *where)
+{
+    size_t sz = (size_t)W * H * 4;
+    uint32_t *snap = malloc(sz);
+    memcpy(snap, fb, sz);
+    wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all();
+    long d = 0; int a0 = W, b0 = H, a1 = -1, b1 = -1;
+    for(size_t k = 0; k < (size_t)W * H; k++) if(snap[k] != fb[k]){
+        d++; int x = (int)(k % W), y = (int)(k / W);
+        if(x < a0) a0 = x; if(y < b0) b0 = y; if(x > a1) a1 = x; if(y > b1) b1 = y;
+    }
+    if(d && where) printf("      [%s] stale in %d,%d .. %d,%d\n", where, a0, b0, a1, b1);
+    free(snap);
+    return d;
+}
 static vga_ctx_t c0, c1, c2;
 
 int main(void)
@@ -350,6 +368,126 @@ int main(void)
         ck("  ... down to the taskbar, no desktop in between",
            !near(px(20, H - vga_wm_bar_h() - 2), GREEN, 0), (long)px(20, H - vga_wm_bar_h() - 2));
         vga_wm_geometry(1, 20, 4, 40, 15, 700, 300, WM_FLOAT);
+        vga_ctx_save(&c1); vga_ctx_load(&c0);
+    }
+
+    /* ── v0.9.9: windows of any size ─────────────────────────────── */
+    head("v0.9.9: a window zoomed -- the same 40x15, bigger cells");
+    {
+        vga_ctx_save(&c0); vga_ctx_load(&c1);
+        vga_wm_front(1);
+        int zw = 24, zh = 48, X = 100, Y = 150;
+        vga_wm_place(1, 20, 4, 40, 15, 0, X, Y, 40 * zw, 15 * zh, zw, zh, WM_FLOAT);
+        { long d = stale_px("placed");
+          ck("moved and resized: nothing of where it was is left, its shadow neither", d == 0, d); }
+        ck("it has a surface of its own", vga_wm_has_surface(1) == 1, 0);
+        ck("its content is its cells, to the last pixel",
+           near(px(X + 40 * zw - 1, Y + 15 * zh - 1), RED, 0) && near(px(X + 300, Y + 300), RED, 0),
+           (long)px(X + 40 * zw - 1, Y + 15 * zh - 1));
+        vga_phys_write(20, 4, (uint16_t)(0x4F00 | 'X'));
+        int ink = 0;
+        for(int y = Y; y < Y + zh; y++) for(int x = X; x < X + zw; x++) if(lum(px(x, y)) > lum(RED) + 100) ink++;
+        ck("the X in its top-left cell is drawn at the bigger size (more ink than at 16x32)", ink > 60, ink);
+        int cx = -1, cy = -1, r = vga_wm_cur_map(X + 5 * zw + 3, Y + 2 * zh + 3, &cx, &cy);
+        ck("the mouse maps to the app's cell at the window's cell size", r == 1 && cx == 5 && cy == 2, cx * 100 + cy);
+        int sl = -1, pt = -1;
+        vga_wm_hit(X + 40 * zw + 3, Y + 300, &sl, &pt);
+        ck("just right of its outline: resize, east", sl == 1 && pt == WMP_RS_E, sl * 100 + pt);
+        vga_wm_hit(X + 40 * zw + 3, Y + 15 * zh + 3, &sl, &pt);
+        ck("just past its bottom-right corner: resize, south-east", sl == 1 && pt == WMP_RS_SE, sl * 100 + pt);
+        vga_wm_hit(X - 3, Y - vga_wm_title_h() - 3, &sl, &pt);
+        ck("just past its top-left corner: resize, north-west", sl == 1 && pt == WMP_RS_NW, sl * 100 + pt);
+        vga_wm_hit(X + 300, Y + 300, &sl, &pt);
+        ck("its content is still its content", sl == 1 && pt == WMP_CONTENT, sl * 100 + pt);
+        ck("a press on the band is the window manager's", vga_wm_click_is_app(X + 40 * zw + 3, Y + 300) == 0, 0);
+
+        head("v0.9.9: the surface and the cells agree");
+        size_t sz = (size_t)W * H * 4;
+        uint32_t *snap = malloc(sz);
+        memcpy(snap, fb, sz);
+        wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all();
+        {
+            long d0 = 0; int a0 = W, b0 = H, a1 = -1, b1 = -1;
+            for(size_t k = 0; k < (size_t)W * H; k++) if(snap[k] != fb[k]){
+                d0++; int x = (int)(k % W), y = (int)(k / W);
+                if(x < a0) a0 = x; if(y < b0) b0 = y; if(x > a1) a1 = x; if(y > b1) b1 = y;
+            }
+            if(d0) printf("      differs in %d,%d .. %d,%d\n", a0, b0, a1, b1);
+            ck("what is on the panel is what a repaint from scratch draws", d0 == 0, d0);
+        }
+        memcpy(snap, fb, sz);
+        /* the same window with no surface (no memory for one): cells drawn
+           straight to the screen must give the same picture */
+        wm_win_t *w = &wm_w[1];
+        pmm_free_contig(w->surf, w->surf_pg); w->surf = 0; w->surf_pg = 0;
+        g_pmm_refuse = 1;
+        wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all();
+        long diff = 0;
+        int dx0 = W, dy0 = H, dx1 = -1, dy1 = -1;
+        for(size_t k = 0; k < (size_t)W * H; k++) if(snap[k] != fb[k]){
+            diff++; int x = (int)(k % W), y = (int)(k / W);
+            if(x < dx0) dx0 = x; if(y < dy0) dy0 = y; if(x > dx1) dx1 = x; if(y > dy1) dy1 = y;
+        }
+        if(diff) printf("      differs in %d,%d .. %d,%d\n", dx0, dy0, dx1, dy1);
+        ck("with no surface, the same pixels", diff == 0, diff);
+        ck("  ... and it says it has none", vga_wm_has_surface(1) == 0, 0);
+        g_pmm_refuse = 0;
+        vga_wm_place(1, 20, 4, 40, 15, 0, X, Y, 40 * zw + 8, 15 * zh, zw, zh, WM_FLOAT);
+        ck("given memory again, it takes a surface", vga_wm_has_surface(1) == 1, 0);
+        free(snap);
+
+        head("v0.9.9: the caret is part of how a cell is shown");
+        vga_wm_place(1, 20, 4, 40, 15, 0, X, Y, 40 * zw, 15 * zh, zw, zh, WM_FLOAT);
+        int idx = (4 + 3) * g_cols + 20 + 10;
+        wm_caret(idx);
+        int cxp = X + 10 * zw + zw / 2, cyp = Y + 3 * zh + zh / 2;
+        ck("the caret's cell is drawn with its colours swapped", !near(px(cxp, cyp), RED, 0), (long)px(cxp, cyp));
+        vga_wm_repaint_all();
+        ck("  ... and a repaint keeps it (it is not drawn over the window)", !near(px(cxp, cyp), RED, 0), (long)px(cxp, cyp));
+        wm_caret(-1);
+        ck("gone, the cell is itself again", near(px(cxp, cyp), RED, 0), (long)px(cxp, cyp));
+
+        head("v0.9.9: a header row not shown (skip)");
+        vga_wm_place(1, 20, 4, 40, 15, 1, X, Y, 40 * zw, 14 * zh, zw, zh, WM_FLOAT);
+        r = vga_wm_cur_map(X + 5 * zw + 3, Y + 3, &cx, &cy);
+        ck("the first row shown is the app's row 1", r == 1 && cx == 5 && cy == 1, cx * 100 + cy);
+        ink = 0;
+        for(int y = Y; y < Y + zh; y++) for(int x = X; x < X + zw; x++) if(lum(px(x, y)) > lum(RED) + 100) ink++;
+        ck("  ... so the X on row 0 is not on the screen", ink == 0, ink);
+
+        head("v0.9.9: full screen is a window the size of the screen");
+        vga_wm_place(1, 20, 4, 40, 15, 0, 0, 0, W, H, W / 40, H / 15 / 2 * 2, WM_FULL);
+        vga_wm_full(1, 1);
+        ck("no taskbar", px(10, H - 2) != 0x00ABCDEFu, (long)px(10, H - 2));
+        ck("its cells, zoomed, from the top-left of the screen", near(px(W / 2, H / 2), RED, 0), (long)px(W / 2, H / 2));
+        r = vga_wm_cur_map(W / 40 * 3 + 2, 5, &cx, &cy);
+        ck("  ... and the mouse maps into them", r == 1 && cx == 3 && cy == 0, cx * 100 + cy);
+        vga_wm_full(1, 0);
+        vga_wm_geometry(1, 20, 4, 40, 15, 700, 300, WM_FLOAT);
+        ck("back: the taskbar", px(10, H - 2) == 0x00ABCDEFu, (long)px(10, H - 2));
+        ck("  ... and the window where it was, at the console's cell", near(px(750, 450), RED, 0), (long)px(750, 450));
+        vga_ctx_save(&c1); vga_ctx_load(&c0);
+    }
+
+    head("v0.9.9: a Terminal's viewport made smaller keeps its cursor line");
+    {
+        vga_ctx_save(&c0); vga_ctx_load(&c1);
+        int vv = vga_viewport_set(0, 0, 40, 10);
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        vga_clear();
+        for(int k = 0; k < 9; k++){ vga_puts("line "); vga_putchar((char)('0' + k)); vga_putchar('\n'); }
+        vga_puts("$ ");
+        int ccx, ccy; vga_get_cursor(&ccx, &ccy);
+        ck("before: the prompt on row 9", vv && ccy == 9, ccy);
+        vga_viewport_resize(40, 5);
+        vga_get_cursor(&ccx, &ccy);
+        ck("5 rows: the prompt on the last of them", ccy == 4 && vga_rows() == 5, ccy * 100 + vga_rows());
+        ck("  ... and line 8 just above it", (vga_shadow_read(5, 3) & 0xFF) == '8', vga_shadow_read(5, 3) & 0xFF);
+        vga_viewport_resize(60, 12);
+        ck("bigger again: the new columns and rows blank, the prompt where it was",
+           vga_cols() == 60 && vga_rows() == 12 && (vga_shadow_read(50, 10) & 0xFF) == ' ', vga_cols() * 100 + vga_rows());
+        vga_viewport_clear();
+        fill_console(4);
         vga_ctx_save(&c1); vga_ctx_load(&c0);
     }
 

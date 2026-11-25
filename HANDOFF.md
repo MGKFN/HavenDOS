@@ -51,6 +51,30 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
+## OPEN QUESTIONS FROM KYAN (25 Nov, end of chat) -- answer these first
+He has NOT tested 0.9.8.2 yet. His words:
+1. *"what diffrent from windowd linux rederer like display and ours bc i dont that shit with rows grids"*
+   -- answered: the screen is pixels already, but apps still draw into a character grid that the WM
+   turns into pixels. Windows/Linux: each window its own pixel surface, apps use a toolkit, a compositor
+   stacks them. The grid goes in 0.9.9 (surfaces, resize), 0.9.10 (building blocks), 0.9.11-14 (apps).
+2. *"but if we transitioned to the pixels we have kinda our same system like windowds ormlinux??bc i want
+   smth like that"* -- yes, same model; differences left: CPU drawing, no app memory protection, no
+   third-party apps yet. He said **"sure" to starting 0.9.9 next.**
+3. *"why keep it light weight thats why the 32 bit version will get the old renderer legacy and 64 bit our
+   new system?? idk if possible?? bc i want to transition to more usbale keeping everything lightweight
+   makes it feel sluggish i aim for older PCs but that would be then with smth like editions idk?? whats
+   smart??"* -- recommended (NOT yet confirmed by him): one HavenDOS/one ISO; pixel desktop on 32-bit
+   too; a **Classic** boot entry = today's grid UI frozen as Legacy for machines with no framebuffer or
+   very little RAM; 64-bit after 1.0 with the same desktop; editions only later if there is a reason.
+   Full write-up: `claude/havendos-road-to-1.0-pixel-desktop.md` ("Open question"). Ask him to pick.
+4. Still open: pixel installer/boot screens before 0.9.9, or keep them at 0.9.13?
+
+## Retro PC
+- MGKFN/RetroPC v0.1.1 (23 Nov). Its roadmap: 0.2 one PC -> 0.3 disks/CD -> 0.4 graphics -> 0.5 486 ->
+  0.6 Pentium -> 1.0 Windows XP install -> 1.x 64-bit -> 2.0 host virtualization (Win 10/11).
+- Kyan: RetroPC is "fucking laggy". It interprets every instruction (~70 M/s); the GPU doesn't help.
+  Realistic win before 2.0: a decoded-block cache in the interpreter. Next release: 0.2.
+
 ## LATEST: 0.9.8.2 (25 Nov) — after four HP photos
 
 - **Fixed:** `vga_putchar` wrapped/scrolled on the whole grid, not the

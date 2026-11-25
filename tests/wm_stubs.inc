@@ -43,6 +43,9 @@ WM_W int  taskbar_hit(int x, int y, int *i){ (void)x; (void)y; (void)i; return 0
 WM_W int  taskbar_hover(int x, int y){ (void)x; (void)y; return 0; }
 WM_W uint32_t taskbar_sig(void){ return 0; }
 WM_W void startmenu_run(void){ }
+WM_W void notif_flyout_run(void){ }
+WM_W int  vga_cell_w(void){ return 8; }
+WM_W int  vga_cell_h(void){ return 16; }
 #ifndef WM_HAVE_MOUSE
 WM_W void mouse_get_px(int *x, int *y){ *x = 0; *y = 0; }
 WM_W int  mouse_buttons_raw(void){ return 0; }

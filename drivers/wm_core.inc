@@ -115,7 +115,10 @@ static void win_frame(const wm_win_t *w, int *x0, int *y0, int *x1, int *y1)
     int b = win_border(w);
     win_content(w, x0, y0, x1, y1);
     if (w->mode == WM_MAXED) {            /* edge to edge, from the top */
+        /* v0.9.8.2: down to the taskbar, whatever size the content is --
+           an 80x25 app maximised sits in the middle of it */
         *x0 = 0; *x1 = (int)fbc_w; *y0 = 0;
+        if (wm_bar_fn && (int)fbc_h - vga_wm_bar_h() > *y1) *y1 = (int)fbc_h - vga_wm_bar_h();
         return;
     }
     *x0 -= b; *x1 += b; *y1 += b; *y0 -= vga_wm_title_h() + b;
@@ -127,6 +130,11 @@ static void win_title(const wm_win_t *w, int *x0, int *y0, int *x1, int *y1)
     win_frame(w, &fx0, &fy0, &fx1, &fy1);
     win_content(w, &cx0, &cy0, &cx1, &cy1);
     *x0 = fx0 + b; *x1 = fx1 - b; *y0 = fy0 + b; *y1 = cy0;
+    if (w->mode == WM_MAXED) {            /* v0.9.8.2: the grid's title rows */
+        int t = (int)fbc_oy + vga_wm_title_rows() * (int)fbc_chp;
+        if (t < vga_wm_title_h()) t = vga_wm_title_h();
+        if (t < *y1) *y1 = t;
+    }
 }
 
 static int front_full(void)
@@ -509,7 +517,7 @@ static void wm_paint_title(int i, const wm_win_t *w, int slot)
     int fx0, fy0, fx1, fy1;
     win_frame(w, &fx0, &fy0, &fx1, &fy1);
     wm_cl = i;
-    wm_fast = clear_above(i, fx0, fy0, fx1, cy0) ? 2 : 0;    /* v0.9.8.1 */
+    wm_fast = clear_above(i, fx0, fy0, fx1, fy1) ? 2 : 0;    /* v0.9.8.1 */
     if (b) {
         /* the edge: a 1 px ring; the title bar and the content are a hole in it */
         wm_ex = 1; wm_ex0 = tx0; wm_ey0 = ty0; wm_ex1 = tx1; wm_ey1 = cy1;
@@ -518,7 +526,7 @@ static void wm_paint_title(int i, const wm_win_t *w, int slot)
     } else {
         /* edge to edge: the screen beside the grid is the window's too */
         wm_ex = 1; wm_ex0 = cx0; wm_ey0 = cy0; wm_ex1 = cx1; wm_ey1 = cy1;
-        px_fill(fx0, cy0, fx1 - fx0, fy1 - cy0, WM_BG_GRAD);
+        px_fill(fx0, ty1, fx1 - fx0, fy1 - ty1, WM_BG_GRAD);
         wm_ex = 0;
     }
     clip_set(sx0 > tx0 ? sx0 : tx0, sy0 > ty0 ? sy0 : ty0, sx1 < tx1 ? sx1 : tx1, sy1 < ty1 ? sy1 : ty1);
@@ -576,9 +584,42 @@ static void di_paint(const wm_di_t *d)
 {
     int x0, y0, x1, y1;
     di_rect(d, &x0, &y0, &x1, &y1);
-    int h = y1 - y0, fp = vga_wm_font_px();
-    int isz = px_icon_size(h - h / 5 > 48 ? 48 : h - h / 5);
+    int h = y1 - y0, w = x1 - x0, fp = vga_wm_font_px();
     uint32_t bg = WM_BG_GRAD;
+    if (h >= 64) {
+        /* v0.9.8.2: the icon on top, its name centred under it, on two
+           lines if it needs them -- as every other desktop does */
+        int tp = fp > 14 ? fp - 1 : fp, lh = px_text_h(tp, 0);
+        int isz = px_icon_size(h - 2 * lh - fp > 48 ? 48 : h - 2 * lh - fp);
+        if (d->sel) {
+            bg = mix(0xffffffu, fbc_bg0((uint32_t)y0), 40);
+            px_round(x0 + 2, y0 + 2, w - 4, h - 4, fp / 2, bg, WM_BG_GRAD);
+        }
+        int iy = y0 + fp / 2;
+        px_icon(x0 + (w - isz) / 2, iy, d->icon, isz, bg);
+        int ty = iy + isz + fp / 3, maxw = w - fp / 2;
+        char l1[20], l2[20]; int n = 0, cut = -1;
+        for (int k = 0; d->name[k]; k++) n = k + 1;
+        memcpy(l1, d->name, sizeof l1); l2[0] = 0;
+        if (px_text_w(d->name, tp, 0) > maxw) {
+            /* break at the last space that lets line one fit */
+            for (int k = 0; k < n; k++) {
+                if (d->name[k] != ' ') continue;
+                char t[20]; memcpy(t, d->name, (size_t)k); t[k] = 0;
+                if (px_text_w(t, tp, 0) <= maxw) cut = k;
+            }
+            if (cut > 0) { l1[cut] = 0; memcpy(l2, d->name + cut + 1, sizeof l2 - (size_t)cut - 1); l2[19] = 0; }
+        }
+        uint32_t fg = wm_rgb(WMC_TEXT);
+        int w1 = px_text_w(l1, tp, 0); if (w1 > maxw) w1 = maxw;
+        px_text(x0 + (w - w1) / 2, ty, l1, tp, 0, fg, bg, maxw);
+        if (l2[0] && ty + 2 * lh <= y1) {
+            int w2 = px_text_w(l2, tp, 0); if (w2 > maxw) w2 = maxw;
+            px_text(x0 + (w - w2) / 2, ty + lh, l2, tp, 0, fg, bg, maxw);
+        }
+        return;
+    }
+    int isz = px_icon_size(h - h / 5 > 48 ? 48 : h - h / 5);
     if (d->sel) {
         bg = mix(0xffffffu, fbc_bg0((uint32_t)y0), 40);
         px_round(x0, y0, x1 - x0, h, fp / 2, bg, WM_BG_GRAD);

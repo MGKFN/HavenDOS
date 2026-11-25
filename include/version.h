@@ -92,7 +92,10 @@
    v0.9.8 (Beta again, Kyan 24 Nov): the desktop -- windows in pixels that
    move and stack, a pixel taskbar and Start menu, an icon for every app.
    v0.9.8.1: the pointer in pixels with acceleration; no trails; an app the
-   desktop runs in its own console has the screen. */
+   desktop runs in its own console has the screen.
+   v0.9.8.2: the Shell scrolls inside its window; maximise keeps the title
+   bar and taskbar; power and notifications are flyouts; icons with their
+   names under them, and bigger. */
 #define HAVENDOS_VER_BUILD  1
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
@@ -100,7 +103,7 @@
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.8.1"
+#define HAVENDOS_VER_NUM    "0.9.8.2"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"

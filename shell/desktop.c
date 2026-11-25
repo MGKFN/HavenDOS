@@ -86,6 +86,7 @@ static void app_tetris_wrap(void);
 static void app_screensaver(void);
 static void app_power(void);
 static void notif_center(void);
+static void notif_open(void);
 static void app_boot_ide(void);
 static void app_install(void);
 static void app_bpkg(void);
@@ -544,8 +545,20 @@ static int desk_fill(int *out){
    side by side -- so four times as many fit. Settings > Appearance, or
    right-click the desktop. */
 extern int cfg_desk_small(void);
-#define ICON_TILE_STEP  (cfg_desk_small() ? 1 : 4)   /* screen rows per app row */
-#define ICON_PITCH     17   /* screen columns per app column             */
+/* v0.9.8.2: with the window manager on, a tile is the icon with its name
+   UNDER it, as on Windows, macOS and Linux (Kyan, 25 Nov) -- about 104x92
+   pixels, whatever the cell. Its size in cells comes from the cell. */
+static int desk_tall(void){ return vga_wm_on() && !cfg_desk_small(); }
+static int icon_tile_w(void){
+    if(!desk_tall()) return 15;
+    int cw = vga_cell_w(), w = (104 + cw - 1) / cw; return w < 6 ? 6 : w;
+}
+static int icon_tile_h(void){
+    if(!desk_tall()) return cfg_desk_small() ? 1 : 2;
+    int ch = vga_cell_h(), h = (92 + ch - 1) / ch; return h < 3 ? 3 : h;
+}
+#define ICON_TILE_STEP  (desk_tall() ? icon_tile_h() : cfg_desk_small() ? 1 : 4)   /* screen rows per app row */
+#define ICON_PITCH      (desk_tall() ? icon_tile_w() : 17)   /* screen columns per app column */
 
 
 /* v0.7.18 — the desktop chrome used to be nailed to rows 21-24 and 80
@@ -620,7 +633,7 @@ static int icon_hit(int mx,int my){
         int vis_row=approw-icon_scroll_row;
         if(vis_row<0||vis_row>=ICON_ROWS_VIS) continue;
         int ix=1+icol*ICON_PITCH, iy=2+vis_row*ICON_TILE_STEP;
-        if(mx>=ix&&mx<ix+15&&my>=iy&&my<iy+(cfg_desk_small()?1:2)) return i;
+        if(mx>=ix&&mx<ix+icon_tile_w()&&my>=iy&&my<iy+icon_tile_h()) return i;
     }
     return -1;
 }
@@ -687,8 +700,7 @@ static void draw_icons(int sel, int menu_open){
         if(vga_wm_on()){
             /* v0.9.8: the tile in pixels (drivers/wm_core.inc); its cells
                stay the wallpaper, and a click still lands on them */
-            int th2 = cfg_desk_small() ? 1 : 2;
-            vga_wm_desk_icon(x, y, x + 15, y + th2, a->id, a->name, s);
+            vga_wm_desk_icon(x, y, x + icon_tile_w(), y + icon_tile_h(), a->id, a->name, s);
             continue;
         }
         vga_putchar_at(' ',x,y,bfg,blk);
@@ -3251,10 +3263,14 @@ void notif_push(const char *msg){
     notif_unread++;
 }
 
-static void notif_center(void){
-    theme_t *th=ui_theme();
-
-    /* Seed initial notifications on first open */
+/* v0.9.8.2: for the bell's flyout (shell/startmenu.c) */
+const char *notif_msg(int i){ return (i >= 0 && i < notif_count) ? notif_msgs[i] : ""; }
+void notif_read_all(void){ notif_unread = 0; }
+void notif_clear_all(void){ notif_count = 0; notif_unread = 0; }
+static int notif_seeded;
+void notif_seed(void){
+    if(notif_seeded) return;
+    notif_seeded = 1;
     if(notif_count == 0){
         notif_push("HavenDOS " HAVENDOS_VER " running");
         notif_push("System boot OK");
@@ -3266,8 +3282,18 @@ static void notif_center(void){
         if(vfs_using_fat16()) notif_push("FAT16 filesystem OK");
         else { extern int vfs_using_fat32(void);
                if(vfs_using_fat32()) notif_push("FAT32 filesystem OK"); }
-        notif_push("Press N to open again");
     }
+}
+
+/* v0.9.8.2: with the window manager on, the bell's flyout */
+static void notif_open(void){
+    extern void notif_flyout_run(void);
+    if(vga_wm_on()) notif_flyout_run(); else notif_center();
+}
+
+static void notif_center(void){
+    theme_t *th=ui_theme();
+    notif_seed();
 
     /* Mark all as read when center is opened */
     notif_unread = 0;
@@ -4478,7 +4504,7 @@ void desktop_run(void){
                        and simply the wrong part of the screen at any
                        other width. ui.c owns the arithmetic now, so the
                        hit box and the paint cannot drift apart. */
-                    if(ui_taskbar_notif_hit(mx,my)){ notif_center(); needs_draw=1; }
+                    if(ui_taskbar_notif_hit(mx,my)){ notif_open(); needs_draw=1; }
                     /* v0.9.6: an open app's chip brings it forward. */
                     { int sl = task_chip_hit(mx,my);
                       if(sl > 0){ desktop_switch_to(sl); needs_draw=1; } }
@@ -4598,7 +4624,7 @@ void desktop_run(void){
             else if(c=='\t')    { /* fits=1: the shell derives its layout from vga_rows(),
                            same as its registry entry says. */
                         desktop_run_app(app_shell, "Shell", 1); needs_draw=1; }
-            else if(c=='n'||c=='N') { notif_center(); needs_draw=1; }
+            else if(c=='n'||c=='N') { notif_open(); needs_draw=1; }
             else if(c=='m'||c=='M'){
                 /* The context menu had no keyboard route at all -- it was
                    right-click only, on an OS that runs perfectly well with

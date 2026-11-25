@@ -146,6 +146,7 @@ typedef struct {
     int         pc, pr;         /* ... and the grid to go back to         */
     int         moved, wx, wy;  /* v0.9.8: where it was dragged to (px)    */
     int         solo;           /* v0.9.8: it has the whole screen         */
+    int         maxed;          /* v0.9.8.2: maximised, title bar and taskbar kept */
 } ch_task_t;
 static ch_task_t g_t[TASK_MAX];
 static void (*g_surround)(int vx, int vy, int vw, int vh, const char *name);
@@ -262,6 +263,20 @@ static void wm_sync(ch_task_t *t)
     if(!L.viewport || t->solo) return;
     vga_mouse_px(L.vx, L.vy, 0, 0, &x, &y);
     if(t->moved && L.boxed){ x = t->wx; y = t->wy; }
+    if(L.boxed && t->maxed){
+        /* v0.9.8.2: maximised -- edge to edge between the title bar and
+           the taskbar, both kept (Kyan: "maximize should still let the
+           buttons and taskbar and all visible"). The app is still 80x25
+           until 0.9.9 makes windows resizable, so it sits in the middle. */
+        int cw = vga_cell_w() * L.vw, chh = vga_cell_h() * L.vh;
+        int top = vga_wm_title_rows() * vga_cell_h(), bot = vga_screen_h() - vga_wm_bar_h();
+        int gx, gy; vga_mouse_px(0, 0, 0, 0, &gx, &gy);
+        top += gy; if(top < vga_wm_title_h()) top = vga_wm_title_h();
+        x = (vga_screen_w() - cw) / 2;
+        y = top + (bot - top - chh) / 2; if(y < top) y = top;
+        vga_wm_geometry(s, L.vx, L.vy, L.vw, L.vh, x, y, WM_MAXED);
+        return;
+    }
     vga_wm_geometry(s, L.vx, L.vy, L.vw, L.vh, x, y, L.boxed ? WM_FLOAT : WM_MAXED);
 }
 
@@ -420,7 +435,7 @@ int chrome_begin(const char *name, int boxed)
     ch_task_t *t = me();
     if(!t || !task_ready()) return 0;
     t->on = 1; t->boxed = boxed; t->full = 0; t->name = name;
-    t->moved = 0; t->solo = 0;
+    t->moved = 0; t->solo = 0; t->maxed = 0;
     if(wm_managed()){                       /* v0.9.8: a window of pixels */
         extern const char *desktop_app_icon_id(const char *name);
         vga_wm_open(task_current(), name, desktop_app_icon_id(name));
@@ -645,10 +660,9 @@ static void wm_taskbar_click(int x, int y)
             wm_bring(idx);
         }
         break;
-    case 4: {                                 /* notifications: their window */
-        extern int desktop_open_app(const char *id);
-        chrome_leave_front();
-        desktop_open_app("notif");
+    case 4: {                                 /* v0.9.8.2: a flyout, not an app */
+        extern void notif_flyout_run(void);
+        notif_flyout_run();
         break; }
     default: break;
     }
@@ -704,7 +718,7 @@ static int wm_hook(ch_task_t *t, int key)
     case WMP_TITLE:
     case WMP_EDGE:
         if(s != task_current()){ mouse_repost_clicks(0); wm_bring(s); break; }
-        if(part == WMP_TITLE && t && t->on && t->boxed && !t->solo) wm_drag(s, x, y);
+        if(part == WMP_TITLE && t && t->on && t->boxed && !t->solo && !t->maxed) wm_drag(s, x, y);
         break;
     case WMP_MIN:
         vga_wm_buttons(s, 0, 0);
@@ -712,8 +726,13 @@ static int wm_hook(ch_task_t *t, int key)
         wm_bring(0);
         break;
     case WMP_MAX:
-        if(s != task_current()){ wm_bring(s); keyboard_inject(KEY_FULLSCREEN); break; }
-        if(t && t->on) toggle_full(t);
+        /* v0.9.8.2: maximise, not full screen -- the title bar and the
+           taskbar stay. Full screen is F11 or Alt+Enter. */
+        if(s != task_current()){ wm_bring(s); break; }
+        if(t && t->on){
+            if(t->boxed){ t->maxed = !t->maxed; wm_sync(t); vga_wm_repaint_bar(); }
+            else toast_info("Already as big as it gets -- F11 or Alt+Enter: full screen");
+        }
         break;
     case WMP_CLOSE:
         vga_wm_buttons(s, WMP_CLOSE, WMP_CLOSE);

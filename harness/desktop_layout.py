@@ -150,6 +150,19 @@ def walk_wizard(q, user="tester"):
     return None, grid
 
 
+def changed(a, b, x0, y0, x1, y1):
+    """v0.9.8.2: the share of pixels in a rect that differ between two shots."""
+    from PIL import Image
+    A = Image.open(a).convert("RGB"); B = Image.open(b).convert("RGB")
+    n = d = 0
+    for y in range(y0, y1, 2):
+        for x in range(x0, x1, 2):
+            n += 1
+            if A.getpixel((x, y)) != B.getpixel((x, y)):
+                d += 1
+    return d / max(1, n)
+
+
 def row_of(screen, needle):
     for i, line in enumerate(screen.split("\n")):
         if needle in line:
@@ -209,30 +222,15 @@ def main():
         q.key("n"); time.sleep(1.8)
         s = best_screen(q)[0]
         q.shot(OUT + "-notif.ppm")
-        r, line = row_of(s, "Notifications")
-        check("the drawer is on screen", r >= 0, s)
-        if r >= 0:
-            x = line.index("Notifications")
-            check("the drawer is anchored to the right edge, not floating "
-                  "mid-desktop",
-                  x >= cols - 40,          # 0.9.7.6: the drawer is 34 columns wide
-                  "'Notifications' starts at column %d of %d. The bell that "
-                  "opens it is painted at column %d, so the drawer opened "
-                  "%d columns away from its own control."
-                  % (x, cols, cols - 25, (cols - 25) - x))
-            # And it should reach down to the taskbar rather than
-            # stopping at the literal row 23.
-            # its footer: "Any key=Close" until the 0.9.5 rebuild, "any
-            # key closes" since -- the harness kept looking for the old
-            # one and reported the row as -1 (found in 0.9.7.7's sweep)
-            close_r, _ = row_of(s, "any key closes")
-            if close_r < 0:
-                close_r, _ = row_of(s, "Any key=Close")
-            check("the drawer reaches the taskbar instead of stopping at "
-                  "row 23",
-                  close_r >= rows - 4,
-                  "its last row is %d of %d; the taskbar is row %d"
-                  % (close_r, rows, rows - 1))
+        # v0.9.8.2: the drawer is a flyout of pixels above the bell
+        # (shell/startmenu.c notif_flyout_run) -- no cells to read. It is
+        # found by what changed against the desktop's own screenshot: a
+        # panel in the bottom-right, above the taskbar, nothing at the left.
+        chg_r = changed(OUT + "-desktop.ppm", OUT + "-notif.ppm", 1280 - 300, 800 - 160, 1280 - 40, 800 - 60)
+        chg_l = changed(OUT + "-desktop.ppm", OUT + "-notif.ppm", 200, 800 - 160, 500, 800 - 60)
+        check("the drawer is on screen (a panel above the bell)", chg_r > 0.5, "%.2f changed" % chg_r)
+        check("the drawer is anchored to the right edge, not floating mid-desktop",
+              chg_l < 0.05, "%.2f changed at the left" % chg_l)
         q.key("esc"); time.sleep(1.8)       # the drawer closes on any key
 
         print("[4/5] opening a boxed app and looking for a window frame")
@@ -282,7 +280,7 @@ def main():
         q.shot(OUT + "-bellclick.ppm")
         s = best_screen(q)[0]
         check("clicking the bell opens the notifications",
-              "Notifications" in s or "otification" in s,
+              changed(OUT + "-desktop.ppm", OUT + "-bellclick.ppm", 1280 - 300, 800 - 160, 1280 - 40, 800 - 60) > 0.5,
               "clicked the bell at x=%d and nothing opened" % bell_x)
     finally:
         q.stop()

@@ -95,7 +95,9 @@ void taskbar_paint(int x0, int y0, int x1, int y1)
     layout();
     px_fill(0, y, x1, bh, bg);
     px_fill(0, y, x1, 1, mixc(0xffffffu, bg, 30));          /* a hairline on top */
-    int isz = px_icon_size(bh * 5 / 8), r = bh / 6;
+    /* v0.9.8.2: bigger -- 24 px on a 32 px bar, 32 on a 44 px one (Kyan:
+       "the icons ... can be a bit bigger, especially the start menu button") */
+    int isz = px_icon_size(bh * 3 / 4), r = bh / 6;
     for (int k = 0; k < g_nit; k++) {
         tb_item_t *it = &g_it[k];
         int w = it->x1 - it->x0, hov = k == g_hover;

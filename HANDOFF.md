@@ -1,6 +1,6 @@
-# HavenDOS — handoff, 24 November 2026
+# HavenDOS — handoff, 25 November 2026
 
-Current release: **v0.9.8** (Beta, a GitHub pre-release) (codename "Hestia"),
+Current release: **v0.9.8.2** (Beta, a GitHub pre-release) (codename "Hestia"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -50,6 +50,24 @@ file into a new chat, with the bundle zip, to pick up where this left off.
 - **Careful:** `tests/test_chrome.c` is the desktop bars' 58-check suite.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
+
+## LATEST: 0.9.8.2 (25 Nov) — after four HP photos
+
+- **Fixed:** `vga_putchar` wrapped/scrolled on the whole grid, not the
+  viewport, so a maximised Shell (44 of 48 rows) wrote below its window
+  and showed every third line. Now `vga_cols()/vga_rows()`. test_wm has
+  the 300-line check. Probably also Kyan's "pointer trails" -- ask.
+- Maximise (title-bar middle button) keeps title bar + taskbar
+  (`ch_task_t.maxed`, WM_MAXED frame down to the bar, 80x25 centred).
+  Full screen = F11/Alt+Enter only.
+- Start → power = flyout in shell/startmenu.c (Lock, Switch user,
+  Restart, Shut down). Bell / N = `notif_flyout_run()` (same file).
+- Desktop tiles tall (icon over name), ~104x92 px; bigger taskbar and
+  Start menu icons.
+- Repro builds: /tmp/hd768 (1024x768 = the HP's GOP mode, 128x48) and
+  /tmp/hd1080. QEMU scripts in /tmp/rep/.
+- Open: sluggishness (WC already on; see changelog), modern apps
+  (0.9.11-12), installer/boot screens (0.9.13, offered sooner).
 
 ## START HERE: 0.9.8 Beta "Hestia" (24 Nov) — THE DESKTOP IN PIXELS
 

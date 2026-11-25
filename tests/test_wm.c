@@ -270,6 +270,89 @@ int main(void)
     vga_wm_solo(0);
     ck("  ... and after, the windows again", near(px(750, 450), RED, 0), (long)px(750, 450));
 
+    head("a maximised Shell that scrolls (v0.9.8.2, Kyan's photo)");
+    {
+        /* window 1 maximised over the grid between title bar and taskbar,
+           the app's console a viewport of it -- as shell/chrome.c lays
+           the Shell out -- and then a few hundred lines through the
+           ordinary console path, which scrolls. What is on the panel has
+           to be exactly what a repaint from scratch draws. */
+        vga_ctx_save(&c0); vga_ctx_load(&c1);
+        int tr = vga_wm_title_rows(), vh = vga_phys_rows() - 2 * tr;
+        int mx, my; vga_mouse_px(0, tr, 0, 0, &mx, &my);
+        vga_wm_geometry(1, 0, tr, vga_phys_cols(), vh, mx, my, WM_MAXED);
+        vga_wm_front(1);
+        vga_viewport_set(0, tr, vga_phys_cols(), vh);
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        vga_clear();
+        char line[40];
+        for(int k = 0; k < 300; k++){
+            int n = 0; const char *p = "admin@havendos:~# echo L";
+            while(*p) line[n++] = *p++;
+            if(k >= 100) line[n++] = (char)('0' + k / 100);
+            if(k >= 10) line[n++] = (char)('0' + k / 10 % 10);
+            line[n++] = (char)('0' + k % 10); line[n++] = '\n'; line[n] = 0;
+            /* the line editor's way: the prompt, then each key, the caret moving */
+            int cx, cy; vga_get_cursor(&cx, &cy);
+            for(int j = 0; line[j] && line[j] != '\n'; j++){
+                vga_set_cursor(0, cy);
+                for(int q = 0; q <= j; q++) vga_putchar(line[q]);
+            }
+            vga_putchar('\n');
+            if(k % 3 == 0){
+                /* the desktop runs between keys (cooperative): its clock */
+                vga_ctx_save(&c1); vga_ctx_load(&c0);
+                vga_phys_write(5, 0, (uint16_t)(0x2F00 | ('0' + k % 10)));
+                vga_ctx_save(&c0); vga_ctx_load(&c1);
+            }
+            if(k % 7 == 0) vga_pointer_show(10 + k % 40, vh, k % 8, k % 16, 0);   /* the pointer, low */
+        }
+        vga_pointer_hide();
+        {
+            /* the last line printed is the one above the caret, IN the window */
+            char got[40]; int n = 0, r = vga_rows() - 2;
+            for(int x = 18; x < 30 && n < 39; x++) got[n++] = (char)(vga_shadow_read(x, r) & 0xFF);
+            got[n] = 0;
+            int cx, cy; vga_get_cursor(&cx, &cy);
+            ck("the Shell scrolls inside its window: its last line is the window's next-to-last row",
+               !strncmp(got, "echo L299", 9), r);
+            ck("  ... and the caret is on the window's last row", cy == vga_rows() - 1, cy);
+        }
+        size_t sz = (size_t)W * H * 4;
+        uint32_t *snap = malloc(sz);
+        memcpy(snap, fb, sz);
+        wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all(); update_hw_cursor();
+        long diff = 0;
+        int bx0 = W, by0 = H, bx1 = -1, by1 = -1;
+        for(size_t k = 0; k < (size_t)W * H; k++) if(snap[k] != fb[k]){
+            diff++; int x = (int)(k % W), y = (int)(k / W);
+            if(x < bx0) bx0 = x; if(y < by0) by0 = y; if(x > bx1) bx1 = x; if(y > by1) by1 = y;
+        }
+        if(diff) printf("      differs in %d,%d .. %d,%d\n", bx0, by0, bx1, by1);
+        ck("after 300 lines, the panel is what a repaint draws (no stale row, no trail)", diff == 0, diff);
+        free(snap);
+        vga_viewport_clear();
+        fill_console(4);
+
+        /* v0.9.8.2: an 80x25 app maximised: the title bar and the taskbar
+           stay, the app sits in the middle of what is between them */
+        vga_wm_geometry(1, 20, 4, 40, 15, (W - 40 * cw) / 2, 400, WM_MAXED);
+        int tth = vga_wm_title_h();
+        ck("maximised: its title bar across the top", near(px(W / 2, tth / 2), BLUE, 0) && near(px(5, tth / 2), BLUE, 0),
+           (long)px(5, tth / 2));
+        ck("  ... its close button at the panel's right edge", vga_wm_hit(W - 10, tth / 2, 0, 0) == 0, 0);
+        { int sl, pt; vga_wm_hit(W - 10, tth / 2, &sl, &pt);
+          ck("  ... (the hit test says close)", sl == 1 && pt == WMP_CLOSE, pt); }
+        ck("  ... the taskbar still there", px(10, H - 2) == 0x00ABCDEFu, (long)px(10, H - 2));
+        ck("  ... the app in the middle", near(px(W / 2, 400 + 5), RED, 0), (long)px(W / 2, 405));
+        ck("  ... and beside it the window, not the desktop",
+           !near(px(20, 500), GREEN, 0) && !near(px(20, 500), RED, 0), (long)px(20, 500));
+        ck("  ... down to the taskbar, no desktop in between",
+           !near(px(20, H - vga_wm_bar_h() - 2), GREEN, 0), (long)px(20, H - vga_wm_bar_h() - 2));
+        vga_wm_geometry(1, 20, 4, 40, 15, 700, 300, WM_FLOAT);
+        vga_ctx_save(&c1); vga_ctx_load(&c0);
+    }
+
     head("closing");
     vga_wm_close(1);
     ck("closed, the desktop shows where it was", near(px(750, 450), GREEN, 0), (long)px(750, 450));

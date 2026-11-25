@@ -313,7 +313,13 @@ def part_guarded(q):
         time.sleep(1.0)
         q.key("esc")
         time.sleep(1.5)
-        alive = "Start" in q.screen() or "HavenDOS" in q.screen()
+        # v0.9.8.2: the notice going away on the key IS the answer. This
+        # looked for "Start" or "HavenDOS" on the desktop -- whose 16x32
+        # Plex cells fbtext cannot read, so it passed only when a screen it
+        # could read happened to be up (0.9.8.1 failed it too, on "null").
+        # Step 4 below then opens the Shell from the desktop and asks it.
+        after = q.screen()
+        alive = "Program stopped" not in after and "PANIC" not in after.upper()
         check(f"crash {how}: the desktop still answers afterwards",
               alive, q.screen()[:500])
         if not alive:

@@ -1828,14 +1828,19 @@ void vga_scroll(void){
         vga_write(x,h-1,make_entry(' ',cur_fg,cur_bg));
     cur_y=h-1;
 }
+/* v0.9.8.2: the LOGICAL grid wraps and scrolls -- the viewport when one is
+   set. It said g_cols/g_rows, the whole panel: a maximised Shell is the 44
+   rows between title bar and taskbar of a 48-row grid, so it wrote four
+   lines below its window (dropped by vp_xlate) before it scrolled once,
+   and the window showed every third line or so (Kyan's photo, 25 Nov). */
 void vga_putchar(char c){
-    if(c=='\n'){cur_x=0;cur_y++;if(cur_y>=g_rows)vga_scroll();update_hw_cursor();return;}
+    if(c=='\n'){cur_x=0;cur_y++;if(cur_y>=vga_rows())vga_scroll();update_hw_cursor();return;}
     if(c=='\r'){cur_x=0;update_hw_cursor();return;}
     if(c=='\b'){if(cur_x>0){cur_x--;vga_write(cur_x,cur_y,make_entry(' ',cur_fg,cur_bg));}update_hw_cursor();return;}
-    if(c=='\t'){int ns=(cur_x+8)&~7;while(cur_x<ns&&cur_x<g_cols)vga_write(cur_x++,cur_y,make_entry(' ',cur_fg,cur_bg));update_hw_cursor();return;}
+    if(c=='\t'){int ns=(cur_x+8)&~7;while(cur_x<ns&&cur_x<vga_cols())vga_write(cur_x++,cur_y,make_entry(' ',cur_fg,cur_bg));update_hw_cursor();return;}
     vga_write(cur_x,cur_y,make_entry(c,cur_fg,cur_bg));
-    if(++cur_x>=g_cols){cur_x=0;cur_y++;}
-    if(cur_y>=g_rows)vga_scroll();
+    if(++cur_x>=vga_cols()){cur_x=0;cur_y++;}
+    if(cur_y>=vga_rows())vga_scroll();
     update_hw_cursor();
 }
 void vga_puts(const char *s){ while(*s)vga_putchar(*s++); }

@@ -59,6 +59,8 @@ extern void        wm_pointer_update(void);
 extern void        wm_busy(int on);
 extern void        chrome_leave_front(void);
 extern void        toast_info(const char *m);
+extern void        machine_reset(void);
+extern void        machine_poweroff(void);
 
 #define NCATS 9
 static const char *const cat_name[NCATS] = {
@@ -75,6 +77,12 @@ static int  g_cat, g_sel, g_top, g_focus;          /* focus 0 list, 1 categories
 static char g_q[32]; static int g_qn;
 static int  g_hrow = -1, g_hcat = -1, g_hbtn = 0;  /* what the pointer is over */
 static char g_recent[8][16]; static int g_nrecent;
+/* v0.9.8.2: the power button opens a flyout, not the "Power and Reboot"
+   app (Kyan: "Why are those apps???") */
+#define NPWR 4
+static const char *const pwr_name[NPWR] = { "Lock", "Switch user", "Restart", "Shut down" };
+static const char *const pwr_icon[NPWR] = { "_lock", "_user", "_restart", "power" };
+static int  g_pwr, g_pwsel, g_pwh = -1;            /* open, chosen, under the pointer */
 
 /* geometry, from the screen */
 static int P_x, P_y, P_w, P_h, fp, pad, rh, catw, sb_h, foot_h, list_x, list_y, list_w, list_rows;
@@ -95,7 +103,7 @@ static void geometry(void)
     int W = rx1 - rx0;
     fp = vga_wm_font_px();
     pad = fp;
-    rh = fp * 2 + fp / 4;
+    rh = fp * 2 + fp / 2;                 /* v0.9.8.2: room for bigger icons */
     P_w = fp * 40; if (P_w > W - 2 * pad) P_w = W - 2 * pad;
     P_h = fp * 34; if (P_h > H - bh - 2 * pad) P_h = H - bh - 2 * pad;
     P_x = rx0 + pad / 2; P_y = H - bh - pad / 2 - P_h;
@@ -180,6 +188,14 @@ static void remember(const char *id)
     g_nrecent = j + 1;
 }
 
+/* the flyout: above the power button, right-aligned with the panel */
+static void pwr_rect(int *x, int *y, int *w, int *h)
+{
+    *w = fp * 13; *h = NPWR * rh + fp;
+    *x = P_x + P_w - pad / 2 - *w;
+    *y = P_y + P_h - foot_h - *h - fp / 4;
+}
+
 /* ── painting ───────────────────────────────────────────────────────── */
 static void sm_paint(int x0, int y0, int x1, int y1)
 {
@@ -206,7 +222,7 @@ static void sm_paint(int x0, int y0, int x1, int y1)
 
     /* the categories */
     int cy = P_y + pad + sb_h + pad;
-    int cisz = px_icon_size(rh * 5 / 8);
+    int cisz = px_icon_size(rh * 3 / 5);
     for (int c = 0; c < NCATS; c++) {
         int ry = cy + c * rh;
         if (ry + rh > P_y + P_h - foot_h) break;
@@ -237,7 +253,7 @@ static void sm_paint(int x0, int y0, int x1, int y1)
     }
 
     /* the list */
-    int lisz = px_icon_size(rh * 3 / 4);
+    int lisz = px_icon_size(rh * 4 / 5);
     for (int k = 0; k < list_rows; k++) {
         int i = g_top + k, ry = list_y + k * rh;
         if (i >= g_nlist) break;
@@ -284,6 +300,47 @@ static void sm_paint(int x0, int y0, int x1, int y1)
         int bs = px_icon_size(bw * 2 / 3);
         px_icon(bx + (bw - bs) / 2, by + (bw - bs) / 2, wm_icon_find(k ? "power" : "_lock"), bs, b);
     }
+
+    if (g_pwr) {
+        int x, y, w, h;
+        pwr_rect(&x, &y, &w, &h);
+        uint32_t fbg = mixc(0xffffffu, bg, 12);
+        px_round(x - 1, y - 1, w + 2, h + 2, fp / 2 + 1, edge, bg);
+        px_round(x, y, w, h, fp / 2, fbg, edge);
+        int isz2 = px_icon_size(rh * 5 / 8);
+        for (int k = 0; k < NPWR; k++) {
+            int ry = y + fp / 2 + k * rh;
+            uint32_t b = fbg;
+            if (k == g_pwsel) b = acc;
+            else if (k == g_pwh) b = mixc(0xffffffu, fbg, 18);
+            if (b != fbg) px_round(x + fp / 3, ry, w - fp * 2 / 3, rh - 2, fp / 3, b, fbg);
+            px_icon(x + fp, ry + (rh - 2 - isz2) / 2, wm_icon_find(pwr_icon[k]), isz2, b);
+            px_text(x + fp + isz2 + fp * 3 / 4, ry + (rh - 2 - px_text_h(fp, 0)) / 2, pwr_name[k], fp, 0,
+                    k == g_pwsel ? 0xffffffu : fg, b, w - isz2 - fp * 3);
+        }
+    }
+}
+
+/* Restart / Shut down: the screen says so, in pixels, then it happens */
+static const char *g_bye;
+static void bye_paint(int x0, int y0, int x1, int y1)
+{
+    (void)x0; (void)y0; (void)x1; (void)y1;
+    int W = vga_screen_w(), H = vga_screen_h(), f = vga_wm_font_px() * 3 / 2;
+    px_fill(0, 0, W, H, wm_rgb(WMC_PANEL));
+    int isz = px_icon_size(f * 3);
+    px_icon((W - isz) / 2, H / 2 - isz - f, wm_icon_find(g_bye[0] == 'R' ? "_restart" : "power"), isz, wm_rgb(WMC_PANEL));
+    px_text((W - px_text_w(g_bye, f, 1)) / 2, H / 2, g_bye, f, 1, wm_rgb(WMC_TEXT), wm_rgb(WMC_PANEL), 0);
+}
+static void power_do(int k)
+{
+    if (k <= 1) { desktop_lock_screen(); return; }   /* Lock, Switch user: the sign-in screen */
+    g_bye = k == 2 ? "Restarting HavenDOS..." : "Shutting down HavenDOS...";
+    vga_wm_set_popup(0, 0, vga_screen_w(), vga_screen_h(), bye_paint);
+    kpoll_sleep_ms(700);
+    if (k == 2) machine_reset(); else machine_poweroff();
+    vga_wm_set_popup(0, 0, 0, 0, 0);           /* it did not: back to the desktop */
+    toast_info(k == 2 ? "This machine did not restart" : "This machine did not switch off");
 }
 
 static void repaint(void){ vga_wm_repaint_popup(P_x - 2, P_y - 2, P_x + P_w + 2, P_y + P_h + 2); }
@@ -318,6 +375,15 @@ static void dirty_btns(void)
 /* what is under (x,y): 1 a list row (*i), 2 a category (*i), 3 lock, 4 power, 5 the panel, 0 outside */
 static int sm_hit(int x, int y, int *i)
 {
+    if (g_pwr) {                                  /* 6: a flyout item (*i) */
+        int fx, fy2, fw, fh;
+        pwr_rect(&fx, &fy2, &fw, &fh);
+        if (x >= fx && x < fx + fw && y >= fy2 && y < fy2 + fh) {
+            int k = (y - fy2 - fp / 2) / rh;
+            if (y >= fy2 + fp / 2 && k >= 0 && k < NPWR) { *i = k; return 6; }
+            return 5;
+        }
+    }
     if (x < P_x || y < P_y || x >= P_x + P_w || y >= P_y + P_h) return 0;
     int cy = P_y + pad + sb_h + pad, fy = P_y + P_h - foot_h;
     if (y >= fy) {
@@ -348,11 +414,12 @@ static void open_chosen(const char *id)
 
 void startmenu_run(void)
 {
-    int done = 0, launch = -1, lock = 0, mx = -1, my = -1, lx = -2, ly = -2;
+    int done = 0, launch = -1, lock = 0, pwr = -1, mx = -1, my = -1, lx = -2, ly = -2;
     if (!vga_wm_on()) return;
     wm_busy(1);
     geometry();
     g_qn = 0; g_q[0] = 0; g_focus = 0; g_sel = 0; g_top = 0; g_hrow = g_hcat = -1; g_hbtn = 0; g_dirty_part = 0;
+    g_pwr = 0; g_pwh = -1;
     if (g_cat == C_REC && !g_nrecent) g_cat = C_ALL;
     build();
     mouse_take_wm_clicks(0, 0);                   /* the click that opened it */
@@ -368,6 +435,7 @@ void startmenu_run(void)
             if (hr != g_hrow) { dirty_row(g_hrow); dirty_row(hr); g_hrow = hr; }
             if (hc != g_hcat) { dirty_cat(g_hcat); dirty_cat(hc); g_hcat = hc; }
             if (hb != g_hbtn) { dirty_btns(); g_hbtn = hb; }
+            if (g_pwr) { int ph = what == 6 ? i : -1; if (ph != g_pwh) { int a, b, w, h; pwr_rect(&a, &b, &w, &h); dirty_add(a, b, w, h); g_pwh = ph; } }
         }
         {
             int w = mouse_get_wheel();
@@ -376,15 +444,27 @@ void startmenu_run(void)
         int cx, cy, c = mouse_take_wm_clicks(&cx, &cy);
         if (c & 1) {
             what = sm_hit(cx, cy, &i);
-            if (what == 0) done = 1;                              /* outside: close */
+            if (g_pwr && what != 6 && what != 4) { g_pwr = 0; dirty = 1; if (what) what = -1; }
+            if (what == -1) ;                                     /* it closed the flyout */
+            else if (what == 6) { pwr = i; done = 1; }
+            else if (what == 0) done = 1;                              /* outside: close */
             else if (what == 1) { launch = g_list[i]; done = 1; }
             else if (what == 2) { g_cat = i; g_qn = 0; g_q[0] = 0; g_sel = 0; g_top = 0; build(); dirty = 1; }
             else if (what == 3) { lock = 1; done = 1; }
-            else if (what == 4) { launch = find_id("power"); done = 1; }
+            else if (what == 4) { g_pwr = !g_pwr; g_pwsel = 3; g_pwh = -1; dirty = 1; }
         } else if (c) {
             if (sm_hit(cx, cy, &i) == 0) done = 1;
         }
-        if (k != -1) {
+        if (k != -1 && g_pwr) {
+            dirty = 1;
+            if (k == 27) g_pwr = 0;
+            else if (k == 0x148) { if (g_pwsel > 0) g_pwsel--; }
+            else if (k == 0x150) { if (g_pwsel < NPWR - 1) g_pwsel++; }
+            else if (k == '\n' || k == '\r') { pwr = g_pwsel; done = 1; }
+            else if (k == KEY_SUPER) done = 1;
+            k = -2;                                   /* taken */
+        }
+        if (k >= 0 || k < -2) {
             dirty = 1;
             if (k == 27) { if (g_qn) { g_qn = 0; g_q[0] = 0; g_sel = 0; g_top = 0; build(); } else done = 1; }
             else if (k == KEY_SUPER) done = 1;
@@ -417,8 +497,107 @@ void startmenu_run(void)
         else if (g_dirty_part) { vga_wm_repaint_popup(g_dx0, g_dy0, g_dx1, g_dy1); g_dirty_part = 0; }
         if (k == -1 && !c) kpoll_sleep_ms(10);
     }
+    g_pwr = 0;
     vga_wm_set_popup(0, 0, 0, 0, 0);
     wm_busy(0);
     if (launch >= 0) open_chosen(desktop_app_id(launch));
     else if (lock) desktop_lock_screen();
+    else if (pwr >= 0) power_do(pwr);
+}
+
+/* ── v0.9.8.2: the bell's flyout ──────────────────────────────────────
+   The bell opened the "Notifications" app, in a window, its 80x25 drawer
+   laid out for the desktop and so standing at the right of the window
+   (Kyan's photo: "Why are those apps???"). Now it is a panel above the
+   bell, like the Start menu above Start: newest first, "Clear all" in its
+   header, closed by Esc, the bell, or a click anywhere else. */
+extern int         notif_get_count(void);
+extern const char *notif_msg(int i);
+extern void        notif_read_all(void);
+extern void        notif_clear_all(void);
+extern void        notif_seed(void);
+
+static int N_x, N_y, N_w, N_h, N_hd, N_clr_x, N_clr_w, g_nhov;
+
+static void nf_geometry(void)
+{
+    int rx0, rx1, H = vga_screen_h(), bh = vga_wm_bar_h();
+    vga_wm_reach(&rx0, &rx1);
+    fp = vga_wm_font_px(); pad = fp; rh = fp * 2 + fp / 2;
+    int n = notif_get_count(); if (n < 1) n = 1;
+    N_w = fp * 26; if (N_w > rx1 - rx0 - 2 * pad) N_w = rx1 - rx0 - 2 * pad;
+    N_hd = fp * 3;
+    N_h = N_hd + n * rh + pad;
+    if (N_h > H - bh - 2 * pad) N_h = H - bh - 2 * pad;
+    N_x = rx1 - pad / 2 - N_w; N_y = H - bh - pad / 2 - N_h;
+    N_clr_w = px_text_w("Clear all", fp, 0) + fp;
+    N_clr_x = N_x + N_w - pad - N_clr_w;
+}
+
+static void nf_paint(int x0, int y0, int x1, int y1)
+{
+    uint32_t bg = panel_bg(), fg = wm_rgb(WMC_TEXT), dim = wm_rgb(WMC_TEXT_OFF);
+    uint32_t edge = mixc(0xffffffu, bg, 40), card = mixc(0xffffffu, bg, 10);
+    (void)x0; (void)y0; (void)x1; (void)y1;
+    px_round(N_x, N_y, N_w, N_h, fp / 2 + 2, edge, wm_rgb(WMC_PANEL));
+    px_round(N_x + 1, N_y + 1, N_w - 2, N_h - 2, fp / 2 + 1, bg, edge);
+    px_text(N_x + pad, N_y + (N_hd - px_text_h(fp, 1)) / 2, "Notifications", fp, 1, fg, bg, N_w / 2);
+    int n = notif_get_count();
+    if (n) {
+        uint32_t b = g_nhov ? mixc(0xffffffu, bg, 22) : bg;
+        if (b != bg) px_round(N_clr_x, N_y + fp / 2, N_clr_w, N_hd - fp, fp / 3, b, bg);
+        px_text(N_clr_x + fp / 2, N_y + (N_hd - px_text_h(fp, 0)) / 2, "Clear all", fp, 0, dim, b, 0);
+    }
+    px_fill(N_x + pad / 2, N_y + N_hd - 1, N_w - pad, 1, edge);
+    int isz = px_icon_size(rh * 5 / 8), y = N_y + N_hd + pad / 4;
+    if (!n) {
+        px_text(N_x + pad, y + (rh - px_text_h(fp, 0)) / 2, "Nothing new", fp, 0, dim, bg, 0);
+        return;
+    }
+    for (int i = n - 1; i >= 0 && y + rh <= N_y + N_h - pad / 4; i--, y += rh) {
+        px_round(N_x + pad / 2, y + 2, N_w - pad, rh - 4, fp / 3, card, bg);
+        px_icon(N_x + pad, y + (rh - isz) / 2, wm_icon_find("_bell"), isz, card);
+        px_text(N_x + pad + isz + fp * 3 / 4, y + (rh - px_text_h(fp, 0)) / 2, notif_msg(i), fp, 0, fg, card,
+                N_w - pad * 2 - isz - fp);
+    }
+}
+
+void notif_flyout_run(void)
+{
+    int done = 0, mx, my, lx = -2, ly = -2;
+    if (!vga_wm_on()) return;
+    wm_busy(1);
+    notif_seed();
+    nf_geometry();
+    g_nhov = 0;
+    mouse_take_wm_clicks(0, 0);
+    vga_wm_set_popup(N_x, N_y, N_w, N_h, nf_paint);
+    notif_read_all();
+    vga_wm_repaint_bar();                           /* the count on the bell goes */
+    while (!done) {
+        int k = keyboard_getchar(), cx, cy, c;
+        wm_pointer_update();
+        mouse_get_px(&mx, &my);
+        if (mx != lx || my != ly) {
+            lx = mx; ly = my;
+            int h = notif_get_count() && mx >= N_clr_x && mx < N_clr_x + N_clr_w && my >= N_y && my < N_y + N_hd;
+            if (h != g_nhov) { g_nhov = h; vga_wm_repaint_popup(N_clr_x, N_y, N_clr_x + N_clr_w, N_y + N_hd); }
+        }
+        c = mouse_take_wm_clicks(&cx, &cy);
+        if (c) {
+            int in = cx >= N_x && cx < N_x + N_w && cy >= N_y && cy < N_y + N_h;
+            if (!in) done = 1;
+            else if ((c & 1) && notif_get_count() && cx >= N_clr_x && cx < N_clr_x + N_clr_w && cy < N_y + N_hd) {
+                notif_clear_all();
+                vga_wm_set_popup(0, 0, 0, 0, 0);
+                nf_geometry();
+                vga_wm_set_popup(N_x, N_y, N_w, N_h, nf_paint);
+            }
+        }
+        if (k == 27 || k == KEY_SUPER || k == '\n') done = 1;
+        if (k == -1 && !c) kpoll_sleep_ms(10);
+    }
+    vga_wm_set_popup(0, 0, 0, 0, 0);
+    wm_busy(0);
+    vga_wm_repaint_bar();
 }

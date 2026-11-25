@@ -1,11 +1,42 @@
 #include "../include/string.h"
 #include "../include/types.h"
 
+/* v0.9.10: a word at a time. Both were a byte at a time since 0.1 --
+   and they are under everything: a window's surface, a scroll, every
+   buffer copied. `rep movsl` / `rep stosl` move four bytes a step (and
+   the CPU's fast-string microcode far more), then the odd bytes. Kyan,
+   25 Nov: "still an bit slugish". Forward only, as before: memmove is
+   below for overlaps. */
 void *memset(void *dst, int c, size_t n){
-    uint8_t *p=dst; while(n--)*p++=c; return dst;
+    uint8_t *p=dst;
+    uint32_t v=(uint8_t)c; v|=v<<8; v|=v<<16;
+    while(n && ((uintptr_t)p & 3)){ *p++=(uint8_t)c; n--; }
+    if(n >= 16){
+        size_t w=n>>2; void *d=p;
+        __asm__ volatile("rep stosl" : "+D"(d), "+c"(w) : "a"(v) : "memory");
+        p += (n & ~(size_t)3); n &= 3;
+    }
+    while(n--) *p++=(uint8_t)c;
+    return dst;
 }
 void *memcpy(void *dst, const void *src, size_t n){
-    uint8_t *d=dst; const uint8_t *s=src; while(n--)*d++=*s++; return dst;
+    uint8_t *d=dst; const uint8_t *s=src;
+    if(n >= 16){
+        size_t w=n>>2; void *dd=d; const void *ss=s;
+        __asm__ volatile("rep movsl" : "+D"(dd), "+S"(ss), "+c"(w) : : "memory");
+        d += (n & ~(size_t)3); s += (n & ~(size_t)3); n &= 3;
+    }
+    while(n--) *d++=*s++;
+    return dst;
+}
+/* v0.9.10: n 32-bit pixels -- the window manager's copies */
+void memcpy32(uint32_t *dst, const uint32_t *src, size_t n){
+    void *d=dst; const void *s=src;
+    __asm__ volatile("rep movsl" : "+D"(d), "+S"(s), "+c"(n) : : "memory");
+}
+void memset32(uint32_t *dst, uint32_t v, size_t n){
+    void *d=dst;
+    __asm__ volatile("rep stosl" : "+D"(d), "+c"(n) : "a"(v) : "memory");
 }
 /* v0.7.12: memmove was missing entirely.  memcpy() here copies strictly
    forward, so any caller shifting a buffer down over itself (ring compaction,

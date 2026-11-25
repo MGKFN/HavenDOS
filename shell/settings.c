@@ -320,10 +320,34 @@ extern const char *xm_why_name(int why);
 #define XM_EREFUSED_  16     /* include/xemode.h XM_EREFUSED */
 #define DISP_MON_AUTO (NDISP)
 #define DISP_MON_FIT  (NDISP+1)
+/* v0.9.10: the desktop's speed and its picture */
+#define DISP_PERF     (NDISP+2)
+#define DISP_WALL     (NDISP+3)
+extern int  cfg_perf_mode(void);  extern void cfg_set_perf_mode(int);
+extern const char *cfg_wall_img(void); extern void cfg_set_wall_img(const char *);
+extern void vga_wm_set_lite(int on);
+extern int  vga_wm_set_wallpaper(const uint32_t *img, int w, int h);
+extern int  vga_wm_on(void);
 
 static int page_display(int k, int *sel){
     if(k==KEY_UP && *sel>0) (*sel)--;
-    else if(k==KEY_DOWN && *sel<DISP_MON_FIT) (*sel)++;
+    else if(k==KEY_DOWN && *sel<DISP_WALL) (*sel)++;
+    else if(*sel==DISP_PERF && (k=='\n'||k=='\r'||k==' '||k==KEY_LEFT||k==KEY_RIGHT)){
+        cfg_set_perf_mode(!cfg_perf_mode()); cfg_save();
+        if(vga_wm_on()){
+            vga_wm_set_lite(cfg_perf_mode());
+            if(!cfg_perf_mode()){ extern void images_desktop_start(void); images_desktop_start(); }
+        }
+        say(VGA_LIGHT_GREEN, cfg_perf_mode() ? "Best performance: no shadows, square corners, no wallpaper picture."
+                                             : "Best looks: shadows, round corners and the wallpaper again.");
+    }
+    else if(*sel==DISP_WALL && (k=='\n'||k=='\r'||k==' ')){
+        if(cfg_wall_img()[0]){
+            cfg_set_wall_img(""); cfg_save();
+            if(vga_wm_on()) vga_wm_set_wallpaper(0,0,0);
+            say(VGA_LIGHT_GREEN,"Wallpaper picture removed.");
+        } else say(VGA_YELLOW,"Open a picture in Images and choose Set as wallpaper.");
+    }
     else if(*sel==DISP_MON_AUTO && (k=='\n'||k=='\r'||k==' '||k==KEY_LEFT||k==KEY_RIGHT)){
         cfg_set_monitor_auto(!cfg_monitor_auto()); cfg_save();
         say(VGA_LIGHT_GREEN, cfg_monitor_auto() ? "The monitor lights by itself when plugged in."
@@ -368,6 +392,14 @@ static int page_display(int k, int *sel){
         row(y++,*sel==DISP_MON_AUTO,"Light it by itself", cfg_monitor_auto()?"on":"off",VGA_WHITE);
         row(y++,*sel==DISP_MON_FIT, "Picture", cfg_monitor_fit()==2?"stretched":
                                               cfg_monitor_fit()==0?"centred":"fitted",VGA_WHITE);
+        y++;
+        put(PX+1,y++,"The desktop",VGA_DARK_GREY,VGA_BLACK);
+        row(y++,*sel==DISP_PERF,"Best performance (old PCs)", cfg_perf_mode()?"on":"off",VGA_WHITE);
+        {
+            const char *w=cfg_wall_img(), *b=w;
+            for(const char *c=w;*c;c++) if(*c=='/') b=c+1;
+            row(y++,*sel==DISP_WALL,"Wallpaper picture", w[0]?b:"none (Images sets one)",VGA_WHITE);
+        }
     }
     return 1;
 }

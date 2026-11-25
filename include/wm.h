@@ -93,6 +93,7 @@ void vga_wm_set_bar(wm_paint_fn fn);
 void vga_wm_repaint_bar(void);
 void vga_wm_set_popup(int x, int y, int w, int h, wm_paint_fn fn);
 void vga_wm_repaint_popup(int x0, int y0, int x1, int y1);
+void vga_wm_set_menu(int x, int y, int w, int h, wm_paint_fn fn);   /* v0.9.10: above the popup */
 void vga_wm_repaint_rect(int x0, int y0, int x1, int y1);
 void vga_wm_repaint_all(void);
 void vga_wm_repaint_title(int slot);
@@ -127,4 +128,17 @@ void px_line(int x0, int y0, int x1, int y1, int t, uint32_t c, uint32_t bg);
    hands the whole screen back to the cells. */
 void vga_px_direct(int on);
 uint32_t vga_px_read(int x, int y);
+uint32_t *vga_fb_pixels(int *w, int *h, int *pitch);   /* v0.9.10 */
+/* v0.9.10: draw into a buffer of your own with every px_* call */
+void px_canvas_begin(uint32_t *buf, int w, int h);
+void px_canvas_clip(int x0, int y0, int x1, int y1);
+void px_canvas_end(void);
+/* v0.9.10: the current task's window drawn by the app, in pixels */
+uint32_t *vga_wm_canvas(int *w, int *h);
+void vga_wm_present(int x, int y, int w, int h);
+/* v0.9.10: Settings -> Display -> Best performance; a picture wallpaper */
+void vga_wm_set_lite(int on);
+int  vga_wm_lite(void);
+int  vga_wm_set_wallpaper(const uint32_t *img, int w, int h);   /* 0 takes it off */
+int  vga_wm_has_wallpaper(void);
 #endif

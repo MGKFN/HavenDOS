@@ -38,6 +38,9 @@ int  chrome_begin(const char *name, int boxed);   /* 1: the window is up  */
    Neither: the app reflows -- more cells, the console's size (Terminal). */
 #define CHF_ZOOM        1
 #define CHF_RESIZE_KEY  2
+/* v0.9.10: the app draws its window in pixels (vga_wm_canvas, shell/pxui.c)
+   -- any size in pixels, not cells; KEY_RESIZE after a change */
+#define CHF_PIXEL       4
 int  chrome_begin_ex(const char *name, int boxed, int flags);
 void chrome_note_header(void);  /* v0.9.9: row 0 is the app's own title */
 void chrome_end(void);

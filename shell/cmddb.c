@@ -578,6 +578,38 @@ const cmddoc_t cmddb[] = {
       NULL,
       "system ver" },
 
+    { "screenshot", NULL, CDB_SYSTEM,
+      "screenshot [file]",
+      "Save the screen as a PNG",
+      /* bus-label-ok: "a USB stick" is the thing you carry to another PC, not a disk's bus label */
+      "The same as the PrtSc key: the whole screen, as a PNG. With a FAT32 "
+      "USB stick in, it goes to Pictures on the stick -- take the stick "
+      "to another computer to send it. Otherwise to Pictures on the "
+      "system disk (RAM on a live boot). Give a file name to choose.",
+      NULL,
+      "perf" },
+
+    { "python", "py", CDB_SYSTEM,
+      "python [file.py]",
+      "Python (MicroPython)",
+      "With no file, the Python prompt: type Python and it runs, line by "
+      "line. Ctrl+D on an empty line goes back to the shell, Ctrl+C stops a "
+      "program that is running. With a file, runs it. import finds .py files "
+      "in the current folder. math, random, time and sys are built in; "
+      "open() and files from Python are not, yet.",
+      NULL,
+      "edit" },
+
+    { "perf", NULL, CDB_SYSTEM,
+      "perf [seconds|bench]",
+      "How fast the screen is drawn",
+      "perf 10 watches for ten seconds while you use the desktop, then says "
+      "how much was drawn and how long it took. perf bench draws a fixed set "
+      "of things (a window moved, the Terminal scrolled, the whole screen) "
+      "and times each, so two machines or two versions can be compared.",
+      NULL,
+      "screenshot sysmon" },
+
     { "mem", NULL, CDB_SYSTEM,
       "mem",
       "Free and used memory",

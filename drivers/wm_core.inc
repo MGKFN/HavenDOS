@@ -61,8 +61,13 @@ typedef struct {
     int       cw, ch, pw, ph, padx, pady, skip;
     uint32_t *surf;  uint32_t surf_pg;
     uint8_t  *gl;    uint32_t gl_pg;   int gl_w, gl_h, gl_aa;
+    /* v0.9.10: the app draws the surface itself (vga_wm_canvas): cells
+       are not drawn into it, and nothing of its console is shown */
+    int       own;
 } wm_win_t;
 
+static int wm_lite;                                        /* v0.9.10 */
+static uint32_t *wm_wall; static uint32_t wm_wall_pg; static int wm_wall_w, wm_wall_h;
 extern void *pmm_alloc_contig(uint32_t nblocks);
 extern void  pmm_free_contig(void *p, uint32_t nblocks);
 
@@ -76,6 +81,10 @@ static int       wm_solo_depth;
 static wm_paint_fn wm_bar_fn;
 static wm_paint_fn wm_pop_fn;
 static int       wm_pop_x, wm_pop_y, wm_pop_w, wm_pop_h;
+/* v0.9.10: a menu, above even the popup (a right-click menu over the
+   Start menu, over the desktop, over a window) */
+static wm_paint_fn wm_menu_fn;
+static int       wm_menu_x, wm_menu_y, wm_menu_w, wm_menu_h;
 
 /* ── metrics ────────────────────────────────────────────────────────── */
 int vga_wm_title_h(void){ return fbc_chp >= 24u ? (int)fbc_chp : 2 * (int)fbc_chp; }
@@ -118,7 +127,7 @@ void vga_mouse_px(int col, int row, int fx, int fy, int *x, int *y)
 }
 
 /* ── the layers, rebuilt when anything moves ────────────────────────── */
-enum { LT_DESK, LT_WIN, LT_BAR, LT_POP, LT_SOLO };
+enum { LT_DESK, LT_WIN, LT_BAR, LT_POP, LT_SOLO, LT_MENU };
 typedef struct { int type, slot, x0, y0, x1, y1, r, sh; } wm_layer_t;
 static wm_layer_t wm_L[WM_SLOTS + 4];
 static int        wm_nL;
@@ -188,15 +197,18 @@ static void wm_rebuild(void)
         if (!w->on || w->min || w->full) continue;
         wm_layer_t L; L.type = LT_WIN; L.slot = wm_z[k];
         win_frame(w, &L.x0, &L.y0, &L.x1, &L.y1);
-        L.r = w->mode == WM_FLOAT ? wm_radius() : 0;
-        L.sh = w->mode == WM_FLOAT ? 1 : 0;
+        L.r = w->mode == WM_FLOAT && !wm_lite ? wm_radius() : 0;
+        L.sh = w->mode == WM_FLOAT && !wm_lite ? 1 : 0;
         wm_L[wm_nL++] = L;
     }
     if (wm_bar_fn)
         wm_L[wm_nL++] = (wm_layer_t){ LT_BAR, -1, 0, (int)fbc_h - vga_wm_bar_h(), (int)fbc_w, (int)fbc_h, 0, 0 };
     if (wm_pop_fn)
         wm_L[wm_nL++] = (wm_layer_t){ LT_POP, -1, wm_pop_x, wm_pop_y, wm_pop_x + wm_pop_w,
-                                      wm_pop_y + wm_pop_h, wm_radius(), 1 };
+                                      wm_pop_y + wm_pop_h, wm_lite ? 0 : wm_radius(), !wm_lite };
+    if (wm_menu_fn)
+        wm_L[wm_nL++] = (wm_layer_t){ LT_MENU, -1, wm_menu_x, wm_menu_y, wm_menu_x + wm_menu_w,
+                                      wm_menu_y + wm_menu_h, wm_lite ? 0 : wm_radius() / 2, !wm_lite };
 }
 
 static inline int in_layer(const wm_layer_t *L, int x, int y)
@@ -208,7 +220,16 @@ static inline int in_layer(const wm_layer_t *L, int x, int y)
         else if (x >= L->x1 - r) cx = L->x1 - r - 1;
         else return 1;
         if (y < L->y0 + r)       cy = L->y0 + r;
-        else if (y >= L->y1 - r) cy = L->y1 - r - 1;
+        else if (y >= L->y1 - r) {
+            /* v0.9.10: a window's content is square to its last pixel
+               (blit_surf copies it so): at the bottom only the 1 px edge
+               ring is cut by the curve, never the content inside it. The
+               per-pixel path used to round the content's corner and the
+               fast path did not, so a corner looked different depending
+               on what lay above it (test_wm, "canvas moved"). */
+            if (L->type == LT_WIN && y < L->y1 - 1 && x >= L->x0 + 1 && x < L->x1 - 1) return 1;
+            cy = L->y1 - r - 1;
+        }
         else return 1;
         int dx = x - cx, dy = y - cy;
         if (dx * dx + dy * dy > r * r) return 0;
@@ -280,9 +301,15 @@ static int wm_cx0, wm_cy0, wm_cx1, wm_cy1;      /* and where it may       */
 static int wm_fast;                              /* see clear_above()      */
 static int wm_ex, wm_ex0, wm_ey0, wm_ex1, wm_ey1; /* a hole the paint skips */
 
+/* v0.9.10: a CANVAS -- every px_* primitive draws into a buffer of the
+   caller's instead of onto the screen while one is set (px_canvas_begin):
+   a pixel app's window, a picture being built. No layers, no owners. */
+static uint32_t *wm_cv;
+static int       wm_cvw, wm_cvh;
 static inline void wm_px(int x, int y, uint32_t c)
 {
     if (x < wm_cx0 || y < wm_cy0 || x >= wm_cx1 || y >= wm_cy1) return;
+    if (wm_cv) { wm_cv[(uint32_t)y * (uint32_t)wm_cvw + (uint32_t)x] = c; return; }
     if (wm_ex && x >= wm_ex0 && x < wm_ex1 && y >= wm_ey0 && y < wm_ey1) return;
     if (wm_fast == 2) {                 /* nothing above: only its own round corners */
         if (wm_L[wm_cl].r && !in_layer(&wm_L[wm_cl], x, y)) return;
@@ -333,8 +360,15 @@ static void wm_cell(int i, uint16_t entry, int sx, int sy)
     if (covered_above(i, x0, y0, x1, y1)) return;
     wm_cl = i;
     wm_fast = clear_above(i, x0, y0, x1, y1);
+    int wall = wm_wall && !wm_lite && wm_L[i].type == LT_DESK && fbc_grad_on && !((entry >> 12) & 0x0F);
     for (int y = y0; y < y1; y++) {
         glyph_row(entry, (uint32_t)(y - sy), (uint32_t)y, g_rowbuf);
+        if (wall && y < wm_wall_h) {
+            /* v0.9.10: the cell's background pixels are the picture's */
+            uint32_t b = fbc_bg0((uint32_t)y), *wl = wm_wall + (uint32_t)y * (uint32_t)wm_wall_w;
+            for (int x = x0; x < x1 && x < wm_wall_w; x++)
+                if (g_rowbuf[x - sx] == b) g_rowbuf[x - sx] = wl[x];
+        }
         if (wm_fast) {
             uint32_t *line = fbc_addr + (uint32_t)y * fbc_pitch;
             for (int x = x0; x < x1; x++) line[x] = g_rowbuf[x - sx];
@@ -357,16 +391,48 @@ static void wm_cell(int i, uint16_t entry, int sx, int sy)
    Background 0 -- the theme's gradient -- runs from the top of the
    window's content to the bottom, not the screen's: a window looks the
    same wherever it is moved. */
+/* v0.9.10: what the window manager did, for `perf`: pixels copied from
+   surfaces, scrolls done by moving pixels, glyphs drawn, and the time
+   spent drawing (processor cycles; shell/perf.c turns them into ms) */
+static uint32_t wm_stat_px, wm_stat_scroll, wm_stat_glyph, wm_stat_calls;
+static uint64_t wm_stat_cyc, wm_stat_max;
+static int      wm_stat_depth;
+static uint64_t wm_stat_t0;
+static inline uint64_t wm_rdtsc(void){ uint32_t lo, hi; __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi)); return ((uint64_t)hi << 32) | lo; }
+static inline void stat_in(void){ if (!wm_stat_depth++) wm_stat_t0 = wm_rdtsc(); }
+static inline void stat_out(void)
+{
+    if (--wm_stat_depth) return;
+    uint64_t d = wm_rdtsc() - wm_stat_t0;
+    wm_stat_cyc += d; wm_stat_calls++;
+    if (d > wm_stat_max) wm_stat_max = d;
+}
+void vga_wm_stats(uint32_t *calls, uint64_t *cyc, uint64_t *worst, uint32_t *glyphs,
+                  uint32_t *px, uint32_t *scrolls, int reset)
+{
+    if (calls) *calls = wm_stat_calls;
+    if (cyc) *cyc = wm_stat_cyc;
+    if (worst) *worst = wm_stat_max;
+    if (glyphs) *glyphs = wm_stat_glyph;
+    if (px) *px = wm_stat_px;
+    if (scrolls) *scrolls = wm_stat_scroll;
+    if (reset) { wm_stat_calls = wm_stat_glyph = wm_stat_px = wm_stat_scroll = 0; wm_stat_cyc = wm_stat_max = 0; }
+}
 static int      wm_caret_idx = -1;
 static uint16_t *wm_caret_cells;
 static inline int win_native(const wm_win_t *w)
 {
     return w->cw == (int)fbc_cwp && w->ch == (int)fbc_chp;
 }
+/* v0.9.10: one colour for background 0 inside a window -- the theme
+   gradient's dark end -- not the gradient down its height. A window's
+   content is the same at any row, so a scroll can MOVE its pixels
+   (vga_wm_scroll_cur) instead of drawing every cell again, and what was
+   moved is exactly what would be drawn. The desktop keeps its gradient. */
 static inline uint32_t win_grad_y(const wm_win_t *w, int ly)
 {
-    if (ly < 0) ly = 0;
-    return w->ph > 1 ? (uint32_t)ly * (fbc_h - 1u) / (uint32_t)(w->ph - 1) : 0u;
+    (void)w; (void)ly;
+    return fbc_h ? fbc_h - 1u : 0u;
 }
 static inline uint16_t caret_swap(uint16_t e)
 {
@@ -444,6 +510,7 @@ static inline uint32_t win_pad_px(const wm_win_t *w, int ly)
 static void surf_cell(wm_win_t *w, int c, int r, uint16_t e)
 {
     if (!w->surf) return;
+    wm_stat_glyph++;
     int x0 = w->padx + c * w->cw, y0 = w->pady + r * w->ch;
     if (x0 < 0 || y0 < 0 || x0 + w->cw > w->pw || y0 + w->ch > w->ph) return;
     for (int py = 0; py < w->ch; py++)
@@ -453,6 +520,11 @@ static void surf_cell(wm_win_t *w, int c, int r, uint16_t e)
 static void surf_all(wm_win_t *w, uint16_t *painted)
 {
     if (!w->surf) return;
+    if (w->own) {                 /* the app draws it: the background until it does */
+        uint32_t m = win_pad_px(w, 0);
+        for (uint32_t k = 0; k < (uint32_t)w->pw * (uint32_t)w->ph; k++) w->surf[k] = m;
+        return;
+    }
     int gx1 = w->padx + w->vw * w->cw, gy1 = w->pady + w->vh * w->ch;
     for (int y = 0; y < w->ph; y++) {
         uint32_t m = win_pad_px(w, y), *row = w->surf + (uint32_t)y * (uint32_t)w->pw;
@@ -472,7 +544,7 @@ static void surf_all(wm_win_t *w, uint16_t *painted)
 /* Only the cells that changed since they were last drawn into it. */
 static void surf_sync(wm_win_t *w, uint16_t *painted)
 {
-    if (!w->surf) return;
+    if (!w->surf || w->own) return;
     for (int r = 0; r < w->vh; r++)
         for (int c = 0; c < w->vw; c++) {
             int idx = (w->vy + r) * g_cols + w->vx + c;
@@ -516,11 +588,11 @@ static void blit_surf(int i, const wm_win_t *w)
             int fast = clear_above(i, a, b, c, d);
             wm_cl = i;
             if (fast) {
-                for (int y = b; y < d; y++) {
-                    const uint32_t *src = w->surf + (uint32_t)(y - w->y) * (uint32_t)w->pw + (uint32_t)(a - w->x);
-                    uint32_t *dst = fbc_addr + (uint32_t)y * fbc_pitch + (uint32_t)a;
-                    for (int x = 0; x < c - a; x++) dst[x] = src[x];
-                }
+                for (int y = b; y < d; y++)
+                    memcpy32(fbc_addr + (uint32_t)y * fbc_pitch + (uint32_t)a,
+                             w->surf + (uint32_t)(y - w->y) * (uint32_t)w->pw + (uint32_t)(a - w->x),
+                             (size_t)(c - a));
+                wm_stat_px += (uint32_t)((c - a) * (d - b));
                 continue;
             }
             wm_fast = 0;
@@ -573,9 +645,14 @@ static inline uint32_t mix(uint32_t fg, uint32_t bg, uint32_t a)
          | ((((fg >> 8) & 0xFF) * a + ((bg >> 8) & 0xFF) * ia) / 255u) << 8
          | (((fg & 0xFF) * a + (bg & 0xFF) * ia) / 255u);
 }
-static inline uint32_t bg_at(uint32_t bg, int y)
+/* WM_BG_GRAD: the desktop's own background at that pixel -- the theme's
+   gradient, or (v0.9.10) the wallpaper picture */
+static inline uint32_t bg_at(uint32_t bg, int x, int y)
 {
-    return bg == WM_BG_GRAD ? fbc_bg0((uint32_t)(y < 0 ? 0 : y)) : bg;
+    if (bg != WM_BG_GRAD) return bg;
+    if (wm_wall && !wm_lite && x >= 0 && y >= 0 && x < wm_wall_w && y < wm_wall_h)
+        return wm_wall[(uint32_t)y * (uint32_t)wm_wall_w + (uint32_t)x];
+    return fbc_bg0((uint32_t)(y < 0 ? 0 : y));
 }
 
 int px_text_w(const char *s, int px, int bold)
@@ -610,7 +687,7 @@ int px_text(int x, int y, const char *s, int px, int bold, uint32_t fg, uint32_t
                 uint32_t v = a[gy * g->w + gx];
                 if (!v) continue;
                 int X = x + g->bx + gx, Y = y + g->by + gy;
-                uint32_t b = bg_at(bg, Y);
+                uint32_t b = bg_at(bg, X, Y);
                 wm_px(X, Y, v == 255u ? fg : mix(fg, b, v));
             }
         x += g->adv;
@@ -657,7 +734,7 @@ void px_icon(int x, int y, int icon, int size, uint32_t bg)
             uint8_t v = p[iy * s + ix];
             uint32_t t = (v >> 4) * 17u, sy = (v & 15u) * 17u;
             if (!t && !sy) continue;
-            uint32_t c = mix(tile, bg_at(bg, y + iy), t);
+            uint32_t c = mix(tile, bg_at(bg, x + ix, y + iy), t);
             if (sy) c = mix(0xf4f2ecu, c, sy);
             wm_px(x + ix, y + iy, c);
         }
@@ -667,7 +744,7 @@ void px_icon(int x, int y, int icon, int size, uint32_t bg)
 void px_fill(int x, int y, int w, int h, uint32_t c)
 {
     for (int yy = y; yy < y + h; yy++)
-        for (int xx = x; xx < x + w; xx++) wm_px(xx, yy, bg_at(c, yy));
+        for (int xx = x; xx < x + w; xx++) wm_px(xx, yy, bg_at(c, xx, yy));
 }
 /* A filled rectangle with round corners, the curve's edge pixels mixed
    with bg by how much of each the curve covers (4x4 samples). */
@@ -680,15 +757,15 @@ void px_round(int x, int y, int w, int h, int r, uint32_t c, uint32_t bg)
             int cx, cy;
             if (xx < x + r) cx = x + r; else if (xx >= x + w - r) cx = x + w - r - 1; else cx = -1;
             if (yy < y + r) cy = y + r; else if (yy >= y + h - r) cy = y + h - r - 1; else cy = -1;
-            if (cx < 0 || cy < 0 || r == 0) { wm_px(xx, yy, bg_at(c, yy)); continue; }
+            if (cx < 0 || cy < 0 || r == 0) { wm_px(xx, yy, bg_at(c, xx, yy)); continue; }
             int in = 0;
             for (int sy = 0; sy < 4; sy++)
                 for (int sx = 0; sx < 4; sx++) {
                     int dx = (xx - cx) * 8 + sx * 2 - 3, dy = (yy - cy) * 8 + sy * 2 - 3;
                     if (dx * dx + dy * dy <= (r * 8 + 4) * (r * 8 + 4)) in++;
                 }
-            if (in == 16) wm_px(xx, yy, bg_at(c, yy));
-            else if (in) wm_px(xx, yy, mix(bg_at(c, yy), bg_at(bg, yy), (uint32_t)in * 255u / 16u));
+            if (in == 16) wm_px(xx, yy, bg_at(c, xx, yy));
+            else if (in) wm_px(xx, yy, mix(bg_at(c, xx, yy), bg_at(bg, xx, yy), (uint32_t)in * 255u / 16u));
         }
 }
 /* A line from (x0,y0) to (x1,y1), `t` pixels thick, edges mixed into bg. */
@@ -710,7 +787,7 @@ void px_line(int x0, int y0, int x1, int y1, int t, uint32_t c, uint32_t bg)
                     else { ex = qx - dx * tq / len2; ey = qy - dy * tq / len2; }
                     if (ex * ex + ey * ey <= (long)t * t * 4) in++;
                 }
-            if (in) wm_px(x, y, in == 16 ? c : mix(c, bg_at(bg, y), (uint32_t)in * 255u / 16u));
+            if (in) wm_px(x, y, in == 16 ? c : mix(c, bg_at(bg, x, y), (uint32_t)in * 255u / 16u));
         }
 }
 
@@ -943,6 +1020,13 @@ static void win_paint_content(int i, wm_win_t *w, int slot)
         blit_surf(i, w);
         return;
     }
+    if (w->own) {                /* v0.9.10: no memory for its pixels -- its background */
+        int x0 = wm_cx0 > w->x ? wm_cx0 : w->x, y0 = wm_cy0 > w->y ? wm_cy0 : w->y;
+        int x1 = wm_cx1 < w->x + w->pw ? wm_cx1 : w->x + w->pw, y1 = wm_cy1 < w->y + w->ph ? wm_cy1 : w->y + w->ph;
+        wm_cl = i; wm_fast = 0;
+        for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) wm_px(x, y, win_pad_px(w, 0));
+        return;
+    }
     int gx = w->x + w->padx, gy = w->y + w->pady;
     if (win_native(w) && !w->padx && !w->pady) {
         paint_cells(i, w->cells, wm_painted[slot], gx, gy, w->vx, w->vy, w->vw, w->vh);
@@ -992,7 +1076,8 @@ static void paint_margins(int i)
     for (int y = wm_cy0; y < wm_cy1; y++) {
         uint32_t m = fbc_bg0((uint32_t)y);
         for (int x = wm_cx0; x < wm_cx1; x++)
-            if (y < gy0 || y >= gy1 || x < gx0 || x >= gx1) wm_px(x, y, m);
+            if (y < gy0 || y >= gy1 || x < gx0 || x >= gx1)
+                wm_px(x, y, wm_L[i].type == LT_DESK ? bg_at(WM_BG_GRAD, x, y) : m);
     }
 }
 
@@ -1023,6 +1108,7 @@ static void paint_layer(int i)
         win_paint_content(i, w, L->slot);
         break; }
     case LT_BAR:
+    case LT_MENU:
     case LT_POP: {
         clip_set(wm_cx0 > L->x0 ? wm_cx0 : L->x0, wm_cy0 > L->y0 ? wm_cy0 : L->y0,
                  wm_cx1 < L->x1 ? wm_cx1 : L->x1, wm_cy1 < L->y1 ? wm_cy1 : L->y1);
@@ -1033,6 +1119,7 @@ static void paint_layer(int i)
                who owns it (Kyan: "buggy" -- the menu took seconds a frame) */
             wm_fast = clear_above(i, wm_cx0, wm_cy0, wm_cx1, wm_cy1) ? 2 : 0;
             if (L->type == LT_BAR) wm_bar_fn(L->x0, L->y0, L->x1, L->y1);
+            else if (L->type == LT_MENU) wm_menu_fn(L->x0, L->y0, L->x1, L->y1);
             else                   wm_pop_fn(L->x0, L->y0, L->x1, L->y1);
             wm_fast = 0;
         }
@@ -1046,8 +1133,10 @@ void vga_wm_repaint_rect(int x0, int y0, int x1, int y1)
     if (!wm_is_on || !fbc_active || !fbc_addr) return;
     clip_set(x0, y0, x1, y1);
     if (wm_cx0 >= wm_cx1 || wm_cy0 >= wm_cy1) return;
+    stat_in();
     for (int i = 0; i < wm_nL; i++) paint_layer(i);
     ptr_over_px(x0, y0, x1, y1);
+    stat_out();
 }
 void vga_wm_repaint_all(void){ vga_wm_repaint_rect(0, 0, (int)fbc_w, (int)fbc_h); }
 
@@ -1105,7 +1194,9 @@ static int cur_target(int *layer, uint16_t **painted, int *slot)
 }
 
 /* One cell of the current console that changed. */
-static void wm_put_cur(int idx, uint16_t entry)
+static void wm_put_cur_(int idx, uint16_t entry);
+static void wm_put_cur(int idx, uint16_t entry){ stat_in(); wm_put_cur_(idx, entry); stat_out(); }
+static void wm_put_cur_(int idx, uint16_t entry)
 {
     uint16_t *painted; int i, slot;
     int t = cur_target(&i, &painted, &slot);
@@ -1120,6 +1211,7 @@ static void wm_put_cur(int idx, uint16_t entry)
         return;
     }
     wm_win_t *w = &wm_w[slot];
+    if (w->own) return;                                /* v0.9.10: pixels, not cells */
     int cx = idx % g_cols - w->vx, cy = idx / g_cols - w->vy;
     if (cx < 0 || cy < 0 || cx >= w->vw || cy >= w->vh) return;
     if (painted[idx] == entry) return;
@@ -1139,11 +1231,14 @@ static void wm_put_cur(int idx, uint16_t entry)
     ptr_over_px(sx, sy, sx + w->cw, sy + w->ch);
 }
 
-static void wm_flush_cur(void)
+static void wm_flush_cur_(void);
+static void wm_flush_cur(void){ stat_in(); wm_flush_cur_(); stat_out(); }
+static void wm_flush_cur_(void)
 {
     uint16_t *painted; int i, slot;
     int t = cur_target(&i, &painted, &slot);
     if (!t) return;
+    if (t == 2 && wm_w[slot].own) return;               /* v0.9.10 */
     if (t == 2 && wm_w[slot].surf) {
         /* everything that changed into the surface, then one copy of the
            rectangle around it */
@@ -1204,6 +1299,49 @@ static void wm_caret(int idx)
     if (idx < 0 || idx >= g_rows * g_cols) return;
     wm_caret_idx = idx; wm_caret_cells = shadow;
     wm_refresh_cur(idx);
+}
+
+/* v0.9.10: THE TERMINAL SCROLLS BY MOVING PIXELS. A new line at the
+   bottom used to change every cell of the window, and every cell was
+   drawn again -- a glyph each, thousands of them, for one line. Now the
+   surface's rows move up one cell's height and the record of what was
+   drawn moves with them, so the cell writes that follow find nothing
+   changed but the new line. Then the window is one copy to the screen.
+   Only for the current console, a window with a surface whose shown rows
+   are the whole viewport being scrolled. Returns 1 when it did. */
+static int vga_wm_scroll_cur_(int vx, int vy, int vw, int vh);
+int vga_wm_scroll_cur(int vx, int vy, int vw, int vh)
+{
+    stat_in(); int r = vga_wm_scroll_cur_(vx, vy, vw, vh); stat_out(); return r;
+}
+static int vga_wm_scroll_cur_(int vx, int vy, int vw, int vh)
+{
+    uint16_t *painted; int i, slot;
+    if (!wm_is_on || cur_target(&i, &painted, &slot) != 2) return 0;
+    wm_win_t *w = &wm_w[slot];
+    if (!w->surf || w->own || w->skip || w->vx != vx || w->vy != vy || w->vw != vw || w->vh != vh || vh < 2) return 0;
+    int gy = w->pady, rowpx = w->ch * w->pw, gx = w->padx, span = vw * w->cw;
+    /* the pixels: rows 1..vh-1 to 0..vh-2 (the padding columns too: the
+       same background) */
+    for (int r = 0; r < vh - 1; r++)
+        for (int py = 0; py < w->ch; py++) {
+            uint32_t *dst = w->surf + (uint32_t)(gy + r * w->ch + py) * (uint32_t)w->pw + (uint32_t)gx;
+            memcpy32(dst, dst + rowpx, (size_t)span);
+        }
+    for (int r = 0; r < vh - 1; r++)
+        for (int c = 0; c < vw; c++) {
+            int d = (vy + r) * g_cols + vx + c, s2 = d + g_cols;
+            uint16_t e = painted[s2];
+            painted[d] = e;
+        }
+    for (int c = 0; c < vw; c++) painted[(vy + vh - 1) * g_cols + vx + c] = 0xFFFF;
+    if (i >= 0 && !w->min) {
+        clip_set(w->x, w->y, w->x + w->pw, w->y + w->ph);
+        blit_surf(i, w);
+        ptr_over_px(w->x, w->y, w->x + w->pw, w->y + w->ph);
+    }
+    wm_stat_scroll++;
+    return 1;
 }
 
 /* ── the pointer, in WM mode: what was under it repainted from layers ── */
@@ -1467,6 +1605,17 @@ void vga_wm_repaint_popup(int x0, int y0, int x1, int y1)
 {
     if (wm_pop_fn) vga_wm_repaint_rect(x0, y0, x1, y1);
 }
+void vga_wm_set_menu(int x, int y, int w, int h, wm_paint_fn fn)
+{
+    int e = wm_shade_ext();
+    int ox = wm_menu_x, oy = wm_menu_y, ow = wm_menu_w, oh = wm_menu_h, had = wm_menu_fn != 0;
+    wm_menu_fn = fn; wm_menu_x = x; wm_menu_y = y; wm_menu_w = w; wm_menu_h = h;
+    wm_rebuild();
+    if (!wm_is_on) return;
+    if (had && (!fn || ox != x || oy != y || ow != w || oh != h))
+        vga_wm_repaint_rect(ox - e, oy - e, ox + ow + e, oy + oh + e);
+    if (fn) vga_wm_repaint_rect(x - e, y - e, x + w + e, y + h + e);
+}
 
 /* v0.9.9: the band around a floating window's outline that resizes it:
    the outline, and a few pixels outside it -- outside, so a click at the
@@ -1516,6 +1665,7 @@ int vga_wm_hit(int x, int y, int *slot, int *part)
     switch (L->type) {
     case LT_DESK: s = 0; p = WMP_CONTENT; break;
     case LT_BAR:  s = -1; p = WMP_BAR; break;
+    case LT_MENU:
     case LT_POP:  s = -1; p = WMP_POPUP; break;
     case LT_WIN: {
         wm_win_t *w = &wm_w[L->slot];
@@ -1611,3 +1761,134 @@ uint32_t vga_px_read(int x, int y)
     if (!fbc_active || !fbc_addr || x < 0 || y < 0 || x >= (int)fbc_w || y >= (int)fbc_h) return 0;
     return fbc_addr[(uint32_t)y * fbc_pitch + (uint32_t)x] & 0xFFFFFFu;
 }
+
+/* v0.9.10: the screen's own pixels, for a screenshot. Reading the
+   framebuffer is slow (it is write-combining memory, made for writes):
+   copy it once, then work on the copy. */
+uint32_t *vga_fb_pixels(int *w, int *h, int *pitch)
+{
+    if (!fbc_active || !fbc_addr) return 0;
+    if (w) *w = (int)fbc_w;
+    if (h) *h = (int)fbc_h;
+    if (pitch) *pitch = (int)fbc_pitch;
+    return fbc_addr;
+}
+
+
+/* ── v0.9.10: canvases, and windows an app draws in pixels ─────────────
+   px_canvas_begin(buf, w, h): px_fill/px_round/px_text/px_icon/px_line
+   draw into buf (w x h, 0x00RRGGBB) until px_canvas_end(). Not nested. */
+static int cv_sx0, cv_sy0, cv_sx1, cv_sy1, cv_sf;
+void px_canvas_begin(uint32_t *buf, int w, int h)
+{
+    cv_sx0 = wm_cx0; cv_sy0 = wm_cy0; cv_sx1 = wm_cx1; cv_sy1 = wm_cy1; cv_sf = wm_fast;
+    wm_cv = buf; wm_cvw = w; wm_cvh = h;
+    wm_cx0 = 0; wm_cy0 = 0; wm_cx1 = w; wm_cy1 = h; wm_fast = 1;
+}
+/* drawing limited to this rectangle of the canvas (a list's inside) */
+void px_canvas_clip(int x0, int y0, int x1, int y1)
+{
+    if (!wm_cv) return;
+    wm_cx0 = x0 < 0 ? 0 : x0; wm_cy0 = y0 < 0 ? 0 : y0;
+    wm_cx1 = x1 > wm_cvw ? wm_cvw : x1; wm_cy1 = y1 > wm_cvh ? wm_cvh : y1;
+}
+void px_canvas_end(void)
+{
+    wm_cv = 0;
+    wm_cx0 = cv_sx0; wm_cy0 = cv_sy0; wm_cx1 = cv_sx1; wm_cy1 = cv_sy1; wm_fast = cv_sf;
+}
+
+/* The current task's window as a canvas: its surface, the size of its
+   content. From now on the window shows only what the app draws. 0 when
+   the current console has no window or no memory for its pixels. */
+uint32_t *vga_wm_canvas(int *w, int *h)
+{
+    for (int k = 1; k < WM_SLOTS; k++) {
+        wm_win_t *v = &wm_w[k];
+        if (!v->on || v->cells != shadow) continue;
+        if (!v->own) {
+            v->own = 1;
+            if (!v->surf) surf_make(v);
+            if (v->surf) surf_all(v, wm_painted[k]);
+        }
+        if (!v->surf) return 0;
+        if (w) *w = v->pw;
+        if (h) *h = v->ph;
+        return v->surf;
+    }
+    return 0;
+}
+/* What the app drew in (x,y,w,h) of its canvas, onto the screen. */
+void vga_wm_present(int x, int y, int w, int h)
+{
+    for (int k = 1; k < WM_SLOTS; k++) {
+        wm_win_t *v = &wm_w[k];
+        if (!v->on || v->cells != shadow || !v->surf) continue;
+        int i = -1;
+        for (int j = 0; j < wm_nL; j++) if (wm_L[j].type == LT_WIN && wm_L[j].slot == k) { i = j; break; }
+        if (i < 0 || v->min || !wm_is_on) return;
+        if (x < 0) { w += x; x = 0; }
+        if (y < 0) { h += y; y = 0; }
+        if (x + w > v->pw) w = v->pw - x;
+        if (y + h > v->ph) h = v->ph - y;
+        if (w <= 0 || h <= 0) return;
+        stat_in();
+        clip_set(v->x + x, v->y + y, v->x + x + w, v->y + y + h);
+        blit_surf(i, v);
+        ptr_over_px(v->x + x, v->y + y, v->x + x + w, v->y + y + h);
+        stat_out();
+        return;
+    }
+}
+
+/* ── v0.9.10: BEST PERFORMANCE ─────────────────────────────────────────
+   Settings -> Display. No shadows (every move repaints only the window's
+   own rectangle), square corners (no edge pixel asks whether it is in a
+   curve), no wallpaper picture. For old PCs: everything else the same. */
+void vga_wm_set_lite(int on)
+{
+    wm_lite = on ? 1 : 0;
+    wm_rebuild();
+    if (wm_is_on) vga_wm_repaint_all();
+}
+int vga_wm_lite(void){ return wm_lite; }
+
+/* ── v0.9.10: A PICTURE AS THE WALLPAPER ───────────────────────────────
+   The picture, scaled once to cover the whole screen (cut at the sides or
+   top and bottom, never stretched), kept: the desktop's background pixels
+   come from it instead of the theme's gradient. Its own memory, freed
+   when it is taken off. */
+int vga_wm_set_wallpaper(const uint32_t *img, int iw, int ih)
+{
+    if (wm_wall) { pmm_free_contig(wm_wall, wm_wall_pg); wm_wall = 0; wm_wall_pg = 0; }
+    if (img && iw > 0 && ih > 0 && fbc_active) {
+        uint32_t WW = fbc_w, HH = fbc_h, pg = (WW * HH * 4u + 4095u) / 4096u;
+        wm_wall = (uint32_t *)pmm_alloc_contig(pg);
+        if (!wm_wall) return -1;
+        wm_wall_pg = pg; wm_wall_w = (int)WW; wm_wall_h = (int)HH;
+        /* cover: the scale that fills both, the middle of the picture */
+        uint64_t sx = (uint64_t)iw * 65536u / WW, sy = (uint64_t)ih * 65536u / HH, k = sx < sy ? sx : sy;
+        uint64_t ox = ((uint64_t)iw * 65536u - k * WW) / 2u, oy = ((uint64_t)ih * 65536u - k * HH) / 2u;
+        for (uint32_t y = 0; y < HH; y++) {
+            uint64_t fy = oy + k * y + k / 2u;
+            uint32_t iy = (uint32_t)(fy >> 16); if (iy >= (uint32_t)ih) iy = (uint32_t)ih - 1;
+            /* a 2x2 average where the picture is shrunk -- no shimmer */
+            uint32_t iy2 = k > 65536u && iy + 1 < (uint32_t)ih ? iy + 1 : iy;
+            for (uint32_t x = 0; x < WW; x++) {
+                uint64_t fx = ox + k * x + k / 2u;
+                uint32_t ix = (uint32_t)(fx >> 16); if (ix >= (uint32_t)iw) ix = (uint32_t)iw - 1;
+                uint32_t ix2 = k > 65536u && ix + 1 < (uint32_t)iw ? ix + 1 : ix;
+                uint32_t a = img[iy * (uint32_t)iw + ix], b = img[iy * (uint32_t)iw + ix2],
+                         c = img[iy2 * (uint32_t)iw + ix], d = img[iy2 * (uint32_t)iw + ix2];
+                uint32_t r = (((a >> 16) & 255) + ((b >> 16) & 255) + ((c >> 16) & 255) + ((d >> 16) & 255) + 2) / 4;
+                uint32_t g = (((a >> 8) & 255) + ((b >> 8) & 255) + ((c >> 8) & 255) + ((d >> 8) & 255) + 2) / 4;
+                uint32_t bl = ((a & 255) + (b & 255) + (c & 255) + (d & 255) + 2) / 4;
+                wm_wall[y * WW + x] = (r << 16) | (g << 8) | bl;
+            }
+        }
+    }
+    fbc_forget();
+    if (wm_is_on) { wm_invalidate_all(); vga_wm_repaint_all(); }
+    return 0;
+}
+int vga_wm_has_wallpaper(void){ return wm_wall != 0; }

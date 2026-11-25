@@ -39,6 +39,9 @@
    vga_cols()/vga_rows() draws again. Injected only into apps that asked
    for it (chrome_begin_ex(..., CHF_RESIZE_KEY)). */
 #define KEY_RESIZE    0x1F2
+/* v0.9.10: Print Screen -- taken in keyboard_getchar() and saved as a PNG
+   (shell/screenshot.c); no app ever reads it */
+#define KEY_PRTSC     0x1F3
 
 #define KEY_HOME      0x147
 #define KEY_UP        0x148

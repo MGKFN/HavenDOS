@@ -944,6 +944,16 @@ void vga_pointer_hide(void)
     if (fbc_active && fbc_addr && (g_vis || wm_is_on)) fbc_ptr_touch();
 }
 int vga_pointer_pixels(void){ return fbc_active && fbc_addr != 0; }
+/* v0.9.10: off for a moment (a screenshot without the pointer in it),
+   then back where it was */
+static int g_ptr_was;
+void vga_pointer_hide_save(void){ g_ptr_was = fbc_ptr_on; vga_pointer_hide(); }
+void vga_pointer_show_last(void)
+{
+    if (!g_ptr_was || fbc_ptr_on) return;
+    fbc_ptr_on = 1;
+    if (fbc_active && fbc_addr && (g_vis || wm_is_on)) fbc_ptr_touch();
+}
 
 /* v0.9.8: one pixel row of one cell, into out[0 .. fbc_cwp-1]. sy is the
    row's SCREEN y (the gradient is a function of it). Every way a cell is
@@ -1964,6 +1974,12 @@ void vga_scroll(void){
        about, where the stride was the compile-time 80 and scrolling a
        90-column mode smeared the screen diagonally. */
     int w = vga_cols(), h = vga_rows();
+    /* v0.9.10: a window moves its pixels up instead (drivers/wm_core.inc) --
+       the writes below then find every cell but the new line unchanged */
+    { extern int vga_wm_scroll_cur(int, int, int, int);
+      int vx = 0, vy = 0, vw = g_cols, vh = g_rows;
+      if(vga_viewport_active()){ vx = g_vp_x; vy = g_vp_y; vw = g_vp_w; vh = g_vp_h; }
+      if(wm_is_on) vga_wm_scroll_cur(vx, vy, vw, vh); }
     for(int y=0;y<h-1;y++)
         for(int x=0;x<w;x++)
             vga_write(x,y,vga_shadow_read(x,y+1));

@@ -291,8 +291,8 @@ static void sm_paint(int x0, int y0, int x1, int y1)
     int uisz = px_icon_size(foot_h / 2);
     px_icon(P_x + pad, fy + (foot_h - uisz) / 2, wm_icon_find("_user"), uisz, bg);
     px_text(P_x + pad + uisz + fp / 2, fy + (foot_h - px_text_h(fp, 1)) / 2, current_username(), fp, 1, fg, bg, P_w / 3);
-    px_text(P_x + P_w / 2 - px_text_w("Ctrl+D desktop  Ctrl+F favourite", fp * 3 / 4, 0) / 2 + fp * 2,
-            fy + (foot_h - px_text_h(fp * 3 / 4, 0)) / 2, "Ctrl+D desktop  Ctrl+F favourite", fp * 3 / 4, 0, dim, bg, 0);
+    px_text(P_x + P_w / 2 - px_text_w("Right-click to pin  Ctrl+D/T/F", fp * 3 / 4, 0) / 2 + fp * 2,
+            fy + (foot_h - px_text_h(fp * 3 / 4, 0)) / 2, "Right-click to pin  Ctrl+D/T/F", fp * 3 / 4, 0, dim, bg, 0);
     for (int k = 0; k < 2; k++) {
         int bw = foot_h - fp / 2, bx = P_x + P_w - pad - (2 - k) * (bw + fp / 4), by = fy + fp / 4;
         uint32_t b = g_hbtn == k + 1 ? mixc(0xffffffu, bg, 22) : bg;
@@ -453,7 +453,39 @@ void startmenu_run(void)
             else if (what == 3) { lock = 1; done = 1; }
             else if (what == 4) { g_pwr = !g_pwr; g_pwsel = 3; g_pwh = -1; dirty = 1; }
         } else if (c) {
-            if (sm_hit(cx, cy, &i) == 0) done = 1;
+            what = sm_hit(cx, cy, &i);
+            if (what == 0) done = 1;
+            else if (what == 1 && (c & 2)) {
+                /* v0.9.10: right-click an app -- open it, or pin it to the
+                   desktop, the taskbar, Favourites (Kyan: "pinning stuff to
+                   task bar can't be done"; it was Ctrl+D/Ctrl+F, keys only,
+                   and the taskbar not at all) */
+                extern int pxmenu_run(int x, int y, const char *title, const char *const *items, int n);
+                extern int desktop_app_pinned(const char *id, int fav);
+                extern int desktop_tb_pinned(const char *id);
+                extern int desktop_tb_pin_toggle(const char *id);
+                const char *id = desktop_app_id(g_list[i]);
+                const char *items[4];
+                items[0] = "Open";
+                items[1] = desktop_app_pinned(id, 0) ? "Remove from the desktop" : "Pin to the desktop";
+                items[2] = desktop_tb_pinned(id) ? "Unpin from the taskbar" : "Pin to the taskbar";
+                items[3] = desktop_app_pinned(id, 1) ? "Remove from Favourites" : "Add to Favourites";
+                g_sel = i;
+                int m = pxmenu_run(cx + 2, cy + 2, desktop_app_name(g_list[i]), items, 4);
+                if (m == 0) { launch = g_list[i]; done = 1; }
+                else if (m == 1) {
+                    int r = desktop_app_pin_toggle(id, 0);
+                    toast_info(r > 0 ? "Pinned to the desktop" : r == 0 ? "Taken off the desktop" : "The desktop is full");
+                } else if (m == 2) {
+                    int r = desktop_tb_pin_toggle(id);
+                    toast_info(r > 0 ? "Pinned to the taskbar" : r == 0 ? "Unpinned from the taskbar" : "The taskbar holds 8 pins -- unpin one first");
+                } else if (m == 3) {
+                    int r = desktop_app_pin_toggle(id, 1);
+                    toast_info(r > 0 ? "Added to Favourites" : r == 0 ? "Taken out of Favourites" : "Favourites is full");
+                    if (g_cat == C_FAV) build();
+                }
+                dirty = 1;
+            }
         }
         if (k != -1 && g_pwr) {
             dirty = 1;
@@ -481,6 +513,11 @@ void startmenu_run(void)
             else if ((k == 4 || (kbd_ctrl() && (k == 'd' || k == 'D'))) && g_nlist) {
                 int r = desktop_app_pin_toggle(desktop_app_id(g_list[g_sel]), 0);
                 toast_info(r > 0 ? "Put on the desktop" : r == 0 ? "Taken off the desktop" : "The desktop is full");
+            }
+            else if ((k == 20 || (kbd_ctrl() && (k == 't' || k == 'T'))) && g_nlist) {     /* v0.9.10 */
+                extern int desktop_tb_pin_toggle(const char *id);
+                int r = desktop_tb_pin_toggle(desktop_app_id(g_list[g_sel]));
+                toast_info(r > 0 ? "Pinned to the taskbar" : r == 0 ? "Unpinned from the taskbar" : "The taskbar holds 8 pins -- unpin one first");
             }
             else if ((k == 6 || (kbd_ctrl() && (k == 'f' || k == 'F'))) && g_nlist) {
                 int r = desktop_app_pin_toggle(desktop_app_id(g_list[g_sel]), 1);

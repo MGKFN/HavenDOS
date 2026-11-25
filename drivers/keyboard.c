@@ -99,6 +99,7 @@ static void process_sc(uint8_t sc){
                 /* v0.8.8.4: both Windows keys, as one code. They used
                    to fall past this switch and be discarded, so the
                    key did nothing anywhere in the system. */
+                case 0x37: push_key(KEY_PRTSC); return;  /* PrtSc (E0 2A E0 37), v0.9.10 */
                 case 0x5B: push_key(KEY_SUPER); return; /* Left GUI  */
                 case 0x5C: push_key(KEY_SUPER); return; /* Right GUI */
             }
@@ -422,6 +423,10 @@ void keyboard_set_mouse_hook(int (*fn)(int)){ g_mhook = fn; }
    full-screen key and the clicks outside the box. */
 static int (*g_chook)(int);
 void keyboard_set_chrome_hook(int (*fn)(int)){ g_chook = fn; }
+/* v0.9.10: PrtSc -- the screenshot, wherever it is pressed (a pointer,
+   so this file still links alone) */
+static int (*g_shot)(const char *);
+void keyboard_set_screenshot_hook(int (*fn)(const char *)){ g_shot = fn; }
 
 int keyboard_getchar(void){
     for(;;){
@@ -431,6 +436,7 @@ int keyboard_getchar(void){
             if(g_switch) g_switch(c == KEY_TASKSW_BACK);
             continue;
         }
+        if(c == KEY_PRTSC){ if(g_shot) g_shot(0); continue; }
         if(g_chook) c = g_chook(c);
         if(g_mhook) c = g_mhook(c);
         return c;
@@ -440,6 +446,25 @@ int keyboard_getchar(void){
 /* The read without the gate, for the switcher's own loop -- it runs
  * inside keyboard_getchar() and must not recurse into it. */
 int keyboard_getchar_raw(void){ return kbd_getchar_raw(); }
+
+/* v0.9.10: Ctrl+C while a program runs (Python's KeyboardInterrupt).
+   Looks through what has been typed without taking anything else out:
+   if a Ctrl+C is there, the queue is emptied -- the keys typed into a
+   program that is being stopped are not meant for whatever comes next
+   -- and 1 comes back. Extended keys are two bytes, a 0x01 marker and
+   the code, and an escaped Ctrl+A is 0x01 0x00; neither is a 0x03. */
+int keyboard_take_ctrl_c(void){
+    kbd_poll();
+    usb_hid_poll();
+    int i = kbd_tail;
+    while(i != kbd_head){
+        unsigned char c = (unsigned char)kbd_buf[i];
+        if(c == 0x01){ i = (i + 1) % KBD_BUF; if(i == kbd_head) break; i = (i + 1) % KBD_BUF; continue; }
+        if(c == 0x03){ kbd_tail = kbd_head; return 1; }
+        i = (i + 1) % KBD_BUF;
+    }
+    return 0;
+}
 
 static int kbd_getchar_raw(void){
     kernel_poll();

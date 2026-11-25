@@ -1,6 +1,6 @@
 # HavenDOS — handoff, 25 November 2026
 
-Current release: **v0.9.9** (Beta, a GitHub pre-release) (codename "Theia"),
+Current release: **v0.9.10** (Beta, a GitHub pre-release) (codename "Athena"),
 on main of MGKFN/HavenDOS, published by the Release workflow. Paste this
 file into a new chat, with the bundle zip, to pick up where this left off.
 
@@ -51,7 +51,68 @@ file into a new chat, with the bundle zip, to pick up where this left off.
   The window layout suite is `tests/test_window.c`. Don't create a file
   without checking it isn't already there.
 
-## LATEST: 0.9.9 Beta "Theia" (25 Nov) — WINDOWS OF ANY SIZE
+## LATEST: 0.9.10 Beta "Athena" (25–26 Nov) — BUILDING BLOCKS, SCREENSHOTS, PYTHON
+
+**Kyan's asks, 25 Nov evening:** image + screenshot support, "still a bit
+sluggish", the trackpad still not working (waiting on his `i2chid` photo),
+pinning to the taskbar impossible / pinning to the desktop broken / the
+right-click menu old, and "intergrate python". Built unattended overnight;
+he asked to keep chasing bugs until 08:15 on the 26th.
+
+**What 0.9.10 is** (changelogs/CHANGELOG-v0.9.10.md):
+- kernel/string.c: memcpy/memset are `rep movsl/stosl`; memcpy32/memset32.
+- drivers/wm_core.inc: rdtsc stats (`vga_wm_stats`, shown by `perf`);
+  `vga_wm_scroll_cur` (the Terminal scrolls by moving its surface's rows);
+  a CANVAS (`px_canvas_begin/clip/end`: every px_* into a buffer); app-drawn
+  windows (`own`, `vga_wm_canvas`, `vga_wm_present`); lite mode
+  (`vga_wm_set_lite`: r=0, sh=0); picture wallpaper (`vga_wm_set_wallpaper`,
+  cover-scaled, `bg_at()` for every WM_BG_GRAD pixel); the LT_MENU layer
+  above the popup (`vga_wm_set_menu`); background 0 inside a window is flat.
+  `in_layer()`: a window's content is never cut by the bottom corner curve
+  (the per-pixel and fast paths disagreed; test_wm "canvas moved").
+- kernel/png.c: inflate (stored/fixed/dynamic), deflate (fixed Huffman +
+  LZ77), PNG decode (all colour types, <=8 bit, no interlace), PNG encode,
+  BMP 24/32. tests/test_png.c with fixtures from tools/make_png_fixtures.py.
+- shell/screenshot.c: PrtSc (PS/2 E0 37 and HID 0x46 -> KEY_PRTSC 0x1F3,
+  taken in keyboard_getchar via a hook chrome_init sets). Name
+  `Shot-YYYYMMDD-HHMMSS.png` (the system disk's names are <= 27 chars;
+  "HavenDOS-..." lost its .png). USB FAT32 -> /usb/Pictures, else
+  HOME/<user>/Pictures (8.3 name on a FAT16 disk).
+- shell/pxui.c + include/pxui.h: immediate-mode building blocks (theme
+  colours from wm_rgb, High Contrast = 2 px outlines). shell/pxmenu.c: the
+  pixel menu (LT_MENU) -- the desktop's right-click (`ctx_run_pixel`) and the
+  Start menu's row menu use it.
+- shell/images.c: the Images app (CHF_PIXEL window), wallpaper set/clear,
+  cfg `wall_img`; Settings -> Display: Best performance (`perf_mode`), Wallpaper.
+- shell/perf.c: `perf [s|bench]`.
+- Pinning: `desktop_tb_pinned/desktop_tb_pin_toggle` (taskbar, from
+  anywhere); desktop pin refreshes icons at once (`g_icons_changed`).
+- **Python:** MicroPython (MIT) vendored in `third_party/micropython`
+  (167 sources + committed genhdr; port in `port/`). Built by its own
+  Makefile into `build/libmpy.a`, linked into both kernel passes.
+  Regenerate with `tools/vendor_micropython.py <micropython checkout>`
+  (it builds the port with MicroPython's makefiles to get the qstrs).
+  Flags that matter: `-ffreestanding -fbuiltin` (without -fbuiltin the
+  ROM-text compression's strcmp tree is NOT folded and the library is
+  1.4 MB instead of ~200 KB), `-U_FORTIFY_SOURCE`, libm with
+  `__FLT_EVAL_METHOD__=0`. Glue: console (ESC [ n D / K mapped), keys ->
+  VT sequences for readline, Ctrl+C via `keyboard_take_ctrl_c()` (scans the
+  ring, every ~20M cycles), X = ESC + `chrome_take_close()` -> Ctrl+C,Ctrl+D,
+  files via vfs + make_path, 2 MB GC heap (kmalloc once), 40 KB stack
+  limit, one interpreter at a time (`g_busy`). `python`/`py` command,
+  "Python" app (`app_python`).
+- **Kernel size: 7.67 MB of 8 MB** (check_update_size warns). The final
+  kernel embeds the pass-1 kernel (include/kernel_elf.h, raw) for the
+  installer -- compressing that copy (zlib at build, png_inflate_zlib in
+  fs/install.c image_acquire) is the way to get MBs back.
+- Tests: make test 79 suites green; test_wm 113. harness/pixels_0910.py 7/7,
+  harness/python_0910.py 15/15 (type at >= 90 ms a key: Python's prompt
+  echoes every key and 50 ms doubles keys).
+
+**Next:** the trackpad from Kyan's `i2chid` photo; compress the embedded
+kernel; 0.9.11 Settings and Files on the building blocks.
+
+## 0.9.9 Beta "Theia" (25 Nov) — WINDOWS OF ANY SIZE
 
 **Kyan's decisions, 25 Nov (this chat):**
 - **One HavenDOS, one ISO, 32-bit and 64-bit, no Legacy/Classic edition.**

@@ -438,9 +438,28 @@ static int elf_magic(const uint8_t *d, uint32_t n){
     return n >= 52 && d[0] == 0x7F && d[1] == 'E' && d[2] == 'L' && d[3] == 'F';
 }
 
+/* v0.9.10: the embedded kernel is zlib-compressed (KERNEL_ELF_Z, from
+   tools/make_kernel_embed.py) -- it was a raw copy of the whole pass-1
+   kernel, so every byte of the kernel was in the final one twice, and the
+   final one has to fit the 8 MB an update can carry. It is inflated into
+   the same buffer a system-volume image is read into. A test that
+   provides its own (raw) image keeps the raw path. */
+#if KERNEL_ELF_AVAILABLE && defined(KERNEL_ELF_Z)
+#include "../include/png.h"
+#define EMBED_Z 1
+#else
+#define EMBED_Z 0
+#endif
+
 static int embedded_ok(void){
 #if KERNEL_ELF_AVAILABLE
+#if EMBED_Z
+    /* a zlib stream (CMF 0x78, deflate, 32K window) of an image that fits */
+    return kernel_elf_zsize > 6 && kernel_elf_data[0] == 0x78 &&
+           kernel_elf_size >= 52 && kernel_elf_size < IMG_MAX;
+#else
     return elf_magic(kernel_elf_data, kernel_elf_size);
+#endif
 #else
     return 0;
 #endif
@@ -456,9 +475,23 @@ static int image_acquire(void){
     int n;
     if(embedded_ok()){
 #if KERNEL_ELF_AVAILABLE
+#if EMBED_Z
+        if(s_img_heap && s_img) return 1;      /* already inflated this session */
+        havendos_install_image_release();
+        s_img_heap = (uint8_t *)pmm_alloc_contig(IMG_BLOCKS);
+        if(!s_img_heap) return 0;
+        n = png_inflate_zlib(kernel_elf_data, kernel_elf_zsize, s_img_heap, IMG_MAX);
+        if(n != (int)kernel_elf_size || !elf_magic(s_img_heap, (uint32_t)n)){
+            havendos_install_image_release();
+            return 0;
+        }
+        s_img = s_img_heap; s_img_size = (uint32_t)n;
+        return 1;
+#else
         havendos_install_image_release();
         s_img = kernel_elf_data; s_img_size = kernel_elf_size;
         return 1;
+#endif
 #endif
     }
     if(s_img_heap && s_img) return 1;          /* already read this session */

@@ -78,6 +78,8 @@ static int  g_shell_bg             = -1;
 static char g_prompt[64]           = "";   /* "" = \u@havendos:\w\$     */
 static int  g_desk_info            = 1;    /* RAM/uptime strip           */
 static int  g_desk_small           = 0;    /* v0.9.7 (E-4): small desktop icons */
+static char g_wall_img[96]         = "";   /* v0.9.10: a PNG/BMP as the wallpaper */
+static int  g_perf_mode            = 0;    /* v0.9.10: best performance (no shadows, wallpaper, effects) */
 
 /* Per-account hidden flags (index maps to login.c user order) */
 /* 0=admin 1=bootos 2=guest */
@@ -146,6 +148,10 @@ void cfg_load(void){
             g_desk_info=cfg_val_int(line,"desk_info");
         else if(cfg_startswith(line,"desk_small="))
             g_desk_small=cfg_val_int(line,"desk_small")?1:0;
+        else if(cfg_startswith(line,"wall_img="))
+            cfg_val_str(line,"wall_img",g_wall_img,96);
+        else if(cfg_startswith(line,"perf_mode="))
+            g_perf_mode=cfg_val_int(line,"perf_mode")?1:0;
         else if(cfg_startswith(line,"shell_fg="))
             g_shell_fg=cfg_val_int(line,"shell_fg");
         else if(cfg_startswith(line,"shell_bg="))
@@ -195,6 +201,8 @@ void cfg_save(void){
     EMIT_KV("desk_pattern",         g_desk_pattern);
     EMIT_KV("desk_info",            g_desk_info);
     EMIT_KV("desk_small",           g_desk_small);
+    EMIT_KS("wall_img",             g_wall_img);
+    EMIT_KV("perf_mode",            g_perf_mode);
     /* -1 does not survive utoa, so "unset" is written as 99 and read
        back as out of range. */
     EMIT_KV("shell_fg",             g_shell_fg<0?99:g_shell_fg);
@@ -245,6 +253,10 @@ void        cfg_set_acct_hidden(int idx,int v){ if(idx>=0&&idx<3)g_acct_hidden[i
 
 int         cfg_desk_pattern(void)            { return g_desk_pattern; }
 void        cfg_set_desk_pattern(int v)       { g_desk_pattern=v?1:0; }
+const char *cfg_wall_img(void)                { return g_wall_img; }
+void        cfg_set_wall_img(const char *p)   { strncpy(g_wall_img,p?p:"",95); g_wall_img[95]=0; }
+int         cfg_perf_mode(void)               { return g_perf_mode; }
+void        cfg_set_perf_mode(int v)          { g_perf_mode=v?1:0; }
 int         cfg_desk_info(void)               { return g_desk_info; }
 void        cfg_set_desk_info(int v)          { g_desk_info=v?1:0; }
 int         cfg_desk_small(void)              { return g_desk_small; }     /* v0.9.7 */

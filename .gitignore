@@ -27,3 +27,6 @@ include/retro_images.h
 
 # v0.9.7.2: the archived BOOT OS kernels Retro PC boots are source, not build output
 !archive/retro/*.elf
+
+# v0.9.10: MicroPython's objects, built by third_party/micropython/Makefile
+third_party/micropython/build/

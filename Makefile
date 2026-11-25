@@ -1,5 +1,11 @@
 CC      = gcc
 LD      = ld
+# v0.9.10: 64-bit division (__udivdi3, __divdi3) and the like, from the
+# compiler's own support library -- the timings in `perf`, the image
+# scaling, and MicroPython need it
+LIBGCC  := $(shell $(CC) -m32 -print-libgcc-file-name)
+# v0.9.10: MicroPython, one library (third_party/micropython)
+MPYLIB  := third_party/micropython/build/libmpy.a
 # -MMD -MP makes gcc write a .d file per object listing every header it
 # actually included, and those .d files are pulled in at the bottom of this
 # Makefile.  Before v0.7.20 the only headers any rule depended on were the
@@ -20,7 +26,7 @@ LDFLAGS = -m elf_i386 -T boot/linker.ld --oformat elf32-i386 \
 
 SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/verinfo.c shell/clipboard.c kernel/machine.c shell/login.c shell/bootanim.c shell/screensaver.c shell/tetris.c \
           drivers/speaker.c drivers/mode13.c drivers/vesa.c \
-          kernel/string.c kernel/idt.c kernel/pit.c kernel/kpoll.c kernel/task.c kernel/appguard.c kernel/bootsplash.c kernel/pmm.c kernel/heap.c kernel/errors.c kernel/klog.c \
+          kernel/string.c kernel/idt.c kernel/pit.c kernel/kpoll.c kernel/task.c kernel/appguard.c kernel/bootsplash.c kernel/png.c kernel/pmm.c kernel/heap.c kernel/errors.c kernel/klog.c \
           drivers/vga.c drivers/keyboard.c drivers/mouse.c \
           drivers/ata.c drivers/ahci.c drivers/atapi.c drivers/pci.c drivers/pci_bar.c drivers/pci_assign.c drivers/uhci.c drivers/nvme.c drivers/virtio.c \
           drivers/rtl8139.c drivers/e1000.c drivers/i2c.c drivers/i2c_hid.c drivers/xedisp.c drivers/xegmbus.c drivers/xemode.c drivers/edid.c drivers/rtc.c \
@@ -28,7 +34,7 @@ SRCS_C  = kernel/main.c kernel/highfb.c kernel/entropy.c kernel/config.c kernel/
           fs/iso9660.c fs/update.c fs/update_src.c \
           usb/core.c usb/hotplug.c usb/uhci_hc.c usb/xhci_hc.c usb/hid.c usb/hid_rd.c usb/hub.c usb/msc.c usb/ethernet.c usb/usbmux.c usb/lockdown.c usb/pair.c \
           net/netdev.c net/net.c net/net_tick.c net/netstat.c net/ethernet.c net/arp.c net/ipv4.c net/icmp.c net/udp.c net/tcp.c net/dns.c net/dhcp.c net/http.c net/bignum.c net/der.c net/x509.c net/plist.c net/b64.c net/der_read.c net/rsa.c net/tls_crypto.c net/tls.c \
-          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/migratecmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c shell/uimouse.c shell/chrome.c shell/taskbar.c shell/startmenu.c shell/retro.c emu/cpu86.c emu/pcbios.c emu/cpu386.c emu/pc386.c
+          shell/ui.c shell/shell.c shell/desktop.c shell/bpkg.c shell/packages.c shell/boot_lang.c shell/iso_installer.c shell/uninstallcmd.c shell/migratecmd.c shell/setup.c shell/legal.c shell/man.c shell/toast.c shell/shell_v072.c shell/shell_v073.c shell/lspci.c shell/usb.c shell/shell_v076.c shell/chat.c shell/help.c shell/cmddb.c shell/userscmd.c shell/themecmd.c shell/sysapp.c shell/settings.c shell/guide.c shell/games2.c shell/apps2.c shell/apps_extra.c shell/fat32cmd.c shell/fat16cmd.c shell/exfatcmd.c shell/rsacmd.c shell/i2ccmd.c shell/i2chidcmd.c shell/gfxcmd.c shell/paircmd.c shell/crashcmd.c shell/taskswitch.c shell/mines.c shell/mines_model.c shell/neofetch.c shell/uimouse.c shell/chrome.c shell/screenshot.c shell/perf.c shell/pxui.c shell/pxmenu.c shell/images.c shell/pythoncmd.c shell/taskbar.c shell/startmenu.c shell/retro.c emu/cpu86.c emu/pcbios.c emu/cpu386.c emu/pc386.c
 
 SRCS_S  = boot/boot.S
 OBJS_C  = $(SRCS_C:.c=.o)
@@ -123,8 +129,8 @@ include/font8x8_ext.h: include/font8x8.h tools/make_font_ext.py
 include/retro_images.h: archive/retro/IMAGES.txt $(wildcard archive/retro/*.img) $(wildcard archive/retro/*.elf) $(wildcard archive/retro/*.cfg) tools/make_retro_images.py
 	python3 tools/make_retro_images.py include/retro_images.h
 
-havendos_pass1.elf: include/font8x8_ext.h include/retro_images.h include/grub_embed.h include/grub_efi_embed.h $(OBJS_PASS1)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS_PASS1)
+havendos_pass1.elf: include/font8x8_ext.h include/retro_images.h include/grub_embed.h include/grub_efi_embed.h $(OBJS_PASS1) $(MPYLIB)
+	$(LD) $(LDFLAGS) -o $@ $(OBJS_PASS1) $(MPYLIB) $(LIBGCC)
 
 include/kernel_elf.h: havendos_pass1.elf
 	python3 tools/make_kernel_embed.py havendos_pass1.elf include/kernel_elf.h
@@ -135,8 +141,11 @@ include/kernel_elf.h: havendos_pass1.elf
 %.o: %.S
 	$(CC) $(CFLAGS) -c $< -o $@
 
-havendos.elf: include/grub_embed.h include/kernel_elf.h include/grub_efi_embed.h $(OBJS)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+havendos.elf: include/grub_embed.h include/kernel_elf.h include/grub_efi_embed.h $(OBJS) $(MPYLIB)
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(MPYLIB) $(LIBGCC)
+
+$(MPYLIB): third_party/micropython/SOURCES third_party/micropython/Makefile $(wildcard third_party/micropython/port/*.c third_party/micropython/port/*.h third_party/micropython/genhdr/*.h)
+	$(MAKE) -C third_party/micropython
 
 # v0.7.18: version.txt and the GRUB menu titles are generated from
 # include/version.h so they cannot drift from the running kernel again.
@@ -634,6 +643,12 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 	           -Wno-int-to-pointer-cast \
 	           -o /tmp/hd_twm tests/test_wm.c && \
 	  python3 tools/run_suite.py --name test_wm --min 100 -- /tmp/hd_twm
+	@echo "── test_png ───────────────────────────────"
+	@echo "  v0.9.10: PNG and BMP -- PIL's files, and our own round trips"
+	@$(TESTCC) -fno-builtin -Iinclude -Itests \
+	           -Wno-builtin-declaration-mismatch \
+	           -o /tmp/hd_tpng tests/test_png.c && \
+	  python3 tools/run_suite.py --name test_png --min 20 -- /tmp/hd_tpng
 	@echo "── test_der ───────────────────────────────"
 	@echo "  writing DER, checked against the bytes -- stage 3"
 	@# -fno-builtin and the kernel's own string.c: net/der.c net/x509.c's
@@ -866,6 +881,7 @@ test: tests/bars.inc tests/vercmp.inc tests/appreg.inc include/retro_images.h \
 
 
 clean:
+	rm -rf third_party/micropython/build
 	rm -f tests/appreg.inc $(OBJS) $(OBJS_PASS1) $(OBJS:.o=.d) $(OBJS_PASS1:.o=.d) \
 	      havendos.elf havendos_pass1.elf havendos.iso \
 	      HavenDOS-*.iso \

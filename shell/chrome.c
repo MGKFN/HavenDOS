@@ -155,6 +155,7 @@ typedef struct {
     int         snap;           /* 1 left half, 2 right half               */
     int         skip;           /* rows of its own header not shown        */
     int         lw, lh;         /* the size the app last laid out for      */
+    int         lpw, lph;       /* v0.9.10: ... in pixels, for a pixel app */
     uint32_t    click_t;        /* a double click on the title bar         */
 } ch_task_t;
 static ch_task_t g_t[TASK_MAX];
@@ -309,6 +310,7 @@ static void wm_cells_for(ch_task_t *t, int pw, int ph, int *vw, int *vh, int *cw
 /* The smallest content a window may be dragged down to. */
 static void wm_min_size(ch_task_t *t, int *mw, int *mh)
 {
+    if(t->flags & CHF_PIXEL){ *mw = 360; *mh = 240; return; }    /* v0.9.10 */
     if(t->zoom){ *mw = t->gw * 5; *mh = shown_rows(t, t->gh) * 10; }
     else { *mw = CH_MIN_COLS * vga_cell_w(); *mh = CH_MIN_ROWS * vga_cell_h(); }
 }
@@ -332,7 +334,11 @@ static void wm_first_rect(ch_task_t *t)
     int x0, y0, x1, y1, mw, mh, th = vga_wm_title_h();
     wm_work(&x0, &y0, &x1, &y1);
     wm_max_size(t, &mw, &mh);
-    if(t->zoom){
+    if(t->flags & CHF_PIXEL){
+        t->rw = (x1 - x0) * 7 / 10; t->rh = (y1 - y0 - th) * 3 / 4;
+        if(t->rw > mw) t->rw = mw;
+        if(t->rh > mh) t->rh = mh;
+    } else if(t->zoom){
         int sh = shown_rows(t, t->gh);
         t->rw = t->gw * vga_cell_w(); t->rh = sh * vga_cell_h();
         if(t->rw > mw || t->rh > mh){                       /* smaller cells to fit */
@@ -395,10 +401,10 @@ static void wm_sync(ch_task_t *t)
     vga_wm_place(s, t->vx0, t->vy0, vw, vh, t->skip, x, y, pw, ph, cw, ch, mode);
     vga_wm_full(s, t->solo);
     mouse_clamp_to_grid();
-    if(vw != t->lw || vh != t->lh){
+    if(vw != t->lw || vh != t->lh || ((t->flags & CHF_PIXEL) && (pw != t->lpw || ph != t->lph))){
         int first = t->lw == 0;
-        t->lw = vw; t->lh = vh;
-        if(!first && (t->flags & CHF_RESIZE_KEY)) keyboard_inject(KEY_RESIZE);
+        t->lw = vw; t->lh = vh; t->lpw = pw; t->lph = ph;
+        if(!first && (t->flags & (CHF_RESIZE_KEY | CHF_PIXEL))) keyboard_inject(KEY_RESIZE);
     }
 }
 
@@ -562,7 +568,7 @@ int chrome_begin_ex(const char *name, int boxed, int flags)
     t->on = 1; t->boxed = boxed; t->full = 0; t->name = name;
     t->moved = 0; t->solo = 0; t->maxed = 0;
     t->flags = flags; t->has_rect = 0; t->snap = 0; t->skip = 0; t->lw = t->lh = 0;
-    t->zoom = 0; t->vx0 = t->vy0 = 0; t->click_t = 0;
+    t->zoom = 0; t->vx0 = t->vy0 = 0; t->click_t = 0; t->lpw = t->lph = 0;
     if(wm_managed()){                       /* v0.9.8: a window of pixels */
         extern const char *desktop_app_icon_id(const char *name);
         if(boxed){
@@ -861,7 +867,7 @@ static void wm_resize(ch_task_t *t, int s, int part, int px0, int py0)
         if(nx1 > sw - 1){ if(R) nx1 = sw - 1; }
         if(ny0 < th + 1){ if(T) ny0 = th + 1; }
         if(ny1 > bot - 1){ if(B) ny1 = bot - 1; }
-        if(!t->zoom){
+        if(!t->zoom && !(t->flags & CHF_PIXEL)){
             /* a Terminal is a whole number of cells */
             int cw = vga_cell_w(), ch = vga_cell_h();
             int w = (nx1 - nx0) / cw * cw, h = (ny1 - ny0) / ch * ch;
@@ -1017,7 +1023,15 @@ static int wm_hook(ch_task_t *t, int key)
     return -1;
 }
 
-void chrome_init(void){ keyboard_set_chrome_hook(chrome_hook); }
+void chrome_init(void)
+{
+    /* weak: suites that link this file without the keyboard or shell/screenshot.c */
+    extern void keyboard_set_screenshot_hook(int (*fn)(const char *)) __attribute__((weak));
+    extern int  screenshot_take(const char *path) __attribute__((weak));
+    keyboard_set_chrome_hook(chrome_hook);
+    if(keyboard_set_screenshot_hook && screenshot_take)
+        keyboard_set_screenshot_hook(screenshot_take);    /* v0.9.10: PrtSc */
+}
 
 /* v0.9.7.1: a screen that takes the WHOLE display from inside an app --
    the sign-in screen, from the Shell's `lock` or the Power app's

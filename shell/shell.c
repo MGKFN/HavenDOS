@@ -410,7 +410,7 @@ static const char *shell_cmds[]={
     "neofetch","netstat","notepad","notify","nslookup","open","paint","pair","passwd","ping",
     "pipes","play","poweroff","ps","ps1","pwd","quit","quiz",
     "reboot","rename","repeat","res","resolution","retro","rm","rollback","rsa","run",
-    "screensaver","script","selftest","seq","set","settings","shutdown","snake","sort",
+    "screensaver","screenshot","script","selftest","perf","py","python","seq","set","settings","shutdown","snake","sort",
     "source","stars","stat","sysinfo","sysinfo-plus","sysmon","system","tail","tcpsend","tcptest",
     "tee","theme","font","time","timer","tls","tlsinfo","todo","touch",
     "tree","type","udpsend","unalias","uniq","unset","unzip","update",
@@ -3477,6 +3477,9 @@ static void exec_cmd(const char *cmd, const char *arg1, const char *arg2){
     else if(!strcmp(cmd,"crash"))    cmd_crash(arg1);
     else if(!strcmp(cmd,"layout"))   desktop_layout_audit();
     else if(!strcmp(cmd,"selftest")) cmd_selftest_v6(arg1);
+    else if(!strcmp(cmd,"screenshot")){ extern void cmd_screenshot(const char*); cmd_screenshot(arg1); }   /* v0.9.10 */
+    else if(!strcmp(cmd,"perf")){ extern void cmd_perf(const char*); cmd_perf(arg1); }                   /* v0.9.10 */
+    else if(!strcmp(cmd,"python")||!strcmp(cmd,"py")){ extern void cmd_python(const char*); cmd_python(arg1); }  /* v0.9.10 */
     else if(!strcmp(cmd,"tlsinfo")||!strcmp(cmd,"tls")) cmd_tlsinfo_v6();
     else if(!strcmp(cmd,"stat"))     cmd_stat(arg1);
     else if(!strcmp(cmd,"hex"))      cmd_hex(arg1,arg2);

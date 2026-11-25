@@ -94,13 +94,19 @@ static long stale_px(const char *where)
     size_t sz = (size_t)W * H * 4;
     uint32_t *snap = malloc(sz);
     memcpy(snap, fb, sz);
-    wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all();
+    wm_invalidate_all(); wm_rebuild(); vga_wm_repaint_all(); update_hw_cursor();
     long d = 0; int a0 = W, b0 = H, a1 = -1, b1 = -1;
     for(size_t k = 0; k < (size_t)W * H; k++) if(snap[k] != fb[k]){
         d++; int x = (int)(k % W), y = (int)(k / W);
         if(x < a0) a0 = x; if(y < b0) b0 = y; if(x > a1) a1 = x; if(y > b1) b1 = y;
     }
     if(d && where) printf("      [%s] stale in %d,%d .. %d,%d\n", where, a0, b0, a1, b1);
+    if(d && where && getenv("STALE_DUMP"))
+        for(int y = b0; y <= b1 && y < b0 + 6; y++){
+            printf("      ");
+            for(int x = a0; x <= a1 && x < a0 + 6; x++) printf("%06x/%06x ", snap[(size_t)y*W+x] & 0xFFFFFF, fb[(size_t)y*W+x] & 0xFFFFFF);
+            printf("\n");
+        }
     free(snap);
     return d;
 }
@@ -488,6 +494,67 @@ int main(void)
            vga_cols() == 60 && vga_rows() == 12 && (vga_shadow_read(50, 10) & 0xFF) == ' ', vga_cols() * 100 + vga_rows());
         vga_viewport_clear();
         fill_console(4);
+        vga_ctx_save(&c1); vga_ctx_load(&c0);
+    }
+
+    /* ── v0.9.10 ──────────────────────────────────────────────────── */
+    head("v0.9.10: a zoomed window scrolls by moving its pixels");
+    {
+        vga_ctx_save(&c0); vga_ctx_load(&c1);
+        vga_wm_front(1);
+        int zw = 20, zh = 40, X = 120, Y = 160;
+        vga_wm_place(1, 20, 4, 40, 15, 0, X, Y, 40 * zw, 15 * zh, zw, zh, WM_FLOAT);
+        vga_viewport_set(20, 4, 40, 15);
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+        vga_clear();
+        uint32_t calls; uint64_t cyc, worst; uint32_t gl, pxn, sc0, sc1;
+        vga_wm_stats(&calls, &cyc, &worst, &gl, &pxn, &sc0, 1);
+        for(int k = 0; k < 60; k++){
+            vga_puts("line ");
+            vga_putchar((char)('0' + k / 10)); vga_putchar((char)('0' + k % 10));
+            vga_putchar('\n');
+        }
+        vga_wm_stats(&calls, &cyc, &worst, &gl, &pxn, &sc1, 0);
+        ck("60 lines in a 15-row window: some scrolls were pixel moves", sc1 > 0, (long)sc1);
+        { long d = stale_px("scrolled");
+          ck("  ... and the panel is what a repaint from scratch draws", d == 0, d); }
+        {
+            char got[16]; int n = 0, r = vga_rows() - 2;
+            for(int x = 0; x < 7; x++) got[n++] = (char)(vga_shadow_read(x, r) & 0xFF);
+            got[n] = 0;
+            ck("  ... its last line is line 59", !strncmp(got, "line 59", 7), r);
+        }
+        vga_viewport_clear();
+        fill_console(4);
+
+        head("v0.9.10: an app that draws its window itself (canvas, present)");
+        int cvw = 0, cvh = 0;
+        uint32_t *cv = vga_wm_canvas(&cvw, &cvh);
+        ck("the current task's window gives a canvas the window's size",
+           cv && cvw == 40 * zw && cvh == 15 * zh, (long)cvw * 10000 + cvh);
+        if(cv){
+            for(int y = 10; y < 60; y++) for(int x = 10; x < 110; x++) cv[(size_t)y * cvw + x] = 0x00C0FFEEu;
+            vga_wm_present(10, 10, 100, 50);
+            ck("what it draws, presented, is on the panel at its window", px(X + 20, Y + 20) == 0x00C0FFEEu, (long)px(X + 20, Y + 20));
+            vga_phys_write(25, 6, (uint16_t)(0x4F00 | 'K'));
+            ck("  ... and a cell written under it does not draw over it", px(X + 20, Y + 20) == 0x00C0FFEEu, (long)px(X + 20, Y + 20));
+            vga_wm_move(1, X + 200, Y + 50);
+            ck("moved, the picture moves with the window", px(X + 220, Y + 70) == 0x00C0FFEEu, (long)px(X + 220, Y + 70));
+            { long d = stale_px("canvas moved");
+              ck("  ... and nothing is left where it was", d == 0, d); }
+        }
+
+        head("v0.9.10: Best performance (no shadows, square corners)");
+        vga_wm_geometry(1, 20, 4, 40, 15, 700, 300, WM_FLOAT);
+        int below = 300 + 15 * chh + 6;
+        ck("before: a shadow below the window", lum(px(800, below)) < lum(GREEN) - 20, lum(px(800, below)));
+        vga_wm_set_lite(1);
+        ck("on: no shadow -- the desktop below it", near(px(800, below), GREEN, 0), (long)px(800, below));
+        ck("  ... and vga_wm_lite() says so", vga_wm_lite() == 1, 0);
+        { long d = stale_px("lite");
+          ck("  ... and nothing stale", d == 0, d); }
+        vga_wm_set_lite(0);
+        ck("off: the shadow again", lum(px(800, below)) < lum(GREEN) - 20, lum(px(800, below)));
         vga_ctx_save(&c1); vga_ctx_load(&c0);
     }
 

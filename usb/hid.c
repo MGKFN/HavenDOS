@@ -120,6 +120,7 @@ static int usage_to_key(uint8_t u, uint8_t mods)
     case 0x3B: return 0x13C;   /* F2        */
     case 0x3C: return 0x13D;   /* F3        */
     case 0x3D: return 0x13E;   /* F4        */
+    case 0x46: return 0x1F3;   /* PrtSc (KEY_PRTSC), v0.9.10 */
     case 0x49: return 0x152;   /* Insert    */
     case 0x4A: return 0x147;   /* Home      */
     case 0x4B: return 0x149;   /* Page Up   */

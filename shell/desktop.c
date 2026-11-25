@@ -138,6 +138,8 @@ extern void appx_hacker(void);
 extern void appx_music(void);
 extern void appx_calendar(void);
 extern void app_system(void);       /* shell/sysapp.c, v0.9.5 */
+extern void app_images(void);       /* shell/images.c, v0.9.10 */
+static void app_python(void){ extern int python_main(const char *); vga_clear(); python_main(0); }  /* v0.9.10 */
 /* v0.9.5.1: new games (shell/games2.c) and apps (shell/apps2.c) */
 extern void app_2048(void);
 extern void app_breakout(void);
@@ -238,6 +240,10 @@ static const appreg_t appreg[]={
     {"convert",   "Converter",        "Cv", app_convert,        CAT_APPS},
     /* v0.9.7: the old builds on an emulated PC. 80x25, so boxed. */
     {"retro",     "Retro PC",         "Rp", app_retro,          CAT_APPS},
+    /* v0.9.10: the first app drawn only in pixels (shell/pxui.c) */
+    {"images",    "Images",           "Im", app_images,         CAT_APPS, 1},
+    /* v0.9.10: MicroPython's prompt in a window (the `python` command) */
+    {"python",    "Python",           "Py", app_python,         CAT_APPS, 1},
 
     /* ---- System ----------------------------------------------- */
     /* v0.9.5: one app where there were four (System Info, Info+,
@@ -483,9 +489,28 @@ void        desktop_pins_reload(void){ pins_load(); }
 int desktop_app_pinned(const char *id, int fav){
     return fav ? pin_index(fav_ids,fav_n,id)>=0 : pin_index(desk_ids,desk_n,id)>=0;
 }
+static void icons_refresh(void);
+extern void mouse_get_px(int *x, int *y);
+static int g_icons_changed;                 /* v0.9.10: the desktop draws its icons again */
 int desktop_app_pin_toggle(const char *id, int fav){
-    return fav ? pin_toggle(PIN_FILE_FAV, fav_ids,&fav_n, id)
-               : pin_toggle(PIN_FILE_DESK,desk_ids,&desk_n,id);
+    /* v0.9.10: "pinnin to desktop broken" (Kyan, 25 Nov) -- a pin from the
+       Start menu saved DESKTOP.CFG but the desktop's own list of icons was
+       only rebuilt by its right-click menu, so the new icon appeared after
+       the next reboot. Now every toggle rebuilds it, and the desktop is
+       told to draw it. */
+    int r = fav ? pin_toggle(PIN_FILE_FAV, fav_ids,&fav_n, id)
+                : pin_toggle(PIN_FILE_DESK,desk_ids,&desk_n,id);
+    if(!fav){ icons_refresh(); g_icons_changed=1; }
+    return r;
+}
+/* v0.9.10: the taskbar's pins, from anywhere (the Start menu's right-click) */
+int desktop_tb_pinned(const char *id){ desktop_tbpin_count(); return pin_index(tb_ids,tb_n,id)>=0; }
+int desktop_tb_pin_toggle(const char *id){
+    desktop_tbpin_count();
+    if(pin_index(tb_ids,tb_n,id)<0 && tb_n>=TB_PIN_MAX) return -1;
+    int r=pin_toggle(PIN_FILE_TB,tb_ids,&tb_n,id);
+    { extern void vga_wm_repaint_bar(void); extern int vga_wm_on(void); if(vga_wm_on()) vga_wm_repaint_bar(); }
+    return r;
 }
 
 /* ── v0.9.8: for the pixel taskbar, Start menu and windows ─────────── */
@@ -1108,6 +1133,20 @@ static int ctx_menu_activate(int sel){
     }
     }
     return 0;
+}
+
+/* v0.9.10: "click menu is old" (Kyan, 25 Nov). With the window manager
+   on, the same menu -- the same rows, the same actions -- in pixels
+   (shell/pxmenu.c), at the pointer. A pin toggle leaves it open with its
+   label flipped, as the old one did. Returns when it closes. */
+static void ctx_run_pixel(int px, int py){
+    extern int pxmenu_run(int x, int y, const char *title, const char *const *items, int n);
+    for(;;){
+        const char *title = ctx_app>=0 ? appreg[ctx_app].name : "Desktop";
+        int sel = pxmenu_run(px, py, title, ctx_labels, ctx_nitems);
+        if(sel<0) break;
+        if(!ctx_menu_activate(sel)) break;
+    }
 }
 
 static void draw_contextmenu(void){
@@ -3866,6 +3905,7 @@ static void app_run_inline(void (*fn)(void), const char *name, int fits)
         int cf = 0;
         if(fn == app_mines) cf |= CHF_ZOOM;                       /* the board is sized once */
         if(fn == app_settings_v2 || fn == app_system) cf |= CHF_RESIZE_KEY;
+        if(fn == app_images) cf |= CHF_PIXEL;                     /* v0.9.10 */
         if(chrome_begin_ex(name ? name : "App", want_box, cf)){
             win = 1;
             boxed = vga_viewport_active() && want_box;
@@ -4370,7 +4410,8 @@ void desktop_run(void){
     music_startup();
     /* v0.9.8: the desktop is a desktop of windows, in pixels */
     { extern void taskbar_paint(int,int,int,int);
-      if(task_ready() && vga_fb_active()){ vga_wm_enable(1); vga_wm_set_bar(taskbar_paint); } }
+      if(task_ready() && vga_fb_active()){ vga_wm_enable(1); vga_wm_set_bar(taskbar_paint);
+          extern void images_desktop_start(void); images_desktop_start(); } }   /* v0.9.10 */
     uint8_t last_rtc_s=0xFF;  /* track RTC seconds for clock update */
     /* Welcome toast + notification */
     toast_success("Welcome to HavenDOS " HAVENDOS_VER "!");
@@ -4422,6 +4463,7 @@ void desktop_run(void){
            is no next frame unless the user moves the mouse.  An expired toast
            left a blank stripe across the desktop until then. */
         if(toast_tick_expired()) needs_draw=1;
+        if(g_icons_changed){ g_icons_changed=0; needs_draw=1; }    /* v0.9.10: a pin from the Start menu */
 
         screensaver_check();
 
@@ -4580,6 +4622,12 @@ void desktop_run(void){
                     if(ctx_y+CTXM_H>TASKBAR_Y) ctx_y=TASKBAR_Y-CTXM_H;
                     if(ctx_y<1) ctx_y=1;
                     menu_state=3;
+                    if(vga_wm_on()){                          /* v0.9.10: in pixels */
+                        int px, py; mouse_get_px(&px, &py);
+                        menu_state=0; needs_draw=1;
+                        ctx_run_pixel(px+2, py+2);
+                        icons_refresh();
+                    }
                 } else {
                     menu_state=0;
                 }
@@ -4647,6 +4695,12 @@ void desktop_run(void){
                 if(ctx_y+CTXM_H>TASKBAR_Y) ctx_y=TASKBAR_Y-CTXM_H;
                 if(ctx_y<1) ctx_y=1;
                 ctx_sel=0; menu_state=3;
+                if(vga_wm_on()){                              /* v0.9.10: in pixels */
+                    int gx, gy; vga_mouse_px(0,0,0,0,&gx,&gy);
+                    menu_state=0; needs_draw=1;
+                    ctx_run_pixel(gx + ctx_x*vga_cell_w(), gy + ctx_y*vga_cell_h());
+                    icons_refresh();
+                }
             }
             /* Up and down move a whole ROW, left and right one column
                -- and a row is however many columns fit, not two. */

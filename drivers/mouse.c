@@ -66,6 +66,7 @@ static int8_t  mouse_bytes[3];
 /* ── Click-edge latch ────────────────────────────────────────── */
 static int mouse_btn_prev=0;
 static int g_wm_edge, g_wm_x, g_wm_y;      /* v0.9.8: the window manager's clicks */
+static uint32_t g_vel_t[5]; static int g_vel_n[5];   /* v0.9.8.1: counts per 10 ms tick */
 void mouse_get_px(int *x, int *y);
 void mouse_get_frac(int *fx, int *fy);
 void mouse_sync(void);
@@ -107,7 +108,7 @@ static int sync_fail=0;   /* consecutive sync failures → force resync */
    six counts is a fast movement and moves twice as far. Applied to the
    magnitude, then the sign restored -- see the v0.7.17 note below for
    what comparing a signed value costs. */
-static inline int accelerate(int raw){
+static inline __attribute__((unused)) int accelerate(int raw){
     int mag = raw < 0 ? -raw : raw;
     return mag > 6 ? raw * 2 : raw;
 }
@@ -143,7 +144,7 @@ static inline int accelerate(int raw){
 /* How far one count moves on each axis, as a fraction: `num` cells per
    `den` counts. Derived from the grid every time, because a grid can
    change under the pointer -- an app's viewport, a `layout`. */
-static void mouse_ratio(int *num_x, int *den_x, int *num_y, int *den_y)
+static __attribute__((unused)) void mouse_ratio(int *num_x, int *den_x, int *num_y, int *den_y)
 {
     /* v0.9.6.5: the SCREEN's grid, not the app's box: the pointer now
        lives on the whole screen, so it can reach a window's title bar
@@ -179,38 +180,65 @@ static void mouse_apply(int raw_dx, int raw_dy, int new_btn)
 
     if(raw_dx || raw_dy || new_btn != mouse_btn_prev) g_ptr_wanted = 1;
 
-    mouse_ratio(&nx, &dnx, &ny, &dny);
-    accum_x += accelerate(raw_dx) * nx;
-    accum_y += accelerate(raw_dy) * ny;
-
-    /* Truncating division keeps the remainder's sign with the
-       accumulator's, so a slow drift left and a slow drift right are
-       treated alike -- the asymmetry v0.7.17 removed must not come
-       back through the rounding. */
-    dx = accum_x / dnx;
-    dy = accum_y / dny;
-    accum_x -= dx * dnx;
-    accum_y -= dy * dny;
-
-    mouse_x += dx;
-    mouse_y += dy;
-    /* v0.8.5.6: clamped to the ACTIVE grid, not to 80x25. These were
-       79 and 24 written out, so on 80x50, 90x60 or the framebuffer
-       console the pointer could not be moved past column 79 or row
-       24 -- most of the screen was unreachable by mouse. */
+    /* v0.9.8.1: IN PIXELS. Kyan, 25 Nov, on the HP: the pointer "feels
+       tied to the grid ... blocky", not gliding like on Windows. It was:
+       MOUSE_SPAN (320) counts crossed the screen, so on 1920 pixels one
+       count of the mouse was a 6-pixel jump, however slowly it moved.
+       Now a count is a pixel or two (one at 1280 wide, two at 1920) when
+       the mouse moves slowly -- precise -- and up to screen-width / 256
+       pixels when it moves fast, rising with the size of the report: an
+       acceleration curve like any desktop's. The position is kept in
+       sixteenths of a pixel: the cell (mouse_x, mouse_y) plus how far
+       into it (accum_x, accum_y), so nothing below a pixel is lost. */
     {
-        int maxx = vga_phys_cols() - 1, maxy = vga_phys_rows() - 1;
-        if(maxx < 0) maxx = 0;
-        if(maxy < 0) maxy = 0;
-        /* v0.8.9.6: and a clamped axis forgets its remainder. Pushing
-           against an edge piled sub-cell movement up in the accumulator
-           that the pointer could never use, and the first movement back
-           out had to pay it off before anything happened -- up to a
-           whole cell of dead travel on every edge. */
-        if(mouse_x < 0)    { mouse_x = 0;    accum_x = 0; }
-        if(mouse_x > maxx) { mouse_x = maxx; accum_x = 0; }
-        if(mouse_y < 0)    { mouse_y = 0;    accum_y = 0; }
-        if(mouse_y > maxy) { mouse_y = maxy; accum_y = 0; }
+        int cw = 8, ch = 16, gw, gh, m, g, base, cap;
+        long px, py;
+        vga_cell_px(&cw, &ch);
+        if(cw < 1) cw = 1;
+        if(ch < 1) ch = 1;
+        gw = vga_phys_cols() * cw; gh = vga_phys_rows() * ch;
+        if(gw < 1) gw = 1;
+        if(gh < 1) gh = 1;
+        m = raw_dx < 0 ? -raw_dx : raw_dx;
+        if((raw_dy < 0 ? -raw_dy : raw_dy) > m) m = raw_dy < 0 ? -raw_dy : raw_dy;
+        /* The speed is the counts of the last 50 ms, not the size of one
+           report: a mouse that reports every 4 ms and one that reports
+           every 10 ms -- or QEMU merging two reports into one -- are the
+           same hand movement and get the same acceleration. */
+        {
+            extern uint32_t get_ticks(void);
+            uint32_t now = get_ticks();
+            int k = (int)(now % 5u);
+            int rep = m, win = 0;
+            if(g_vel_t[k] != now){ g_vel_t[k] = now; g_vel_n[k] = 0; }
+            g_vel_n[k] += m;
+            for(int j = 0; j < 5; j++) if(now - g_vel_t[j] < 5u) win += g_vel_n[j];
+            /* ...but reports handled late arrive together, in one tick, and
+               look fast: a slow report (4 or less) never counts as more than
+               four of itself. Fast is fast by both measures. */
+            m = win < 4 * rep ? win : 4 * rep;
+        }
+        base = 16 * (gw >= 1920 ? 2 : 1);           /* sixteenths of a pixel a count */
+        cap = 16 * gw / 256;
+        if(cap < base) cap = base;
+        /* up to 16 counts in 50 ms (320 a second): a pixel or two a count,
+           exact; faster, rising steeply to the cap -- a swipe crosses the
+           screen as fast as before 0.9.8.1, a slow push lands on a pixel */
+        g = m <= 16 ? base : base + (m - 16) * base / 8;
+        if(g > cap) g = cap;
+        if(accum_x >= cw * 16) accum_x = cw * 16 - 1;
+        if(accum_y >= ch * 16) accum_y = ch * 16 - 1;
+        if(accum_x < 0) accum_x = 0;
+        if(accum_y < 0) accum_y = 0;
+        px = (long)mouse_x * cw * 16 + accum_x + (long)raw_dx * g;
+        py = (long)mouse_y * ch * 16 + accum_y + (long)raw_dy * g;
+        if(px < 0) px = 0;
+        if(py < 0) py = 0;
+        if(px > (long)gw * 16 - 1) px = (long)gw * 16 - 1;
+        if(py > (long)gh * 16 - 1) py = (long)gh * 16 - 1;
+        mouse_x = (int)(px / (cw * 16)); accum_x = (int)(px - (long)mouse_x * cw * 16);
+        mouse_y = (int)(py / (ch * 16)); accum_y = (int)(py - (long)mouse_y * ch * 16);
+        (void)nx; (void)dnx; (void)ny; (void)dny; (void)dx; (void)dy;
     }
 
     {
@@ -508,11 +536,10 @@ void mouse_get_frac(int *fx, int *fy)
    can run from the PS/2 interrupt */
 static void frac_now(int *fx, int *fy)
 {
-    int nx, dnx, ny, dny, cw = 8, ch = 16;
-    mouse_ratio(&nx, &dnx, &ny, &dny);
+    int cw = 8, ch = 16;
     vga_cell_px(&cw, &ch);
-    *fx = (int)((long)(accum_x > 0 ? accum_x : 0) * cw / (dnx > 0 ? dnx : 1));
-    *fy = (int)((long)(accum_y > 0 ? accum_y : 0) * ch / (dny > 0 ? dny : 1));
+    *fx = (accum_x > 0 ? accum_x : 0) / 16;          /* v0.9.8.1: sixteenths of a pixel */
+    *fy = (accum_y > 0 ? accum_y : 0) / 16;
     if (*fx >= cw) *fx = cw - 1;
     if (*fy >= ch) *fy = ch - 1;
 }
@@ -532,10 +559,10 @@ void mouse_clamp_to_grid(void)
     int maxx = vga_phys_cols() - 1, maxy = vga_phys_rows() - 1;   /* v0.9.6.5 */
     if(maxx < 0) maxx = 0;
     if(maxy < 0) maxy = 0;
-    if(mouse_x > maxx) mouse_x = maxx;
-    if(mouse_y > maxy) mouse_y = maxy;
-    if(mouse_x < 0) mouse_x = 0;
-    if(mouse_y < 0) mouse_y = 0;
+    if(mouse_x > maxx) { mouse_x = maxx; accum_x = 0; }
+    if(mouse_y > maxy) { mouse_y = maxy; accum_y = 0; }
+    if(mouse_x < 0) { mouse_x = 0; accum_x = 0; }
+    if(mouse_y < 0) { mouse_y = 0; accum_y = 0; }
 }
 
 /* THE one answer. Nothing else in the tree may ask a driver directly:

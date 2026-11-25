@@ -232,9 +232,16 @@ static void draw_bar(int y)
     put(pw - 6, y, clk, VGA_WHITE, VGA_DARK_GREY, 5);
 }
 
+/* v0.9.8.1: a window the window manager draws -- an app in a task of its
+   own. An app the desktop runs INLINE, in its own console (safe paths,
+   no task free), has the screen to itself (shell/desktop.c makes it solo)
+   and its window drawn in cells, as before 0.9.8: otherwise it showed the
+   desktop's icons painted over it, and no title bar (Kyan's photos). */
+static int wm_managed(void){ return vga_wm_on() && task_current() > 0; }
+
 static void current_layout(ch_task_t *t, ch_layout_t *L)
 {
-    if(vga_wm_on()) ch_tr = vga_wm_title_rows();      /* v0.9.8 */
+    if(wm_managed()) ch_tr = vga_wm_title_rows();      /* v0.9.8 */
     chrome_layout(vga_phys_cols(), vga_phys_rows(), t->boxed, t->full, L);
 }
 
@@ -265,7 +272,7 @@ static void wm_full_leave(ch_task_t *t);
 static void paint(ch_task_t *t)
 {
     ch_layout_t L; int vx, vy, vw, vh, act = vga_viewport_active();
-    if(vga_wm_on()){ wm_sync(t); t->sig = bar_sig(); return; }   /* v0.9.8: pixels */
+    if(wm_managed()){ wm_sync(t); t->sig = bar_sig(); return; }   /* v0.9.8: pixels */
     current_layout(t, &L);
     vga_viewport_get(&vx, &vy, &vw, &vh);
     vga_viewport_clear();
@@ -316,7 +323,7 @@ static void apply_layout(ch_task_t *t, int repaint_from_old)
     if(L.viewport) vga_viewport_set(L.vx, L.vy, L.vw, L.vh);
     else           vga_viewport_clear();
     mouse_clamp_to_grid();
-    if(vga_wm_on()) wm_sync(t);                     /* v0.9.8: also with no title bar */
+    if(wm_managed()) wm_sync(t);                     /* v0.9.8: also with no title bar */
     else if(L.title_y >= 0 || L.bar_y >= 0) paint(t);
 }
 
@@ -391,7 +398,7 @@ static void wm_full_leave(ch_task_t *t)
 static void toggle_full(ch_task_t *t)
 {
     /* v0.9.8: full screen is the window having the whole screen */
-    if(vga_wm_on()){
+    if(wm_managed()){
         if(t->solo){ wm_full_leave(t); return; }
         t->solo = 1;
         vga_wm_full(task_current(), 1);
@@ -414,7 +421,7 @@ int chrome_begin(const char *name, int boxed)
     if(!t || !task_ready()) return 0;
     t->on = 1; t->boxed = boxed; t->full = 0; t->name = name;
     t->moved = 0; t->solo = 0;
-    if(vga_wm_on()){                       /* v0.9.8: a window of pixels */
+    if(wm_managed()){                       /* v0.9.8: a window of pixels */
         extern const char *desktop_app_icon_id(const char *name);
         vga_wm_open(task_current(), name, desktop_app_icon_id(name));
     }
@@ -442,7 +449,7 @@ static uint16_t p_saved, p_drawn;
 static int      p_arrow;              /* v0.9.7.10: this code put the arrow up */
 static void ptr_hide(void)
 {
-    if(vga_wm_on()) return;                /* v0.9.8: the hook below draws it */
+    if(wm_managed()) return;                /* v0.9.8: the hook below draws it */
     /* v0.9.7.10: only an arrow THIS code showed. The hook runs for
        every keyboard poll, also where nothing here is tracking the
        mouse (the desktop), and hiding unconditionally took the
@@ -455,7 +462,7 @@ static void ptr_hide(void)
 static void ptr_show(int x, int y)
 {
     uint16_t c; uint8_t a, inv;
-    if(vga_wm_on()) return;                /* v0.9.8 */
+    if(wm_managed()) return;                /* v0.9.8 */
     /* v0.9.7.10: the arrow, on a framebuffer */
     if(vga_pointer_pixels()){
         extern void mouse_get_frac(int*,int*);
@@ -491,7 +498,7 @@ int chrome_hook(int key)
     ch_layout_t L;
     int x, y, clicks, chip, what;
 
-    if(vga_wm_on()) return wm_hook(t, key);   /* v0.9.8 */
+    if(vga_wm_on() && !(t && t->on && task_current() == 0)) return wm_hook(t, key);   /* v0.9.8 */
 
     if(!t || !t->on){ return key; }
     if(key == KEY_FULLSCREEN){

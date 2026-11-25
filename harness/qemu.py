@@ -16,6 +16,12 @@ Processes are tracked and killed by PID.
 """
 import os, socket, subprocess, sys, time, signal, glob, json
 
+def cell_px(cols, rows, sw=1280, sh=800):
+    """The cell the console picks for a grid on a sw x sh panel: 8x16 times
+    the largest whole scale that fits (drivers/vga.c)."""
+    s = max(1, min(sw // (cols * 8), sh // (rows * 16)))
+    return 8 * s, 16 * s
+
 class Qemu:
     def __init__(self, iso=None, extra=None, mem=256, disk=None, usbstick=None,
                  audio=False, usb=True, sock="/tmp/hd_qmp.sock", boot=None,
@@ -192,20 +198,29 @@ class Qemu:
         # counts a column and 8 a row, not 4 and 4. And single counts:
         # QEMU merges events a poll has not collected, and a merged
         # report over six counts is accelerated (doubled).
-        cx = max(1, round(320 / self._cols))
-        cy = max(1, round(320 * 800 / 1280 / self._rows))
+        # v0.9.8.1: drivers/mouse.c moves in PIXELS now -- a slow count
+        # (a report of 4 or less) is one pixel on a grid under 1920 wide,
+        # two from 1920 -- so a column is the cell's width in counts.
+        # Sent four at a time: 4 is still the slow, unaccelerated range.
+        cw, ch = cell_px(self._cols, self._rows)
+        per = 2 if self._cols * cw >= 1920 else 1
+        cx, cy = cw / per, ch / per
         def walk(axis, counts, step):
             for _ in range(abs(int(counts))):
                 self.cmd_qmp("input-send-event",
                              events=[{"type": "rel",
                                       "data": {"axis": axis,
                                                "value": step if counts > 0 else -step}}])
-                time.sleep(0.004 if step > 1 else 0.008)
+                time.sleep(0.004 if step > 4 else 0.025)
+        def go(axis, counts):
+            counts = int(round(counts))
+            walk(axis, counts // 4, 4)
+            walk(axis, counts % 4, 1)
         walk("x", -60, 40)                       # into the left edge
         walk("y", -40, 40)                       # and the top edge
         time.sleep(0.3)
-        walk("x", x * cx, 1)
-        walk("y", y * cy, 1)
+        go("x", x * cx + cx / 2)                 # the middle of the cell
+        go("y", y * cy + cy / 2)
         time.sleep(settle)
 
     def click(self, x, y, button="left", settle=0.6):

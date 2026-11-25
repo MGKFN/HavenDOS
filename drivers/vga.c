@@ -773,15 +773,36 @@ void vga_deco_clear(int slot)
 static void fbc_ptr_touch(void)
 {
     if (wm_is_on) { wm_ptr_touch(); return; }        /* v0.9.8 */
-    if (!fbc_painted_valid) return;
-    int c0 = (fbc_ptr_x - (int)fbc_ox) / (int)fbc_cwp, r0 = (fbc_ptr_y - (int)fbc_oy) / (int)fbc_chp;
-    int c1 = (fbc_ptr_x + PTR_W * fbc_ptr_s - 1 - (int)fbc_ox) / (int)fbc_cwp;
-    int r1 = (fbc_ptr_y + PTR_H * fbc_ptr_s - 1 - (int)fbc_oy) / (int)fbc_chp;
-    for (int r = r0 < 0 ? 0 : r0; r <= r1 && r < g_rows; r++)
-        for (int c = c0 < 0 ? 0 : c0; c <= c1 && c < g_cols; c++)
+    /* v0.9.8.1: Kyan, 25 Nov -- the pointer "multiplying". Three ways an
+       old arrow stayed on the glass: under it was a cell not painted yet
+       (skipped, "flush will" -- and a quiet app never flushes), or the
+       margin beside a grid that does not fill the screen (no cell to
+       repaint at all), or the cache had been dropped by a mode change.
+       Now every pixel under it is put back: a cell from what is on the
+       screen or, if that is unknown, from the console; the margin with
+       the margin's colour. */
+    if (!fbc_painted_valid) fbc_forget();
+    int x0 = fbc_ptr_x, y0 = fbc_ptr_y, x1 = x0 + PTR_W * fbc_ptr_s, y1 = y0 + PTR_H * fbc_ptr_s;
+    int gx0 = (int)fbc_ox, gy0 = (int)fbc_oy;
+    int gx1 = gx0 + g_cols * (int)fbc_cwp, gy1 = gy0 + g_rows * (int)fbc_chp;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > (int)fbc_w) x1 = (int)fbc_w;
+    if (y1 > (int)fbc_h) y1 = (int)fbc_h;
+    for (int y = y0; y < y1; y++)
+        for (int x = x0; x < x1; x++)
+            if (x < gx0 || x >= gx1 || y < gy0 || y >= gy1)
+                fbc_addr[(uint32_t)y * fbc_pitch + (uint32_t)x] = fbc_bg0((uint32_t)y);
+    int c0 = (x0 - gx0) / (int)fbc_cwp, r0 = (y0 - gy0) / (int)fbc_chp;
+    int c1 = (x1 - 1 - gx0) / (int)fbc_cwp, r1 = (y1 - 1 - gy0) / (int)fbc_chp;
+    if (x0 < gx0) c0 = 0;
+    if (y0 < gy0) r0 = 0;
+    for (int r = r0; r <= r1 && r < g_rows; r++)
+        for (int c = c0; c <= c1 && c < g_cols; c++)
         {
             uint16_t e = fbc_painted[r * g_cols + c];
-            if (e != 0xFFFF) fbc_put_ex(c, r, e, 0);   /* not yet painted: flush will */
+            if (e != 0xFFFF) fbc_put_ex(c, r, e, 0);
+            else             fbc_put_ex(c, r, shadow[r * g_cols + c], 1);
         }
 }
 

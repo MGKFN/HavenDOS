@@ -90,15 +90,17 @@
    v0.9.7.10: the finished look -- a smooth font in IBM Plex Mono, an arrow
    pointer, window shadows and rounded corners.
    v0.9.8 (Beta again, Kyan 24 Nov): the desktop -- windows in pixels that
-   move and stack, a pixel taskbar and Start menu, an icon for every app. */
-#define HAVENDOS_VER_BUILD  0
+   move and stack, a pixel taskbar and Start menu, an icon for every app.
+   v0.9.8.1: the pointer in pixels with acceleration; no trails; an app the
+   desktop runs in its own console has the screen. */
+#define HAVENDOS_VER_BUILD  1
 
 /* VER_NUM stays plain dotted numbers because fs/update.c compares it with
    ver_cmp() to decide whether an ISO is newer.  The channel and codename are
    separate macros so they can appear on screen without ever reaching that
    comparison -- a version string with a word in it would make every update
    check unpredictable. */
-#define HAVENDOS_VER_NUM    "0.9.8"
+#define HAVENDOS_VER_NUM    "0.9.8.1"
 #define HAVENDOS_VER        "v" HAVENDOS_VER_NUM
 #define HAVENDOS_NAME       "HavenDOS"
 #define HAVENDOS_CHANNEL    "Beta"

@@ -8,7 +8,9 @@ It boots on a 2022 HP laptop from its own partition beside Windows 11, drives th
 
 **The 0.9.7 line is Stable from 0.9.7.6**, so the newest release is the one under "Latest" on the releases page. 0.9.7 to 0.9.7.5 were Beta pre-releases. A system on the Beta channel updates to Stable without asking; `update channel beta` keeps a system on Betas.
 
-## Current version: 0.9.8 Beta "Hestia"
+## Current version: 0.9.8.1 Beta "Hestia"
+
+**0.9.8.1.** The pointer moves in pixels with acceleration instead of jumping a cell at a time, leaves no copies behind, and the Start menu keeps up with it; an app the desktop runs itself has the screen. [Changelog](changelogs/CHANGELOG-v0.9.8.1.md).
 
 **0.9.8. The desktop.** Windows in pixels that you drag and stack, with drawn buttons, round corners and shadows; one pixel taskbar with icons and a window button for each app; a new Start menu that searches as you type; an icon for every app; IBM Plex Sans for the desktop. HavenDOS is Beta again until 1.0, which moves to spring. Tested on the build machine and in QEMU, not yet on a real machine. Updating a 0.9.7 system: `update channel beta`, then `update`. [Changelog](changelogs/CHANGELOG-v0.9.8.md).
 
@@ -221,11 +223,11 @@ Download `HavenDOS-<version>.iso` from the [latest release](https://github.com/M
 
 ```sh
 # BIOS
-qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.8.iso -boot d
+qemu-system-i386 -m 512 -cdrom HavenDOS-0.9.8.1.iso -boot d
 
 # UEFI (needs OVMF firmware), with a disk to install to and a USB controller
 qemu-img create -f raw disk.img 4G
-qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.8.iso \
+qemu-system-x86_64 -m 1G -bios OVMF.fd -cdrom HavenDOS-0.9.8.1.iso \
   -drive file=disk.img,if=virtio,format=raw -device qemu-xhci -boot d
 ```
 
@@ -279,7 +281,7 @@ sudo make test                                          # 77 suites, 7755 checks
 
 ## How releases are made
 
-Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.8` now) with three files:
+Every release is built by [GitHub Actions](.github/workflows/release.yml) from the source in this repository. When a commit on `main` changes the version in `include/version.h`, the workflow builds the ISO, runs the full test suite and publishes the release (`v0.9.8.1` now) with three files:
 
 | File | For |
 | --- | --- |

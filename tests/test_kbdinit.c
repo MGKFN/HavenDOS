@@ -375,58 +375,72 @@ int main(void)
         int mx, my, mb;
         /* Small reports, five counts each, so the acceleration (which
            starts above six) is not what is being measured. */
+        /* v0.9.8.1: a report every 20 ms (two ticks) -- the acceleration
+           goes by the counts of the last 50 ms */
 #define FEED(dx, dy, n) for(int i_ = 0; i_ < (n); i_++){ \
+            sim_ticks += 2; \
             mouse_feed((uint8_t)(0x08 | ((dx) < 0 ? 0x10 : 0) | ((dy) > 0 ? 0x20 : 0))); \
             mouse_feed((uint8_t)((dx) & 0xFF)); \
             mouse_feed((uint8_t)((-(dy)) & 0xFF)); }
+#define PAUSE() (sim_ticks += 20)
         /* Home to the top-left: clamped there whatever the grid. */
-#define HOME() FEED(-5, -5, 400)
+#define HOME() do { FEED(-5, -5, 400); PAUSE(); } while(0)
 
-        head("the same hand movement crosses the same share of any grid");
+        /* v0.9.8.1: THE POINTER MOVES IN PIXELS (Kyan, 25 Nov: "blocky").
+           A slow count -- a report of 4 or less -- is one pixel, two on a
+           grid 1920 or more wide; a bigger report is accelerated, up to
+           width/256 pixels a count. Kept in sixteenths of a pixel. */
+        head("v0.9.8.1: a slow count is a pixel");
         sim_cols = 80;  sim_rows = 25; sim_cw = 8; sim_ch = 16;
-        HOME(); FEED(5, 0, 32);                     /* 160 counts */
+        HOME(); FEED(1, 0, 8);                      /* 8 counts, 8 px */
         mouse_get(&mx, &my, &mb);
-        ck("80 columns: half the span is half the width", mx == 40, mx);
+        ck("8 slow counts are 8 pixels: column 1 of 8-pixel cells", mx == 1, mx);
+        HOME(); FEED(4, 0, 40);                     /* 160 counts */
+        mouse_get(&mx, &my, &mb);
+        ck("160 slow counts are 160 pixels: column 20", mx == 20, mx);
+        {
+            int fx, fy;
+            HOME(); FEED(1, 1, 13);                 /* 13 px: 5 into column 1 */
+            mouse_get_frac(&fx, &fy);
+            ck("  ... and where in the cell: 5 pixels into column 1", fx == 5, fx);
+        }
         sim_cols = 240; sim_rows = 67; sim_cw = 8; sim_ch = 16;
-        HOME(); FEED(5, 0, 32);
+        HOME(); FEED(4, 0, 40);
         mouse_get(&mx, &my, &mb);
-        ck("240 columns: the same movement is still half the width",
-           mx == 120, mx);
-        sim_cols = 160; sim_rows = 50; sim_cw = 8; sim_ch = 16;
-        HOME(); FEED(5, 0, 64);                     /* 320 counts */
-        mouse_get(&mx, &my, &mb);
-        ck("160 columns: the whole span reaches the last column",
-           mx == 159, mx);
+        ck("1920 wide: a slow count is two pixels (160 counts, column 40)", mx == 40, mx);
 
         head("a count is the same number of pixels on both axes");
-        /* 80x25 on 1280x800: 16x32 cells. 40 counts across is 10
-           cells = 160 px; 40 counts down must be 160 px = 5 rows. */
         sim_cols = 80; sim_rows = 25; sim_cw = 16; sim_ch = 32;
-        HOME(); FEED(5, 5, 8);
+        HOME(); FEED(4, 4, 40);
         mouse_get(&mx, &my, &mb);
-        ck("40 counts across is 10 columns (160 px)", mx == 10, mx);
-        ck("40 counts down is 5 rows (160 px), not 10", my == 5, my);
+        ck("160 counts across is 10 columns (160 px)", mx == 10, mx);
+        ck("160 counts down is 5 rows (160 px), not 10", my == 5, my);
+
+        head("a fast movement goes further");
+        sim_cols = 80; sim_rows = 25; sim_cw = 8; sim_ch = 16;
+        HOME(); FEED(16, 0, 10);                    /* 160 counts, fast */
+        mouse_get(&mx, &my, &mb);
+        ck("160 fast counts go over twice as far: past column 40, not 20", mx > 40, mx);
 
         head("left and right are mirror images");
-        sim_cols = 80; sim_rows = 25; sim_cw = 8; sim_ch = 16;
-        HOME(); FEED(5, 0, 32);                     /* to column 40 */
+        HOME(); FEED(4, 0, 80); PAUSE();            /* to column 40 */
         FEED(3, 0, 37);                             /* 111 counts right */
         FEED(-3, 0, 37);                            /* 111 counts left  */
         mouse_get(&mx, &my, &mb);
         ck("there and back again ends where it started", mx == 40, mx);
         /* The v0.7.17 bug in a new place would show here: a fast
            movement left must be boosted exactly as much as one right. */
-        FEED(20, 0, 2);                             /* +20 columns */
-        FEED(-20, 0, 2);
+        PAUSE(); FEED(20, 0, 2);
+        PAUSE(); FEED(-20, 0, 2);                   /* each from standing */
         mouse_get(&mx, &my, &mb);
         ck("and so does a fast one, acceleration and all", mx == 40, mx);
         head("pushing against an edge leaves no debt behind");
         HOME();
         FEED(-5, -5, 50);                           /* keep pushing */
-        FEED(5, 0, 1);                              /* 5 counts back */
-        FEED(5, 0, 1);                              /* 10: 2.5 cells */
+        FEED(4, 0, 1);
+        FEED(4, 0, 1);                              /* 8 px */
         mouse_get(&mx, &my, &mb);
-        ck("the first movement off the edge moves at once", mx == 2, mx);
+        ck("the first movement off the edge moves at once", mx == 1, mx);
 
         /* v0.9.6.5: the pointer lives on the SCREEN; an app in a box
            gets box coordinates, held at its edge, and the clicks made
@@ -435,7 +449,7 @@ int main(void)
         head("v0.9.6.5: an app's box, and the pointer outside it");
         sim_cols = 128; sim_rows = 48; sim_cw = 10; sim_ch = 16;
         sim_vp = 1; sim_vx = 24; sim_vy = 12; sim_vw = 80; sim_vh = 25;
-        HOME(); FEED(5, 0, 100);                    /* 500 counts: far right */
+        HOME(); FEED(40, 0, 20);                    /* fast and far: the right edge */
         {
             int px, py, e;
             mouse_get_phys(&px, &py);
@@ -451,7 +465,7 @@ int main(void)
             ck("  ... it is kept for the window: mouse_take_clicks() 1", e == 1, e);
             HOME();
             ck("back in the corner: outside the box again (0,0 is not in it)", mouse_outside(), 0);
-            FEED(5, 5, 20);                          /* 100 counts: 40 cols */
+            FEED(4, 4, 100);                         /* 400 px: column 40, row 25 */
             mouse_get_phys(&px, &py);
             mouse_get(&mx, &my, &mb);
             ck("inside the box: the app gets the screen position less the box's",

@@ -3825,6 +3825,10 @@ static void app_run_inline(void (*fn)(void), const char *name, int fits)
        the taskbar. Without tasks (safe mode, `notasks`), as before. */
     int win = 0;
     int um_was = um_mode();
+    /* v0.9.8.1: run in the desktop's own console, an app has the whole
+       screen over the pixel desktop -- not under its icons and taskbar */
+    int wsolo = vga_wm_on() && task_current() == 0;
+    if(wsolo) vga_wm_solo(1);
     um_set_mode(UM_ALL);          /* v0.9.6.5: whatever ran it, the mouse is the app's */
     {
         int want_box = !fits &&
@@ -3880,6 +3884,7 @@ static void app_run_inline(void (*fn)(void), const char *name, int fits)
         else if(boxed){ vga_viewport_clear(); mouse_clamp_to_grid(); }
         um_set_mode(um_was);
         vga_clear();
+        if(wsolo) vga_wm_solo(0);
         return;
     }
     fn();
@@ -3915,6 +3920,7 @@ static void app_run_inline(void (*fn)(void), const char *name, int fits)
     else if(boxed){ vga_viewport_clear(); mouse_clamp_to_grid(); }
     um_set_mode(um_was);
     vga_clear();
+    if(wsolo) vga_wm_solo(0);
 }
 
 /* ════════════════════════════════════════════════════════════════════

@@ -288,6 +288,33 @@ static void sm_paint(int x0, int y0, int x1, int y1)
 
 static void repaint(void){ vga_wm_repaint_popup(P_x - 2, P_y - 2, P_x + P_w + 2, P_y + P_h + 2); }
 
+/* v0.9.8.1: what the pointer lights or unlights is repainted alone -- a
+   row, a category, a button -- not the whole menu for every pixel it
+   moves (in QEMU that was seconds a frame, and the pointer seemed stuck) */
+static int g_dx0, g_dy0, g_dx1, g_dy1, g_dirty_part;
+static void dirty_add(int x, int y, int w, int h)
+{
+    if (!g_dirty_part) { g_dx0 = x; g_dy0 = y; g_dx1 = x + w; g_dy1 = y + h; g_dirty_part = 1; return; }
+    if (x < g_dx0) g_dx0 = x;
+    if (y < g_dy0) g_dy0 = y;
+    if (x + w > g_dx1) g_dx1 = x + w;
+    if (y + h > g_dy1) g_dy1 = y + h;
+}
+static void dirty_row(int i)
+{
+    if (i < g_top || i >= g_top + list_rows) return;
+    dirty_add(list_x, list_y + (i - g_top) * rh, list_w, rh);
+}
+static void dirty_cat(int c)
+{
+    if (c < 0) return;
+    dirty_add(P_x + pad / 2, P_y + pad + sb_h + pad + c * rh, catw, rh);
+}
+static void dirty_btns(void)
+{
+    dirty_add(P_x + P_w / 2, P_y + P_h - foot_h, P_w / 2, foot_h);
+}
+
 /* what is under (x,y): 1 a list row (*i), 2 a category (*i), 3 lock, 4 power, 5 the panel, 0 outside */
 static int sm_hit(int x, int y, int *i)
 {
@@ -325,7 +352,7 @@ void startmenu_run(void)
     if (!vga_wm_on()) return;
     wm_busy(1);
     geometry();
-    g_qn = 0; g_q[0] = 0; g_focus = 0; g_sel = 0; g_top = 0; g_hrow = g_hcat = -1; g_hbtn = 0;
+    g_qn = 0; g_q[0] = 0; g_focus = 0; g_sel = 0; g_top = 0; g_hrow = g_hcat = -1; g_hbtn = 0; g_dirty_part = 0;
     if (g_cat == C_REC && !g_nrecent) g_cat = C_ALL;
     build();
     mouse_take_wm_clicks(0, 0);                   /* the click that opened it */
@@ -338,7 +365,9 @@ void startmenu_run(void)
             lx = mx; ly = my;
             what = sm_hit(mx, my, &i);
             int hr = what == 1 ? i : -1, hc = what == 2 ? i : -1, hb = what == 3 ? 1 : what == 4 ? 2 : 0;
-            if (hr != g_hrow || hc != g_hcat || hb != g_hbtn) { g_hrow = hr; g_hcat = hc; g_hbtn = hb; dirty = 1; }
+            if (hr != g_hrow) { dirty_row(g_hrow); dirty_row(hr); g_hrow = hr; }
+            if (hc != g_hcat) { dirty_cat(g_hcat); dirty_cat(hc); g_hcat = hc; }
+            if (hb != g_hbtn) { dirty_btns(); g_hbtn = hb; }
         }
         {
             int w = mouse_get_wheel();
@@ -384,7 +413,8 @@ void startmenu_run(void)
             if (g_sel < 0) g_sel = 0;
             keep_visible();
         }
-        if (dirty) repaint();
+        if (dirty) { repaint(); g_dirty_part = 0; }
+        else if (g_dirty_part) { vga_wm_repaint_popup(g_dx0, g_dy0, g_dx1, g_dy1); g_dirty_part = 0; }
         if (k == -1 && !c) kpoll_sleep_ms(10);
     }
     vga_wm_set_popup(0, 0, 0, 0, 0);

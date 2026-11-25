@@ -50,10 +50,21 @@ def ev(q, events):
 
 def rel(q, axis, value):
     ev(q, [{"type": "rel", "data": {"axis": axis, "value": value}}])
-    time.sleep(0.004 if abs(value) > 1 else 0.008)
+    # v0.9.8.1: a report over 4 counts is accelerated (drivers/mouse.c);
+    # spaced so QEMU never merges two small ones into one big one
+    time.sleep(0.004 if abs(value) > 4 else 0.025)
+
+def walk(q, axis, n):
+    """v0.9.8.1: n counts (signed) in fours -- 4 is still the slow,
+    unaccelerated range of drivers/mouse.c, and a quarter of the events."""
+    n = int(round(n)); sgn = 1 if n >= 0 else -1; n = abs(n)
+    for _ in range(n // 4):
+        rel(q, axis, 4 * sgn)
+    for _ in range(n % 4):
+        rel(q, axis, sgn)
 
 
-CX, CY = 4, 8          # counts per column / per row, at 80x25 on 1280x800
+CX, CY = 16, 32        # counts per column / per row, at 80x25 on 1280x800 (v0.9.8.1: a pixel a count)
 
 
 def park(q, x, y):
@@ -67,10 +78,8 @@ def park(q, x, y):
     for _ in range(40):
         rel(q, "y", -40)
     time.sleep(0.3)
-    for _ in range(x * CX):
-        rel(q, "x", 1)
-    for _ in range(y * CY):
-        rel(q, "y", 1)
+    walk(q, "x", x * CX)
+    walk(q, "y", y * CY)
     time.sleep(0.4)
 
 
@@ -105,19 +114,15 @@ def place(q, x, y, tries=4):
     from PIL import Image
     q.shot("/tmp/mouse_apps_ref.ppm"); time.sleep(0.25)
     ref = Image.open("/tmp/mouse_apps_ref.ppm").copy()
-    for _ in range(x * CX):
-        rel(q, "x", 1)
-    for _ in range(y * CY):
-        rel(q, "y", 1)
+    walk(q, "x", x * CX)
+    walk(q, "y", y * CY)
     time.sleep(0.4)
     for _ in range(tries):
         at = find_pointer(q, ref)
         if at is None or at == (x, y):
             return at
-        for _ in range(abs(x - at[0]) * CX):
-            rel(q, "x", 1 if x > at[0] else -1)
-        for _ in range(abs(y - at[1]) * CY):
-            rel(q, "y", 1 if y > at[1] else -1)
+        walk(q, "x", (abs(x - at[0]) * CX) * (1 if x > at[0] else -1))
+        walk(q, "y", (abs(y - at[1]) * CY) * (1 if y > at[1] else -1))
         time.sleep(0.4)
     return find_pointer(q, ref)
 

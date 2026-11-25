@@ -34,8 +34,10 @@ COLS, ROWS = 128, 50
 # 128 px margin each side (vga_fb_app_grid picks the cell, not 1280/128)
 CW, CH = 8, 16
 X0 = (1280 - COLS * CW) // 2
-CX = 320.0 / COLS                        # counts per column (MOUSE_SPAN 320)
-CY = 320.0 * CH / (CW * COLS)            # counts per row: same pixels per count
+# v0.9.8.1: drivers/mouse.c moves a pixel per slow count (two from 1920
+# wide), so a column is CW counts and a row CH
+CX = float(CW)                           # counts per column
+CY = float(CH)                           # counts per row
 results = []
 
 
@@ -49,7 +51,18 @@ def check(name, ok, detail=""):
 
 def rel(q, axis, value):
     ev(q, [{"type": "rel", "data": {"axis": axis, "value": value}}])
-    time.sleep(0.004 if abs(value) > 1 else 0.008)
+    # v0.9.8.1: a report over 4 counts is accelerated (drivers/mouse.c);
+    # spaced so QEMU never merges two small ones into one big one
+    time.sleep(0.004 if abs(value) > 4 else 0.025)
+
+def walk(q, axis, n):
+    """v0.9.8.1: n counts (signed) in fours -- 4 is still the slow,
+    unaccelerated range of drivers/mouse.c, and a quarter of the events."""
+    n = int(round(n)); sgn = 1 if n >= 0 else -1; n = abs(n)
+    for _ in range(n // 4):
+        rel(q, axis, 4 * sgn)
+    for _ in range(n % 4):
+        rel(q, axis, sgn)
 
 
 def cells(q):
@@ -74,10 +87,8 @@ def place(q, x, y):
     corner(q)
     q.shot("/tmp/window_apps_ref.ppm"); time.sleep(0.25)
     ref = Image.open("/tmp/window_apps_ref.ppm").copy()
-    for _ in range(int(round(x * CX + CX / 2))):
-        rel(q, "x", 1)
-    for _ in range(int(round(y * CY + CY / 2))):
-        rel(q, "y", 1)
+    walk(q, "x", int(round(x * CX + CX / 2)))
+    walk(q, "y", int(round(y * CY + CY / 2)))
     time.sleep(0.4)
     for _ in range(4):
         # v0.9.7.10: the pointer is an arrow; find its tip (arrowfind.py)
@@ -85,10 +96,8 @@ def place(q, x, y):
         at = tip_cell(Image.open("/tmp/window_apps_now.ppm"), ref, X0, 0, CW, CH)
         if at is None or at == (x, y):
             return at
-        for _ in range(int(round(abs(x - at[0]) * CX))):
-            rel(q, "x", 1 if x > at[0] else -1)
-        for _ in range(int(round(abs(y - at[1]) * CY))):
-            rel(q, "y", 1 if y > at[1] else -1)
+        walk(q, "x", (int(round(abs(x - at[0]) * CX))) * (1 if x > at[0] else -1))
+        walk(q, "y", (int(round(abs(y - at[1]) * CY))) * (1 if y > at[1] else -1))
         time.sleep(0.4)
     return None
 

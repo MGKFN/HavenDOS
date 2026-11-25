@@ -247,7 +247,9 @@ static inline void wm_px(int x, int y, uint32_t c)
 {
     if (x < wm_cx0 || y < wm_cy0 || x >= wm_cx1 || y >= wm_cy1) return;
     if (wm_ex && x >= wm_ex0 && x < wm_ex1 && y >= wm_ey0 && y < wm_ey1) return;
-    if (!wm_fast) {
+    if (wm_fast == 2) {                 /* nothing above: only its own round corners */
+        if (wm_L[wm_cl].r && !in_layer(&wm_L[wm_cl], x, y)) return;
+    } else if (!wm_fast) {
         if (wm_owner(x, y) != wm_cl) return;
         c = shade(wm_cl, x, y, c);
     }
@@ -504,9 +506,10 @@ static void wm_paint_title(int i, const wm_win_t *w, int slot)
     win_title(w, &tx0, &ty0, &tx1, &ty1);
     uint32_t bg = focus ? wm_rgb(WMC_TITLE) : wm_rgb(WMC_TITLE_OFF);
     uint32_t fg = focus ? wm_rgb(WMC_TEXT) : wm_rgb(WMC_TEXT_OFF);
-    wm_cl = i; wm_fast = 0;
     int fx0, fy0, fx1, fy1;
     win_frame(w, &fx0, &fy0, &fx1, &fy1);
+    wm_cl = i;
+    wm_fast = clear_above(i, fx0, fy0, fx1, cy0) ? 2 : 0;    /* v0.9.8.1 */
     if (b) {
         /* the edge: a 1 px ring; the title bar and the content are a hole in it */
         wm_ex = 1; wm_ex0 = tx0; wm_ey0 = ty0; wm_ex1 = tx1; wm_ey1 = cy1;
@@ -550,6 +553,7 @@ static void wm_paint_title(int i, const wm_win_t *w, int slot)
             }
         }
     }
+    wm_fast = 0;
     wm_cx0 = sx0; wm_cy0 = sy0; wm_cx1 = sx1; wm_cy1 = sy1;
 }
 
@@ -697,8 +701,13 @@ static void paint_layer(int i)
                  wm_cx1 < L->x1 ? wm_cx1 : L->x1, wm_cy1 < L->y1 ? wm_cy1 : L->y1);
         if (wm_cx0 < wm_cx1 && wm_cy0 < wm_cy1) {
             wm_cl = i;
+            /* v0.9.8.1: the Start menu and the taskbar are on top -- when
+               nothing is above the part being painted, no pixel has to ask
+               who owns it (Kyan: "buggy" -- the menu took seconds a frame) */
+            wm_fast = clear_above(i, wm_cx0, wm_cy0, wm_cx1, wm_cy1) ? 2 : 0;
             if (L->type == LT_BAR) wm_bar_fn(L->x0, L->y0, L->x1, L->y1);
             else                   wm_pop_fn(L->x0, L->y0, L->x1, L->y1);
+            wm_fast = 0;
         }
         break; }
     }
